@@ -138,15 +138,15 @@ Implementation notes:
 
 ### Task 3: Implement pi-subagents RPC client and run-store
 
-- [ ] Implement `src/subagents-rpc.ts` with a narrow `SubagentsRpcClient` around `pi.events`.
-- [ ] Use channels `subagents:rpc:v1:request` and `subagents:rpc:v1:reply:<requestId>`.
-- [ ] Support methods `ping`, `spawn`, `status`, `stop`, and `interrupt` through one typed `request` helper.
-- [ ] Add request timeout handling and listener cleanup for success, failure, wrong request IDs, and timeout.
-- [ ] Implement `src/run-store.ts` as a small in-memory store that allows one active run at a time and remembers the last run summary.
-- [ ] Persist compact run summaries with `pi.appendEntry("fusion-run", ...)` and restore them on `session_start`.
-- [ ] Add tests with a fake event bus for RPC success, failure, timeout, wrong request ID, and cleanup.
-- [ ] Add tests for active-run guard, run updates, done/failed/cancelled transitions, and session summary restore helpers.
-- [ ] Run `npm run check` and `npm test`.
+- [x] Implement `src/subagents-rpc.ts` with a narrow `SubagentsRpcClient` around `pi.events`.
+- [x] Use channels `subagents:rpc:v1:request` and `subagents:rpc:v1:reply:<requestId>`.
+- [x] Support methods `ping`, `spawn`, `status`, `stop`, and `interrupt` through one typed `request` helper.
+- [x] Add request timeout handling and listener cleanup for success, failure, wrong request IDs, and timeout.
+- [x] Implement `src/run-store.ts` as a small in-memory store that allows one active run at a time and remembers the last run summary.
+- [x] Persist compact run summaries with `pi.appendEntry("fusion-run", ...)` and restore them on `session_start`.
+- [x] Add tests with a fake event bus for RPC success, failure, timeout, wrong request ID, and cleanup.
+- [x] Add tests for active-run guard, run updates, done/failed/cancelled transitions, and session summary restore helpers.
+- [x] Run `npm run check` and `npm test`.
 
 Implementation notes:
 
