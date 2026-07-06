@@ -407,8 +407,13 @@ export class FusionOrchestrator {
     payload: unknown,
   ): Promise<unknown> {
     if (!runId) return payload;
+    const payloadResults = findResultsArray(payload);
     try {
-      return (await this.refreshStatus(runId)) ?? payload;
+      const statusPayload = await this.refreshStatus(runId);
+      const statusResults = findResultsArray(statusPayload);
+      if (payloadResults && payloadResults.length > 0) return payload;
+      if (statusResults && statusResults.length > 0) return statusPayload;
+      return payloadResults ? payload : (statusPayload ?? payload);
     } catch (error: unknown) {
       this.installWarning = `Could not refresh subagent run ${runId}: ${errorMessage(error)}`;
       return payload;
@@ -585,23 +590,34 @@ function activeRunId(run: FusionRun | undefined): string | undefined {
   return run.phase === "judge" ? run.judgeRunId : run.panelRunId;
 }
 
+function findResultsArray(payload: unknown): readonly unknown[] | undefined {
+  if (!isRecord(payload)) return undefined;
+  if (Array.isArray(payload.results) && payload.results.length > 0) {
+    return payload.results;
+  }
+  if (
+    isRecord(payload.details) &&
+    Array.isArray(payload.details.results) &&
+    payload.details.results.length > 0
+  ) {
+    return payload.details.results;
+  }
+  if (isRecord(payload.data)) {
+    const dataResults = findResultsArray(payload.data);
+    if (dataResults) return dataResults;
+  }
+  if (Array.isArray(payload.results)) return payload.results;
+  if (isRecord(payload.details) && Array.isArray(payload.details.results)) {
+    return payload.details.results;
+  }
+  return undefined;
+}
+
 function findFirstResult(
   payload: unknown,
 ): Record<string, unknown> | undefined {
-  if (!isRecord(payload)) return undefined;
-  if (Array.isArray(payload.results) && isRecord(payload.results[0])) {
-    return payload.results[0];
-  }
-  if (isRecord(payload.details)) {
-    if (
-      Array.isArray(payload.details.results) &&
-      isRecord(payload.details.results[0])
-    ) {
-      return payload.details.results[0];
-    }
-  }
-  if (isRecord(payload.data)) return findFirstResult(payload.data);
-  return undefined;
+  const first = findResultsArray(payload)?.[0];
+  return isRecord(first) ? first : undefined;
 }
 
 function resultFailed(result: Record<string, unknown>): boolean {

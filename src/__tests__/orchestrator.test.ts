@@ -146,6 +146,51 @@ await test("panel completion with multiple successes spawns and stores a judge r
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
 });
 
+await test("panel completion uses event results when RPC status has no result details", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  fixture.rpc.statusResults.set(
+    "panel-1",
+    completedStatusWithoutResults("panel-1"),
+  );
+
+  const result = await fixture.orchestrator.handleSubagentComplete(
+    successfulPanelStatus(),
+  );
+
+  assert.equal(result.status, "started");
+  assert.equal(fixture.rpc.spawns.length, 2);
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
+});
+
+await test("judge completion uses event output when RPC status has no result details", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  fixture.rpc.statusResults.set("panel-1", successfulPanelStatus());
+  await fixture.orchestrator.handleSubagentComplete({ runId: "panel-1" });
+  fixture.rpc.statusResults.set(
+    "judge-1",
+    completedStatusWithoutResults("judge-1"),
+  );
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "judge-1",
+    results: [
+      {
+        agent: "judge-agent",
+        success: true,
+        output: "# Fusion Report\n\n## Summary\nUse event output.",
+      },
+    ],
+  });
+
+  assert.equal(result.status, "done");
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Use event output/);
+});
+
 await test("judge completion renders the final judge report and clears active UI", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
@@ -212,6 +257,13 @@ function successfulPanelStatus(): unknown {
         output: "Tester says A is testable.",
       },
     ],
+  };
+}
+
+function completedStatusWithoutResults(runId: string): unknown {
+  return {
+    text: `Run: ${runId}\nState: complete`,
+    details: { mode: "single", results: [] },
   };
 }
 
