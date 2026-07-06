@@ -40,6 +40,38 @@ export type FusionInitResult =
       path?: string;
     };
 
+export interface FusionRuntimeCommandHandler {
+  startRun(args: string, ctx: ExtensionCommandContext): Promise<unknown>;
+  showStatus(ctx: ExtensionCommandContext): Promise<unknown>;
+  cancelActiveRun(ctx: ExtensionCommandContext): Promise<unknown>;
+}
+
+export function registerFusionCommands(
+  pi: Pick<ExtensionAPI, "registerCommand">,
+  handler: FusionRuntimeCommandHandler,
+): void {
+  pi.registerCommand("fusion", {
+    description: "Run a pi-subagents-backed fusion panel",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      await handler.startRun(args, ctx);
+    },
+  });
+
+  pi.registerCommand("fusion-status", {
+    description: "Show the active or last fusion run",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      await handler.showStatus(ctx);
+    },
+  });
+
+  pi.registerCommand("fusion-cancel", {
+    description: "Cancel the active fusion run",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      await handler.cancelActiveRun(ctx);
+    },
+  });
+}
+
 export function registerFusionInitCommand(
   pi: Pick<ExtensionAPI, "registerCommand">,
 ): void {

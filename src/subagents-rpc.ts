@@ -42,7 +42,7 @@ export interface SubagentsTargetParams {
   index?: number;
 }
 
-export type SubagentsSpawnParams = Record<string, unknown>;
+export type SubagentsSpawnParams = object;
 
 export interface SubagentsRpcRequestEnvelope {
   version: typeof SUBAGENTS_RPC_VERSION;

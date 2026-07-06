@@ -173,19 +173,19 @@ Implementation notes:
 
 ### Task 5: Implement commands, orchestrator, status, cancellation, and event handling
 
-- [ ] Implement `src/orchestrator.ts` with `startRun`, `handleSubagentComplete`, `refreshStatus`, `cancelActiveRun`, `restore`, and `clearUi`.
-- [ ] On `/fusion <prompt>`, ping `pi-subagents`, resolve profile, create active run, publish status, spawn panel, and store the returned panel run ID.
-- [ ] On panel completion, refresh status through RPC and extract panel results.
-- [ ] If zero panelists succeed, fail the run with a clear report.
-- [ ] If one panelist succeeds, skip judge and render a single-panel report.
-- [ ] If two or more panelists succeed, spawn the judge subagent and store the judge run ID.
-- [ ] On judge completion, extract judge output and render the final report.
-- [ ] Implement `/fusion-status` to show active or last run, profile, phase, run IDs, progress counts, and install/config warnings.
-- [ ] Implement `/fusion-cancel` to call `stop` on the active panel or judge run; fall back to `interrupt` if `stop` fails.
-- [ ] Implement `src/status.ts` to publish `ctx.ui.setStatus("fusion", text)` for active phases and clear it on shutdown or idle.
-- [ ] Implement optional compact widget with `ctx.ui.setWidget("fusion-panel", lines)` while active.
-- [ ] Add tests using fake RPC and fake UI for start, active-run conflict, status text, panel failure, one-success shortcut, judge spawn, judge completion, cancellation, and clearing UI.
-- [ ] Run `npm run check` and `npm test`.
+- [x] Implement `src/orchestrator.ts` with `startRun`, `handleSubagentComplete`, `refreshStatus`, `cancelActiveRun`, `restore`, and `clearUi`.
+- [x] On `/fusion <prompt>`, ping `pi-subagents`, resolve profile, create active run, publish status, spawn panel, and store the returned panel run ID.
+- [x] On panel completion, refresh status through RPC and extract panel results.
+- [x] If zero panelists succeed, fail the run with a clear report.
+- [x] If one panelist succeeds, skip judge and render a single-panel report.
+- [x] If two or more panelists succeed, spawn the judge subagent and store the judge run ID.
+- [x] On judge completion, extract judge output and render the final report.
+- [x] Implement `/fusion-status` to show active or last run, profile, phase, run IDs, progress counts, and install/config warnings.
+- [x] Implement `/fusion-cancel` to call `stop` on the active panel or judge run; fall back to `interrupt` if `stop` fails.
+- [x] Implement `src/status.ts` to publish `ctx.ui.setStatus("fusion", text)` for active phases and clear it on shutdown or idle.
+- [x] Implement optional compact widget with `ctx.ui.setWidget("fusion-panel", lines)` while active.
+- [x] Add tests using fake RPC and fake UI for start, active-run conflict, status text, panel failure, one-success shortcut, judge spawn, judge completion, cancellation, and clearing UI.
+- [x] Run `npm run check` and `npm test`.
 
 Implementation notes:
 
