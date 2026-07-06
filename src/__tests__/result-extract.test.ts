@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { extractPanelResults } from "../result-extract.js";
 import type { PanelMemberConfig } from "../types.js";
 
@@ -15,7 +16,7 @@ const PANEL: PanelMemberConfig[] = [
   },
 ];
 
-await test("extractPanelResults reads successful and failed async result children", () => {
+test("extractPanelResults reads successful and failed async result children", () => {
   const result = extractPanelResults(
     {
       runId: "panel-run",
@@ -64,7 +65,7 @@ await test("extractPanelResults reads successful and failed async result childre
   ]);
 });
 
-await test("extractPanelResults reads status RPC details results", () => {
+test("extractPanelResults reads status RPC details results", () => {
   const result = extractPanelResults(
     {
       text: "Run complete",
@@ -91,7 +92,7 @@ await test("extractPanelResults reads status RPC details results", () => {
   assert.equal(result.failures.length, 0);
 });
 
-await test("extractPanelResults treats failed statuses as failed panel summaries", () => {
+test("extractPanelResults treats failed statuses as failed panel summaries", () => {
   const result = extractPanelResults(
     {
       id: "panel-run",
@@ -122,7 +123,7 @@ await test("extractPanelResults treats failed statuses as failed panel summaries
   ]);
 });
 
-await test("extractPanelResults returns typed errors for missing and unknown shapes", () => {
+test("extractPanelResults returns typed errors for missing and unknown shapes", () => {
   const missing = extractPanelResults({ state: "complete" });
   assert.equal(missing.ok, false);
   if (!missing.ok) assert.equal(missing.error.code, "missing-results");
@@ -132,7 +133,7 @@ await test("extractPanelResults returns typed errors for missing and unknown sha
   if (!unknown.ok) assert.equal(unknown.error.code, "unknown-result-shape");
 });
 
-await test("extractPanelResults falls back to artifact paths when inline output is absent", () => {
+test("extractPanelResults falls back to artifact paths when inline output is absent", () => {
   const result = extractPanelResults({
     runId: "panel-run",
     results: [
@@ -155,15 +156,3 @@ await test("extractPanelResults falls back to artifact paths when inline output 
     },
   ]);
 });
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}

@@ -1,30 +1,23 @@
 # pi-fusion
 
+[![npm](https://img.shields.io/badge/npm-%40alexeiled%2Fpi--fusion-cb3837?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@alexeiled/pi-fusion)
+[![node](https://img.shields.io/badge/node-%3E%3D22.19.0-5fa04e?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+
 Subagent-native multi-model deliberation for Pi.
 
-`pi-fusion` adds an explicit `/fusion` command that runs a read-only panel through `pi-subagents`, asks a judge to synthesize successful panel outputs, and returns a Markdown report. It publishes only the `fusion` status key for footer/status integration. It never owns or replaces the Pi footer.
-
-## Requirements
-
-- Pi with Node.js 22.19 or newer.
-- `pi-subagents` installed and reachable over its RPC channel.
-- Optional: `pi-powerline-footer` if you want a footer item that reads the `fusion` status key.
-
-Install the required subagent extension if needed:
-
-```bash
-pi install npm:pi-subagents
-```
+`pi-fusion` adds `/fusion` for read-only panel deliberation through `pi-subagents`, then synthesizes the result into one Markdown report. It publishes only the `fusion` status key. It does not own the Pi footer.
 
 ## Install
 
-From a local checkout:
+Requirements:
+
+- Pi with Node.js 22.19 or newer
+- `pi-subagents`
 
 ```bash
-npm install
-npm run check
-npm test
-pi install /path/to/pi-fusion
+pi install npm:pi-subagents
+pi install npm:@alexeiled/pi-fusion
 ```
 
 Then reload Pi:
@@ -36,78 +29,31 @@ Then reload Pi:
 ## Commands
 
 ```text
-/fusion-init
+/fusion <prompt>
+/fusion --profile <name> <prompt>
 /fusion-status
 /fusion-cancel
-/fusion Compare two implementation approaches.
-/fusion --profile fast Compare two implementation approaches.
-/fusion -p fast Compare two implementation approaches.
+/fusion-init
 ```
 
-- `/fusion-init` writes a project-local `.pi/fusion.json` template for trusted projects.
-- `/fusion-status` shows the active or last run, phase, profile, run IDs, progress, and warnings.
-- `/fusion-cancel` stops the active panel or judge run, falling back to interrupt when stop is unavailable.
-- `/fusion` starts the configured panel. If one panelist succeeds, the report uses that single result. If two or more succeed, a judge synthesizes the final report.
+- `/fusion` starts the configured panel.
+- `/fusion-status` shows the active or last run.
+- `/fusion-cancel` stops the active panel or judge run.
+- `/fusion-init` writes a project-local `.pi/fusion.json` template.
 
 ## Config
 
-Project config lives at `.pi/fusion.json` and is read only for trusted projects. Global config lives at `~/.pi/agent/fusion.json`.
+- Project: `.pi/fusion.json`
+- Global: `~/.pi/agent/fusion.json`
 
-```json
-{
-  "defaultProfile": "quality",
-  "profiles": {
-    "quality": {
-      "panel": [
-        {
-          "id": "architect",
-          "label": "Architect",
-          "agent": "pi-fusion.fusion-panelist",
-          "model": "openai/gpt-5.5",
-          "thinking": "high",
-          "role": "architecture and tradeoffs"
-        },
-        {
-          "id": "tester",
-          "label": "Tester",
-          "agent": "pi-fusion.fusion-panelist",
-          "model": "anthropic/claude-sonnet-4",
-          "thinking": "medium",
-          "role": "test strategy and regressions"
-        }
-      ],
-      "judge": {
-        "agent": "pi-fusion.fusion-judge",
-        "model": "openai/gpt-5.5",
-        "thinking": "xhigh"
-      },
-      "concurrency": 2,
-      "timeoutMs": 300000,
-      "context": "fresh"
-    }
-  }
-}
-```
+Run `/fusion-init` to create a project config template.
 
-`thinking` is appended to a configured model as a suffix when the model does not already have one, for example `openai/gpt-5.5:xhigh`.
+## Notes
 
-## Footer integration
-
-`pi-fusion` calls `ctx.ui.setStatus("fusion", ...)` while a run is active and clears that key when idle. It does not call `ctx.ui.setFooter(...)`.
-
-With `pi-powerline-footer`, add a custom item that reads status key `fusion`. Keep footer ownership in the footer extension.
-
-## Privacy and tool access
-
-Prompts are sent to the configured panel and judge model providers through `pi-subagents`. If a panelist inspects local files, relevant file contents or snippets can also be sent to those providers. Configure profiles and providers accordingly.
-
-Bundled panel agents are read-only by default. They are instructed not to edit files, stage changes, commit changes, run destructive commands, ask other agents, or run nested subagents.
+- Bundled panel agents are read-only by default.
+- Footer integration should read the `fusion` status key from another extension.
+- Prompts and inspected file snippets may be sent to your configured model providers through `pi-subagents`.
 
 ## Development
 
-```bash
-npm install
-npm run check
-npm test
-npm run pack:dry
-```
+See [`DEVELOPMENT.md`](./DEVELOPMENT.md).

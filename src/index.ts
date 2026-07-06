@@ -27,8 +27,8 @@ export default function fusionExtension(pi: ExtensionAPI): void {
     },
   );
 
-  pi.on("session_start", (_event, ctx) => {
-    orchestrator.restore(ctx);
+  pi.on("session_start", async (_event, ctx) => {
+    await orchestrator.restore(ctx);
   });
 
   pi.on("session_shutdown", () => {

@@ -255,13 +255,32 @@ export class FusionOrchestrator {
     return { status: "cancelled", run: cancelled, report };
   }
 
-  restore(
+  async restore(
     ctx: FusionCommandContext,
-  ): ReturnType<FusionRunStore["restoreFromSession"]> {
+  ): Promise<ReturnType<FusionRunStore["restoreFromSession"]>> {
     this.context = ctx;
     const summary = this.runStore.restoreFromSession(ctx);
     this.clearActiveRuntime();
-    clearFusionUi(ctx);
+
+    const active = this.runStore.getActiveRun();
+    if (!active) {
+      clearFusionUi(ctx);
+      return summary;
+    }
+
+    try {
+      const config = await this.loadConfig(ctx);
+      this.activeProfile = this.resolveProfile(
+        config,
+        active.profileName,
+      ).profile;
+      this.configWarning = undefined;
+    } catch (error: unknown) {
+      const message = `Could not restore fusion profile "${active.profileName}": ${errorMessage(error)}`;
+      this.configWarning = message;
+      this.notify(ctx, message, "warning");
+    }
+    publishFusionStatus(ctx, active);
     return summary;
   }
 

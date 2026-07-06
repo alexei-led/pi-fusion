@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { parseFusionArgs, tokenizeCommandArgs } from "../commands.js";
 
-await test("parseFusionArgs parses a prompt without an explicit profile", () => {
+test("parseFusionArgs parses a prompt without an explicit profile", () => {
   assert.deepEqual(parseFusionArgs("compare the approaches"), {
     prompt: "compare the approaches",
   });
@@ -10,7 +11,7 @@ await test("parseFusionArgs parses a prompt without an explicit profile", () => 
   });
 });
 
-await test("parseFusionArgs parses long and short profile flags", () => {
+test("parseFusionArgs parses long and short profile flags", () => {
   assert.deepEqual(parseFusionArgs("--profile fast compare the approaches"), {
     profile: "fast",
     prompt: "compare the approaches",
@@ -25,20 +26,20 @@ await test("parseFusionArgs parses long and short profile flags", () => {
   });
 });
 
-await test("parseFusionArgs keeps flags after the first prompt token as prompt text", () => {
+test("parseFusionArgs keeps flags after the first prompt token as prompt text", () => {
   assert.deepEqual(parseFusionArgs("compare --profile literally"), {
     prompt: "compare --profile literally",
   });
 });
 
-await test("parseFusionArgs supports quoted prompt words", () => {
+test("parseFusionArgs supports quoted prompt words", () => {
   assert.deepEqual(parseFusionArgs("-p fast \"compare A\" 'against B'"), {
     profile: "fast",
     prompt: "compare A against B",
   });
 });
 
-await test("parseFusionArgs rejects missing input and malformed profile flags", () => {
+test("parseFusionArgs rejects missing input and malformed profile flags", () => {
   assert.throws(() => parseFusionArgs(""), /Usage: \/fusion/);
   assert.throws(
     () => parseFusionArgs("--profile"),
@@ -55,7 +56,7 @@ await test("parseFusionArgs rejects missing input and malformed profile flags", 
   );
 });
 
-await test("tokenizeCommandArgs handles whitespace, quotes, escapes, and unclosed quotes", () => {
+test("tokenizeCommandArgs handles whitespace, quotes, escapes, and unclosed quotes", () => {
   assert.deepEqual(tokenizeCommandArgs("  one  two\\ words 'three four'  "), [
     "one",
     "two words",
@@ -63,15 +64,3 @@ await test("tokenizeCommandArgs handles whitespace, quotes, escapes, and unclose
   ]);
   assert.throws(() => tokenizeCommandArgs("'open"), /Unclosed ' quote/);
 });
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}

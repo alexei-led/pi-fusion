@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,7 +21,7 @@ const PANEL_MEMBER = {
 
 const JUDGE = { agent: "pi-fusion.fusion-judge" };
 
-await test("loadFusionConfig returns the default quality profile when no config exists", async () => {
+test("loadFusionConfig returns the default quality profile when no config exists", async () => {
   const missingReader = async () => {
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
   };
@@ -38,7 +39,7 @@ await test("loadFusionConfig returns the default quality profile when no config 
   assert.equal(profile.context, "fresh");
 });
 
-await test("loadFusionConfig prefers trusted project config over global config", async (t) => {
+test("loadFusionConfig prefers trusted project config over global config", async (t) => {
   const root = await makeTempDir(t);
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -60,7 +61,7 @@ await test("loadFusionConfig prefers trusted project config over global config",
   assert.ok(config.profiles.project);
 });
 
-await test("loadFusionConfig ignores project config when the project is untrusted", async (t) => {
+test("loadFusionConfig ignores project config when the project is untrusted", async (t) => {
   const root = await makeTempDir(t);
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -83,7 +84,7 @@ await test("loadFusionConfig ignores project config when the project is untruste
   assert.equal(config.profiles.project, undefined);
 });
 
-await test("loadFusionConfig fails on malformed JSON", async (t) => {
+test("loadFusionConfig fails on malformed JSON", async (t) => {
   const root = await makeTempDir(t);
   const agentDir = join(root, "agent");
   const path = getGlobalFusionConfigPath(agentDir);
@@ -99,7 +100,7 @@ await test("loadFusionConfig fails on malformed JSON", async (t) => {
   );
 });
 
-await test("loadFusionConfig fails on invalid config shape", async (t) => {
+test("loadFusionConfig fails on invalid config shape", async (t) => {
   const root = await makeTempDir(t);
   const agentDir = join(root, "agent");
   await writeJson(getGlobalFusionConfigPath(agentDir), {
@@ -118,7 +119,7 @@ await test("loadFusionConfig fails on invalid config shape", async (t) => {
   );
 });
 
-await test("resolveProfile returns requested and default profiles", () => {
+test("resolveProfile returns requested and default profiles", () => {
   const config: FusionConfig = {
     defaultProfile: "quality",
     profiles: {
@@ -131,7 +132,7 @@ await test("resolveProfile returns requested and default profiles", () => {
   assert.equal(resolveProfile(config, "fast").name, "fast");
 });
 
-await test("resolveProfile reports unknown profiles and empty panels", () => {
+test("resolveProfile reports unknown profiles and empty panels", () => {
   const config: FusionConfig = {
     defaultProfile: "empty",
     profiles: {
@@ -146,7 +147,7 @@ await test("resolveProfile reports unknown profiles and empty panels", () => {
   assert.throws(() => resolveProfile(config), /at least one panel member/);
 });
 
-await test("runFusionInit writes a trusted project template", async (t) => {
+test("runFusionInit writes a trusted project template", async (t) => {
   const root = await makeTempDir(t);
   const notifications: string[] = [];
 
@@ -168,7 +169,7 @@ await test("runFusionInit writes a trusted project template", async (t) => {
   assert.equal(notifications.length, 1);
 });
 
-await test("runFusionInit skips untrusted projects and protects existing config without confirmation", async (t) => {
+test("runFusionInit skips untrusted projects and protects existing config without confirmation", async (t) => {
   const root = await makeTempDir(t);
   const configPath = getProjectFusionConfigPath(root);
   await mkdir(dirname(configPath), { recursive: true });
@@ -228,19 +229,4 @@ async function makeTempDir(t: TestContext): Promise<string> {
     await rm(path, { recursive: true, force: true });
   });
   return path;
-}
-
-async function test(
-  name: string,
-  fn: (context: TestContext) => void | Promise<void>,
-): Promise<void> {
-  const afterCallbacks: Array<() => void | Promise<void>> = [];
-  try {
-    await fn({ after: (callback) => afterCallbacks.push(callback) });
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  } finally {
-    for (const callback of afterCallbacks.reverse()) await callback();
-  }
 }

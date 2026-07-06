@@ -1,10 +1,13 @@
 {
-  "name": "@alexei/pi-fusion",
+  "name": "@alexeiled/pi-fusion",
   "version": "0.1.0",
   "description": "Subagent-native multi-model deliberation for Pi",
   "type": "module",
   "main": "./src/index.ts",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
@@ -18,7 +21,7 @@
   ],
   "files": [
     "agents/*.md",
-    "src/**/*.ts",
+    "src/*.ts",
     "README.md",
     "LICENSE",
     "AGENTS.md",
@@ -27,7 +30,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --import jiti/register --test src/__tests__/*.test.ts",
-    "pack:dry": "npm pack --dry-run"
+    "pack:dry": "npm pack --dry-run",
+    "publish:dry": "npm publish --dry-run"
   },
   "pi": {
     "extensions": [
@@ -45,7 +49,7 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "jiti": "^2.4.0",
-    "typescript": "^5.5.0"
+    "jiti": "^2.7.0",
+    "typescript": "^6.0.3"
   }
 }

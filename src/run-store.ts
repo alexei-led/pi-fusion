@@ -111,6 +111,7 @@ export class FusionRunStore {
       updatedAt: createdAt,
     };
     this.activeRun = run;
+    this.persistRun(run);
     return cloneRun(run);
   }
 
@@ -118,6 +119,7 @@ export class FusionRunStore {
     const active = this.requireActiveRun(id);
     const updated = applyPatch(active, patch, patch.updatedAt ?? this.now());
     this.activeRun = updated;
+    this.persistRun(updated);
     return cloneRun(updated);
   }
 
@@ -148,14 +150,19 @@ export class FusionRunStore {
     const summary = toRunSummary(finished);
     this.activeRun = undefined;
     this.lastRunSummary = summary;
-    this.persistence?.appendEntry(FUSION_RUN_ENTRY_TYPE, summary);
+    this.persistRun(summary);
     return cloneRun(finished);
   }
 
   restoreFromEntries(
     entries: readonly unknown[],
   ): FusionRunSummary | undefined {
+    const latestState = readLastFusionRunState(entries);
     const summary = readLastFusionRunSummary(entries);
+    this.activeRun =
+      latestState && !isTerminalPhase(latestState.phase)
+        ? cloneRun(latestState)
+        : undefined;
     this.lastRunSummary = summary;
     return summary ? cloneRunSummary(summary) : undefined;
   }
@@ -176,6 +183,10 @@ export class FusionRunStore {
     this.activeRun = undefined;
   }
 
+  private persistRun(run: FusionRun): void {
+    this.persistence?.appendEntry(FUSION_RUN_ENTRY_TYPE, cloneRun(run));
+  }
+
   private requireActiveRun(id: string): FusionRun {
     if (!this.activeRun) {
       throw new FusionRunStoreError("No active fusion run.");
@@ -187,6 +198,23 @@ export class FusionRunStore {
     }
     return this.activeRun;
   }
+}
+
+export function readFusionRunStates(entries: readonly unknown[]): FusionRun[] {
+  const states: FusionRun[] = [];
+  for (const entry of entries) {
+    if (!isFusionRunEntry(entry)) continue;
+    if (isFusionRunState(entry.data)) states.push(cloneRun(entry.data));
+  }
+  return states;
+}
+
+export function readLastFusionRunState(
+  entries: readonly unknown[],
+): FusionRun | undefined {
+  const states = readFusionRunStates(entries);
+  const state = states.at(-1);
+  return state ? cloneRun(state) : undefined;
 }
 
 export function readFusionRunSummaries(
@@ -290,12 +318,12 @@ function isFusionRunEntry(
   );
 }
 
-function isFusionRunSummary(value: unknown): value is FusionRunSummary {
+function isFusionRunState(value: unknown): value is FusionRun {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.id)) return false;
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
-  if (!isTerminalPhase(value.phase)) return false;
+  if (!isFusionPhase(value.phase)) return false;
   if (!isFiniteNumber(value.createdAt)) return false;
   if (!isFiniteNumber(value.updatedAt)) return false;
   if (value.panelRunId !== undefined && typeof value.panelRunId !== "string") {
@@ -311,6 +339,20 @@ function isFusionRunSummary(value: unknown): value is FusionRunSummary {
     return false;
   }
   return true;
+}
+
+function isFusionRunSummary(value: unknown): value is FusionRunSummary {
+  return isFusionRunState(value) && isTerminalPhase(value.phase);
+}
+
+function isFusionPhase(value: unknown): value is FusionPhase {
+  return (
+    value === "panel" ||
+    value === "judge" ||
+    value === "done" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
 }
 
 function isTerminalPhase(value: unknown): value is FusionTerminalPhase {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
   SubagentsRpcClient,
@@ -9,7 +10,7 @@ import {
   type SubagentsRpcMethod,
 } from "../subagents-rpc.js";
 
-await test("SubagentsRpcClient resolves successful replies and cleans listeners", async () => {
+test("SubagentsRpcClient resolves successful replies and cleans listeners", async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
@@ -40,7 +41,7 @@ await test("SubagentsRpcClient resolves successful replies and cleans listeners"
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-await test("SubagentsRpcClient rejects failure replies and cleans listeners", async () => {
+test("SubagentsRpcClient rejects failure replies and cleans listeners", async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
@@ -69,7 +70,7 @@ await test("SubagentsRpcClient rejects failure replies and cleans listeners", as
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-await test("SubagentsRpcClient ignores wrong request IDs without cleanup", async () => {
+test("SubagentsRpcClient ignores wrong request IDs without cleanup", async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
@@ -102,7 +103,7 @@ await test("SubagentsRpcClient ignores wrong request IDs without cleanup", async
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-await test("SubagentsRpcClient times out and cleans listeners", async () => {
+test("SubagentsRpcClient times out and cleans listeners", async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
@@ -122,7 +123,7 @@ await test("SubagentsRpcClient times out and cleans listeners", async () => {
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-await test("SubagentsRpcClient helper methods emit typed method envelopes", async () => {
+test("SubagentsRpcClient helper methods emit typed method envelopes", async () => {
   const specs: Array<{
     method: SubagentsRpcMethod;
     params: unknown;
@@ -216,16 +217,4 @@ class FakeEventBus implements SubagentsEventBus {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
 }

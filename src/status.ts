@@ -1,7 +1,6 @@
 import type { FusionRun } from "./types.js";
 
 export const FUSION_STATUS_KEY = "fusion";
-export const FUSION_WIDGET_KEY = "fusion-panel";
 
 export interface FusionProgressCounts {
   total?: number;
@@ -13,7 +12,6 @@ export interface FusionProgressCounts {
 
 export interface FusionUi {
   setStatus(key: string, text: string | undefined): void;
-  setWidget(key: string, lines: readonly string[] | undefined): void;
 }
 
 export interface FusionUiContext {
@@ -31,13 +29,11 @@ export function publishFusionStatus(
 ): void {
   if (!ctx?.hasUI) return;
   ctx.ui.setStatus(FUSION_STATUS_KEY, formatFusionStatusText(run, progress));
-  ctx.ui.setWidget(FUSION_WIDGET_KEY, buildFusionWidgetLines(run, progress));
 }
 
 export function clearFusionUi(ctx: FusionUiContext | undefined): void {
   if (!ctx?.hasUI) return;
   ctx.ui.setStatus(FUSION_STATUS_KEY, undefined);
-  ctx.ui.setWidget(FUSION_WIDGET_KEY, undefined);
 }
 
 export function formatFusionStatusText(
@@ -48,22 +44,6 @@ export function formatFusionStatusText(
   const progressText = progress ? ` ${formatProgressCounts(progress)}` : "";
   const runText = activeRunId ? ` ${activeRunId}` : " starting";
   return `fusion: ${run.phase} ${run.profileName}${runText}${progressText}`;
-}
-
-export function buildFusionWidgetLines(
-  run: Pick<
-    FusionRun,
-    "id" | "phase" | "profileName" | "panelRunId" | "judgeRunId"
-  >,
-  progress?: FusionProgressCounts,
-): string[] {
-  return [
-    `Fusion ${run.phase} · ${run.profileName}`,
-    `Run: ${run.id}`,
-    ...(run.panelRunId ? [`Panel: ${run.panelRunId}`] : []),
-    ...(run.judgeRunId ? [`Judge: ${run.judgeRunId}`] : []),
-    ...(progress ? [`Progress: ${formatProgressCounts(progress)}`] : []),
-  ];
 }
 
 export function extractFusionProgressCounts(

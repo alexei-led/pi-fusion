@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   renderCancelledReport,
   renderFailureReport,
@@ -50,7 +51,7 @@ const TIMED_OUT_TESTER: FailedPanelSummary = {
   sessionPath: "/tmp/tester.jsonl",
 };
 
-await test("renderJudgeReport renders deterministic success sections", () => {
+test("renderJudgeReport renders deterministic success sections", () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
     judgeOutput: [
@@ -135,7 +136,7 @@ await test("renderJudgeReport renders deterministic success sections", () => {
   );
 });
 
-await test("renderJudgeReport shows partial success and timed-out panelists", () => {
+test("renderJudgeReport shows partial success and timed-out panelists", () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
     judgeOutput: "Prefer A.",
@@ -196,7 +197,7 @@ await test("renderJudgeReport shows partial success and timed-out panelists", ()
   );
 });
 
-await test("renderSinglePanelReport renders the single result with required sections", () => {
+test("renderSinglePanelReport renders the single result with required sections", () => {
   const report = renderSinglePanelReport({
     run: RUN_PANEL,
     output: { ...ARCHITECT, output: "Choose A.\nIt is simpler." },
@@ -255,7 +256,7 @@ await test("renderSinglePanelReport renders the single result with required sect
   );
 });
 
-await test("renderPanelFailureReport renders all-panel failure", () => {
+test("renderPanelFailureReport renders all-panel failure", () => {
   const report = renderPanelFailureReport({
     run: RUN_PANEL,
     failures: [
@@ -319,7 +320,7 @@ await test("renderPanelFailureReport renders all-panel failure", () => {
   );
 });
 
-await test("renderFailureReport renders judge failure with panel status", () => {
+test("renderFailureReport renders judge failure with panel status", () => {
   const report = renderFailureReport({
     run: RUN_JUDGE,
     error: "Judge failed\nstack trace",
@@ -379,7 +380,7 @@ await test("renderFailureReport renders judge failure with panel status", () => 
   );
 });
 
-await test("renderCancelledReport renders cancellation details", () => {
+test("renderCancelledReport renders cancellation details", () => {
   const report = renderCancelledReport({
     run: RUN_JUDGE,
     method: "interrupt",
@@ -443,15 +444,3 @@ await test("renderCancelledReport renders cancellation details", () => {
     ].join("\n"),
   );
 });
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   FusionOrchestrator,
   type FusionCommandContext,
@@ -23,7 +24,7 @@ const CONFIG: FusionConfig = {
   },
 };
 
-await test("startRun pings subagents, starts a panel run, and publishes UI status", async () => {
+test("startRun pings subagents, starts a panel run, and publishes UI status", async () => {
   const fixture = makeFixture();
 
   const result = await fixture.orchestrator.startRun(
@@ -39,14 +40,9 @@ await test("startRun pings subagents, starts a panel run, and publishes UI statu
   assert.equal(panelTasks.length, 2);
   assert.equal(fixture.orchestrator.getActiveRun()?.panelRunId, "panel-1");
   assert.match(fixture.ui.lastStatus("fusion") ?? "", /panel-1/);
-  assert.deepEqual(fixture.ui.lastWidget("fusion-panel")?.slice(0, 3), [
-    "Fusion panel · quality",
-    "Run: fusion-1",
-    "Panel: panel-1",
-  ]);
 });
 
-await test("startRun rejects an active-run conflict without spawning another panel", async () => {
+test("startRun rejects an active-run conflict without spawning another panel", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("first", fixture.ctx);
 
@@ -60,7 +56,7 @@ await test("startRun rejects an active-run conflict without spawning another pan
   );
 });
 
-await test("showStatus reports active run IDs, progress counts, and warnings", async () => {
+test("showStatus reports active run IDs, progress counts, and warnings", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("panel-1", {
@@ -79,7 +75,7 @@ await test("showStatus reports active run IDs, progress counts, and warnings", a
   assert.equal(fixture.messages.at(-1)?.customType, "fusion-status");
 });
 
-await test("panel completion with zero successful panelists fails with a clear report", async () => {
+test("panel completion with zero successful panelists fails with a clear report", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("panel-1", {
@@ -104,7 +100,7 @@ await test("panel completion with zero successful panelists fails with a clear r
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
 });
 
-await test("panel completion with one success skips judge and completes the run", async () => {
+test("panel completion with one success skips judge and completes the run", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("panel-1", {
@@ -129,7 +125,7 @@ await test("panel completion with one success skips judge and completes the run"
   assert.match(fixture.messages.at(-1)?.content ?? "", /Choose A/);
 });
 
-await test("panel completion with multiple successes spawns and stores a judge run", async () => {
+test("panel completion with multiple successes spawns and stores a judge run", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
@@ -146,7 +142,7 @@ await test("panel completion with multiple successes spawns and stores a judge r
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
 });
 
-await test("panel completion uses event results when RPC status has no result details", async () => {
+test("panel completion uses event results when RPC status has no result details", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
@@ -165,7 +161,7 @@ await test("panel completion uses event results when RPC status has no result de
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
 });
 
-await test("judge completion uses event output when RPC status has no result details", async () => {
+test("judge completion uses event output when RPC status has no result details", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
@@ -191,7 +187,7 @@ await test("judge completion uses event output when RPC status has no result det
   assert.match(fixture.messages.at(-1)?.content ?? "", /Use event output/);
 });
 
-await test("judge completion renders the final judge report and clears active UI", async () => {
+test("judge completion renders the final judge report and clears active UI", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
@@ -216,10 +212,9 @@ await test("judge completion renders the final judge report and clears active UI
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
   assert.match(fixture.messages.at(-1)?.content ?? "", /Use A/);
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
-  assert.equal(fixture.ui.lastWidget("fusion-panel"), undefined);
 });
 
-await test("cancelActiveRun stops the active run and falls back to interrupt", async () => {
+test("cancelActiveRun stops the active run and falls back to interrupt", async () => {
   const fixture = makeFixture();
   fixture.rpc.stopError = new Error("stop unsupported");
   await fixture.orchestrator.startRun("compare", fixture.ctx);
@@ -236,14 +231,13 @@ await test("cancelActiveRun stops the active run and falls back to interrupt", a
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
 });
 
-await test("clearUi clears fusion status and widget keys", async () => {
+test("clearUi clears the fusion status key", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
 
   fixture.orchestrator.clearUi();
 
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
-  assert.equal(fixture.ui.lastWidget("fusion-panel"), undefined);
 });
 
 function successfulPanelStatus(): unknown {
@@ -341,19 +335,11 @@ class FakeRpc implements FusionRpcClientLike {
 
 class FakeUi {
   readonly statuses: Array<{ key: string; text: string | undefined }> = [];
-  readonly widgets: Array<{
-    key: string;
-    lines: readonly string[] | undefined;
-  }> = [];
   readonly notifications: Array<{ message: string; type: string | undefined }> =
     [];
 
   setStatus(key: string, text: string | undefined): void {
     this.statuses.push({ key, text });
-  }
-
-  setWidget(key: string, lines: readonly string[] | undefined): void {
-    this.widgets.push({ key, lines });
   }
 
   notify(message: string, type?: string): void {
@@ -363,24 +349,8 @@ class FakeUi {
   lastStatus(key: string): string | undefined {
     return this.statuses.findLast((entry) => entry.key === key)?.text;
   }
-
-  lastWidget(key: string): readonly string[] | undefined {
-    return this.widgets.findLast((entry) => entry.key === key)?.lines;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
 }

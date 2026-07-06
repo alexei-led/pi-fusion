@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   FUSION_RUN_ENTRY_TYPE,
   FusionRunStore,
   FusionRunStoreError,
+  readFusionRunStates,
   readFusionRunSummaries,
+  readLastFusionRunState,
   readLastFusionRunSummary,
   type FusionTerminalPhase,
 } from "../run-store.js";
 
-await test("FusionRunStore starts one active run at a time", () => {
+test("FusionRunStore starts one active run at a time", () => {
   const store = new FusionRunStore({
     idFactory: () => "run-1",
     now: () => 10,
@@ -27,7 +30,7 @@ await test("FusionRunStore starts one active run at a time", () => {
   );
 });
 
-await test("FusionRunStore updates active run fields", () => {
+test("FusionRunStore updates active run fields", () => {
   let clock = 20;
   const store = new FusionRunStore({
     idFactory: () => "run-1",
@@ -49,7 +52,7 @@ await test("FusionRunStore updates active run fields", () => {
   assert.throws(() => store.updateRun("missing", {}), /not active/);
 });
 
-await test("FusionRunStore persists done, failed, and cancelled transitions", () => {
+test("FusionRunStore persists done, failed, and cancelled transitions", () => {
   const phases: FusionTerminalPhase[] = ["done", "failed", "cancelled"];
 
   for (const phase of phases) {
@@ -73,13 +76,44 @@ await test("FusionRunStore persists done, failed, and cancelled transitions", ()
     assert.equal(finished.updatedAt, 40);
     assert.equal(store.getActiveRun(), undefined);
     assert.equal(store.getLastRunSummary()?.phase, phase);
-    assert.equal(entries.length, 1);
+    assert.equal(entries.length, 2);
     assert.equal(entries[0]?.customType, FUSION_RUN_ENTRY_TYPE);
-    assert.deepEqual(entries[0]?.data, store.getLastRunSummary());
+    assert.equal(entries[1]?.customType, FUSION_RUN_ENTRY_TYPE);
+    assert.deepEqual(entries[1]?.data, store.getLastRunSummary());
   }
 });
 
-await test("FusionRunStore convenience terminal helpers use transition phases", () => {
+test("FusionRunStore persists and restores active run snapshots", () => {
+  const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
+    [];
+  const store = new FusionRunStore({
+    idFactory: () => "run-active",
+    now: () => 10,
+    persistence: {
+      appendEntry: (customType, data) =>
+        entries.push({ type: "custom", customType, data }),
+    },
+  });
+
+  store.startRun({ prompt: "compare", profileName: "quality" });
+  store.updateRun("run-active", { panelRunId: "panel-1" });
+
+  assert.equal(entries.length, 2);
+  assert.equal(readLastFusionRunState(entries)?.panelRunId, "panel-1");
+  assert.deepEqual(
+    readFusionRunStates(entries).map((state) => state.phase),
+    ["panel", "panel"],
+  );
+
+  const restoredStore = new FusionRunStore();
+  restoredStore.restoreFromEntries(entries);
+
+  assert.equal(restoredStore.getActiveRun()?.id, "run-active");
+  assert.equal(restoredStore.getActiveRun()?.panelRunId, "panel-1");
+  assert.equal(restoredStore.getLastRunSummary(), undefined);
+});
+
+test("FusionRunStore convenience terminal helpers use transition phases", () => {
   const doneStore = new FusionRunStore({
     idFactory: () => "done",
     now: () => 1,
@@ -106,7 +140,7 @@ await test("FusionRunStore convenience terminal helpers use transition phases", 
   assert.equal(cancelledStore.cancelRun("cancelled").phase, "cancelled");
 });
 
-await test("fusion run summary restore helpers read the latest valid session entry", () => {
+test("fusion run summary restore helpers read the latest valid session entry", () => {
   const entries = [
     { type: "custom", customType: "other", data: { id: "ignored" } },
     { type: "custom", customType: FUSION_RUN_ENTRY_TYPE, data: { bad: true } },
@@ -151,15 +185,3 @@ await test("fusion run summary restore helpers read the latest valid session ent
   assert.equal(restored?.id, "second");
   assert.equal(store.getLastRunSummary()?.profileName, "fast");
 });
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}

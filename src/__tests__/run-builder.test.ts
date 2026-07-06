@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   appendThinkingSuffix,
   buildJudgeSpawnParams,
@@ -43,7 +44,7 @@ const PROFILE: FusionProfile = {
   context: "fresh",
 };
 
-await test("appendThinkingSuffix appends only when a model exists and no suffix exists", () => {
+test("appendThinkingSuffix appends only when a model exists and no suffix exists", () => {
   assert.equal(
     appendThinkingSuffix("openai/gpt-5.5", "xhigh"),
     "openai/gpt-5.5:xhigh",
@@ -59,7 +60,7 @@ await test("appendThinkingSuffix appends only when a model exists and no suffix 
   );
 });
 
-await test("buildPanelSpawnParams creates async parallel panel tasks", () => {
+test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
 
   assert.equal(params.async, true);
@@ -82,7 +83,7 @@ await test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal(tasks[0]?.skill, false);
 });
 
-await test("buildPanelSpawnParams includes role, prompt, contract, and no-edit instruction", () => {
+test("buildPanelSpawnParams includes role, prompt, contract, and no-edit instruction", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
   const task = params.tasks[0]?.task ?? "";
 
@@ -96,7 +97,7 @@ await test("buildPanelSpawnParams includes role, prompt, contract, and no-edit i
   assert.match(task, /## Confidence/);
 });
 
-await test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, and report contract", () => {
+test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, and report contract", () => {
   const outputs: PanelOutput[] = [
     {
       index: 0,
@@ -153,15 +154,3 @@ await test("buildJudgeSpawnParams includes prompt, panel status, outputs, failur
   assert.match(params.task, /# Fusion Report/);
   assert.match(params.task, /## Disagreements/);
 });
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}

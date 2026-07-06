@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
-  buildFusionWidgetLines,
   clearFusionUi,
   extractFusionProgressCounts,
   formatFusionStatusText,
@@ -18,7 +18,7 @@ const RUN: FusionRun = {
   panelRunId: "panel-1",
 };
 
-await test("formatFusionStatusText includes phase, profile, run ID, and counts", () => {
+test("formatFusionStatusText includes phase, profile, run ID, and counts", () => {
   const text = formatFusionStatusText(RUN, {
     total: 3,
     pending: 1,
@@ -33,15 +33,7 @@ await test("formatFusionStatusText includes phase, profile, run ID, and counts",
   );
 });
 
-await test("buildFusionWidgetLines creates compact active run details", () => {
-  assert.deepEqual(buildFusionWidgetLines(RUN), [
-    "Fusion panel · quality",
-    "Run: fusion-1",
-    "Panel: panel-1",
-  ]);
-});
-
-await test("publishFusionStatus and clearFusionUi use only status and widget keys", () => {
+test("publishFusionStatus and clearFusionUi use only the fusion status key", () => {
   const ui = new FakeUi();
   const ctx = { hasUI: true, ui };
 
@@ -52,11 +44,9 @@ await test("publishFusionStatus and clearFusionUi use only status and widget key
     { key: "fusion", text: "fusion: panel quality panel-1" },
     { key: "fusion", text: undefined },
   ]);
-  assert.equal(ui.widgets[0]?.key, "fusion-panel");
-  assert.equal(ui.widgets[1]?.lines, undefined);
 });
 
-await test("extractFusionProgressCounts reads progress and result containers", () => {
+test("extractFusionProgressCounts reads progress and result containers", () => {
   assert.deepEqual(
     extractFusionProgressCounts({
       details: {
@@ -80,28 +70,8 @@ await test("extractFusionProgressCounts reads progress and result containers", (
 
 class FakeUi {
   readonly statuses: Array<{ key: string; text: string | undefined }> = [];
-  readonly widgets: Array<{
-    key: string;
-    lines: readonly string[] | undefined;
-  }> = [];
 
   setStatus(key: string, text: string | undefined): void {
     this.statuses.push({ key, text });
-  }
-
-  setWidget(key: string, lines: readonly string[] | undefined): void {
-    this.widgets.push({ key, lines });
-  }
-}
-
-async function test(
-  name: string,
-  fn: () => void | Promise<void>,
-): Promise<void> {
-  try {
-    await fn();
-  } catch (error: unknown) {
-    console.error(`not ok - ${name}`);
-    throw error;
   }
 }
