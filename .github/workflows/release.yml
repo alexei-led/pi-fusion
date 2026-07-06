@@ -79,8 +79,24 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Publish to npm
+        id: publish
         if: steps.npm.outputs.published == 'false'
-        run: npm publish --provenance --access public
+        env:
+          PACKAGE_NAME: ${{ steps.metadata.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          if npm publish --provenance --access public; then
+            echo "result=published" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "Publish command returned non-zero, but $PACKAGE_NAME@$PACKAGE_VERSION is now on npm; continuing." >&2
+            echo "result=already-visible-after-publish" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          exit 1
       - name: Create GitHub release
         id: release
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -138,6 +154,7 @@ jobs:
           PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
           NPM_ALREADY_PUBLISHED: ${{ steps.npm.outputs.published }}
+          NPM_PUBLISH_RESULT: ${{ steps.publish.outputs.result }}
           GH_RELEASE_CREATED: ${{ steps.release.outputs.created }}
           GH_RELEASE_URL: ${{ steps.release.outputs.url }}
         run: |
@@ -146,6 +163,7 @@ jobs:
             printf -- "- Package: \`%s@%s\`\n" "$PACKAGE_NAME" "$PACKAGE_VERSION"
             printf -- "- Tag: \`%s\`\n" "$RELEASE_TAG"
             printf -- "- npm already published before this run: %s\n" "$NPM_ALREADY_PUBLISHED"
+            printf -- "- npm publish step result: %s\n" "${NPM_PUBLISH_RESULT:-skipped}"
             printf -- "- GitHub release created in this run: %s\n" "$GH_RELEASE_CREATED"
             printf -- "- GitHub release: %s\n" "$GH_RELEASE_URL"
           } >> "$GITHUB_STEP_SUMMARY"
