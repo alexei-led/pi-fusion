@@ -120,15 +120,15 @@ Implementation notes:
 
 ### Task 2: Implement domain types, config loader, and `/fusion` argument parsing
 
-- [ ] Define domain types in `src/types.ts`: `ThinkingLevel`, `PanelMemberConfig`, `JudgeConfig`, `FusionProfile`, `FusionConfig`, `FusionPhase`, and `FusionRun`.
-- [ ] Implement `src/config.ts` to load project `.pi/fusion.json` only when `ctx.isProjectTrusted()` is true, then fall back to `~/.pi/agent/fusion.json`, then defaults.
-- [ ] Validate untrusted JSON with narrow type guards. Do not cast raw parsed JSON directly to domain types.
-- [ ] Default to a `quality` profile with three read-only panel members and one judge.
-- [ ] Implement `resolveProfile(config, requested)` with clear errors for unknown profile names and empty panels.
-- [ ] Implement `parseFusionArgs(args)` in `src/commands.ts` or a focused helper. Support `/fusion <prompt>`, `/fusion --profile fast <prompt>`, and `/fusion -p fast <prompt>`.
-- [ ] Implement `/fusion-init` to write a project-local `.pi/fusion.json` template only for trusted projects and only after confirming overwrite.
-- [ ] Add tests for config defaults, project/global precedence, malformed JSON, unknown profiles, empty panels, and argument parsing.
-- [ ] Run `npm run check` and `npm test`.
+- [x] Define domain types in `src/types.ts`: `ThinkingLevel`, `PanelMemberConfig`, `JudgeConfig`, `FusionProfile`, `FusionConfig`, `FusionPhase`, and `FusionRun`.
+- [x] Implement `src/config.ts` to load project `.pi/fusion.json` only when `ctx.isProjectTrusted()` is true, then fall back to `~/.pi/agent/fusion.json`, then defaults.
+- [x] Validate untrusted JSON with narrow type guards. Do not cast raw parsed JSON directly to domain types.
+- [x] Default to a `quality` profile with three read-only panel members and one judge.
+- [x] Implement `resolveProfile(config, requested)` with clear errors for unknown profile names and empty panels.
+- [x] Implement `parseFusionArgs(args)` in `src/commands.ts` or a focused helper. Support `/fusion <prompt>`, `/fusion --profile fast <prompt>`, and `/fusion -p fast <prompt>`.
+- [x] Implement `/fusion-init` to write a project-local `.pi/fusion.json` template only for trusted projects and only after confirming overwrite.
+- [x] Add tests for config defaults, project/global precedence, malformed JSON, unknown profiles, empty panels, and argument parsing.
+- [x] Run `npm run check` and `npm test`.
 
 Implementation notes:
 
