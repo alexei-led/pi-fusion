@@ -84,12 +84,15 @@ function findProgressContainer(
   payload: unknown,
 ): readonly unknown[] | undefined {
   if (!isRecord(payload)) return undefined;
-  if (Array.isArray(payload.progress)) return payload.progress;
-  if (Array.isArray(payload.results)) return payload.results;
+  const progress = unknownArray(payload.progress);
+  if (progress) return progress;
+  const results = unknownArray(payload.results);
+  if (results) return results;
   if (isRecord(payload.details)) {
-    if (Array.isArray(payload.details.progress))
-      return payload.details.progress;
-    if (Array.isArray(payload.details.results)) return payload.details.results;
+    const detailsProgress = unknownArray(payload.details.progress);
+    if (detailsProgress) return detailsProgress;
+    const detailsResults = unknownArray(payload.details.results);
+    if (detailsResults) return detailsResults;
   }
   if (isRecord(payload.data)) return findProgressContainer(payload.data);
   return undefined;
@@ -122,6 +125,10 @@ function firstString(...values: readonly unknown[]): string | undefined {
     if (typeof value === "string") return value;
   }
   return undefined;
+}
+
+function unknownArray(value: unknown): readonly unknown[] | undefined {
+  return Array.isArray(value) ? (value as readonly unknown[]) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,23 +2,20 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { type TestContext } from "node:test";
+import type { TestContext } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import fusionExtension from "../index.js";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../orchestrator.js";
+import { getFusionConfigTemplate } from "../../src/config.js";
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
   subagentsRpcReplyChannel,
-} from "../subagents-rpc.js";
-import { getFusionConfigTemplate } from "../config.js";
-import { FUSION_RUN_ENTRY_TYPE } from "../run-store.js";
+} from "../../src/subagents-rpc.js";
 
-interface RegisteredCommand {
+export interface RegisteredCommand {
   description?: string;
   handler(args: string, ctx: FakeCommandContext): unknown;
 }
 
-interface FakeCommandContext {
+export interface FakeCommandContext {
   cwd: string;
   hasUI: boolean;
   isProjectTrusted(): boolean;
@@ -26,117 +23,30 @@ interface FakeCommandContext {
   ui: FakeUi;
 }
 
-test("fusionExtension registers documented commands", () => {
-  const pi = new FakePi();
+export interface FakeCustomEntry {
+  type: "custom";
+  customType: string;
+  data?: unknown;
+}
 
-  fusionExtension(pi.asExtensionApi());
+export interface FakeMessage {
+  customType: string;
+  content: string;
+  display: boolean;
+  details?: unknown;
+}
 
-  assert.deepEqual([...pi.commands.keys()].sort(), [
-    "fusion",
-    "fusion-cancel",
-    "fusion-init",
-    "fusion-status",
-  ]);
-});
-
-test("fusionExtension starts and completes a run through pi-subagents RPC events", async (t) => {
-  const pi = new FakePi();
-  const ctx = pi.createContext(await createProjectDir(t));
-  fusionExtension(pi.asExtensionApi());
-
-  await pi.runCommand("fusion", "compare APIs", ctx);
-
-  assert.match(ctx.ui.lastStatus("fusion") ?? "", /panel-1/);
-  assert.equal(pi.entries.length, 2);
-  assert.equal(pi.entries.at(-1)?.customType, FUSION_RUN_ENTRY_TYPE);
-
-  pi.events.statusResults.set("panel-1", {
-    runId: "panel-1",
-    results: [
-      {
-        agent: "pi-fusion.fusion-panelist",
-        success: true,
-        output: "Choose A.",
-      },
-    ],
-  });
-  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
-  await nextTick();
-
-  assert.equal(pi.messages.at(-1)?.customType, "fusion-report");
-  assert.match(pi.messages.at(-1)?.content ?? "", /Choose A/);
-  assert.equal(ctx.ui.lastStatus("fusion"), undefined);
-});
-
-test("fusionExtension restores an active run on session_start and unsubscribes on shutdown", async (t) => {
-  const cwd = await createProjectDir(t);
-  const firstPi = new FakePi();
-  const firstCtx = firstPi.createContext(cwd);
-  fusionExtension(firstPi.asExtensionApi());
-  await firstPi.runCommand("fusion", "compare APIs", firstCtx);
-
-  const restoredPi = new FakePi(firstPi.entries);
-  const restoredCtx = restoredPi.createContext(cwd);
-  fusionExtension(restoredPi.asExtensionApi());
-
-  await restoredPi.emitLifecycle("session_start", {}, restoredCtx);
-
-  assert.match(restoredCtx.ui.lastStatus("fusion") ?? "", /panel-1/);
-
-  restoredPi.events.statusResults.set("panel-1", {
-    runId: "panel-1",
-    results: [
-      {
-        agent: "pi-fusion.fusion-panelist",
-        success: true,
-        output: "Restored output.",
-      },
-    ],
-  });
-  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
-  await nextTick();
-
-  assert.match(restoredPi.messages.at(-1)?.content ?? "", /Restored output/);
-
-  const listenerCountBeforeShutdown = restoredPi.events.listenerCount(
-    SUBAGENT_ASYNC_COMPLETE_EVENT,
-  );
-  await restoredPi.emitLifecycle("session_shutdown", {}, restoredCtx);
-
-  assert.equal(listenerCountBeforeShutdown, 1);
-  assert.equal(
-    restoredPi.events.listenerCount(SUBAGENT_ASYNC_COMPLETE_EVENT),
-    0,
-  );
-  assert.equal(restoredCtx.ui.lastStatus("fusion"), undefined);
-});
-
-class FakePi {
+export class FakePi {
   readonly commands = new Map<string, RegisteredCommand>();
   readonly events = new FakeEventBus();
-  readonly messages: Array<{
-    customType: string;
-    content: string;
-    display: boolean;
-    details?: unknown;
-  }> = [];
-  readonly entries: Array<{
-    type: "custom";
-    customType: string;
-    data?: unknown;
-  }>;
+  readonly messages: FakeMessage[] = [];
+  readonly entries: FakeCustomEntry[];
   private readonly lifecycleHandlers = new Map<
     string,
     Set<(event: unknown, ctx: FakeCommandContext) => unknown>
   >();
 
-  constructor(
-    entries: readonly {
-      type: "custom";
-      customType: string;
-      data?: unknown;
-    }[] = [],
-  ) {
+  constructor(entries: readonly FakeCustomEntry[] = []) {
     this.entries = entries.map((entry) => ({ ...entry }));
   }
 
@@ -157,12 +67,7 @@ class FakePi {
     this.lifecycleHandlers.set(event, handlers);
   }
 
-  sendMessage(message: {
-    customType: string;
-    content: string;
-    display: boolean;
-    details?: unknown;
-  }): void {
+  sendMessage(message: FakeMessage): void {
     this.messages.push(message);
   }
 
@@ -200,7 +105,7 @@ class FakePi {
   }
 }
 
-class FakeEventBus {
+export class FakeEventBus {
   readonly emitted: Array<{ event: string; payload: unknown }> = [];
   readonly statusResults = new Map<string, unknown>();
   private readonly handlers = new Map<
@@ -224,8 +129,9 @@ class FakeEventBus {
     if (handlers) {
       for (const handler of [...handlers]) handler(payload);
     }
-    if (event === SUBAGENTS_RPC_REQUEST_CHANNEL)
+    if (event === SUBAGENTS_RPC_REQUEST_CHANNEL) {
       this.replyToRpcRequest(payload);
+    }
   }
 
   listenerCount(event: string): number {
@@ -280,21 +186,27 @@ class FakeEventBus {
   }
 }
 
-class FakeUi {
+export class FakeUi {
   readonly statuses: Array<{ key: string; text: string | undefined }> = [];
+  readonly notifications: Array<{
+    message: string;
+    type: "info" | "warning" | "error" | undefined;
+  }> = [];
 
   setStatus(key: string, text: string | undefined): void {
     this.statuses.push({ key, text });
   }
 
-  notify(_message: string, _type?: "info" | "warning" | "error"): void {}
+  notify(message: string, type?: "info" | "warning" | "error"): void {
+    this.notifications.push({ message, type });
+  }
 
   lastStatus(key: string): string | undefined {
     return this.statuses.findLast((entry) => entry.key === key)?.text;
   }
 }
 
-async function createProjectDir(t: TestContext): Promise<string> {
+export async function createProjectDir(t: TestContext): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "pi-fusion-test-"));
   t.after(async () => {
     await rm(cwd, { recursive: true, force: true });
@@ -305,10 +217,10 @@ async function createProjectDir(t: TestContext): Promise<string> {
   return cwd;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export async function nextTick(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-async function nextTick(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

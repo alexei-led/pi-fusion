@@ -1,8 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  registerFusionCommands,
-  registerFusionInitCommand,
-} from "./commands.js";
+import { registerFusionCommands } from "./commands.js";
 import {
   FusionOrchestrator,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -18,7 +15,6 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   });
 
   registerFusionCommands(pi, orchestrator);
-  registerFusionInitCommand(pi);
 
   const unsubscribeComplete = pi.events.on(
     SUBAGENT_ASYNC_COMPLETE_EVENT,

@@ -27,7 +27,7 @@ import {
   type FusionProgressCounts,
   type FusionUi,
 } from "./status.js";
-import type { FusionConfig, FusionProfile, FusionRun } from "./types.js";
+import type { FusionProfile, FusionRun } from "./types.js";
 import { parseFusionArgs, type ParsedFusionArgs } from "./commands.js";
 import type { SubagentsTargetParams } from "./subagents-rpc.js";
 
@@ -197,7 +197,7 @@ export class FusionOrchestrator {
     return { status: "ignored" };
   }
 
-  async refreshStatus(targetRunId?: string): Promise<unknown | undefined> {
+  async refreshStatus(targetRunId?: string): Promise<unknown> {
     const active = this.runStore.getActiveRun();
     const runId = targetRunId ?? activeRunId(active);
     if (!runId) return undefined;
@@ -611,24 +611,18 @@ function activeRunId(run: FusionRun | undefined): string | undefined {
 
 function findResultsArray(payload: unknown): readonly unknown[] | undefined {
   if (!isRecord(payload)) return undefined;
-  if (Array.isArray(payload.results) && payload.results.length > 0) {
-    return payload.results;
-  }
-  if (
-    isRecord(payload.details) &&
-    Array.isArray(payload.details.results) &&
-    payload.details.results.length > 0
-  ) {
-    return payload.details.results;
+  const directResults = unknownArray(payload.results);
+  if (directResults && directResults.length > 0) return directResults;
+  if (isRecord(payload.details)) {
+    const detailsResults = unknownArray(payload.details.results);
+    if (detailsResults && detailsResults.length > 0) return detailsResults;
   }
   if (isRecord(payload.data)) {
     const dataResults = findResultsArray(payload.data);
     if (dataResults) return dataResults;
   }
-  if (Array.isArray(payload.results)) return payload.results;
-  if (isRecord(payload.details) && Array.isArray(payload.details.results)) {
-    return payload.details.results;
-  }
+  if (directResults) return directResults;
+  if (isRecord(payload.details)) return unknownArray(payload.details.results);
   return undefined;
 }
 
@@ -703,6 +697,10 @@ function firstNonBlankString(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function unknownArray(value: unknown): readonly unknown[] | undefined {
+  return Array.isArray(value) ? (value as readonly unknown[]) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

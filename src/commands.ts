@@ -9,7 +9,18 @@ import {
 } from "./config.js";
 import { FusionArgsError, FusionConfigError } from "./errors.js";
 
-const FUSION_USAGE = "Usage: /fusion [--profile <name>] <prompt>.";
+const FUSION_USAGE =
+  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion status | /fusion stop | /fusion init.";
+const FUSION_HELP = [
+  "Fusion commands",
+  "/fusion <prompt>",
+  "/fusion --profile <name> <prompt>",
+  "/fusion status",
+  "/fusion stop",
+  "/fusion init",
+].join("\n");
+
+export type FusionInlineCommand = "init" | "status" | "stop";
 
 export interface ParsedFusionArgs {
   prompt: string;
@@ -51,34 +62,27 @@ export function registerFusionCommands(
   handler: FusionRuntimeCommandHandler,
 ): void {
   pi.registerCommand("fusion", {
-    description: "Run a pi-subagents-backed fusion panel",
+    description: "Run a fusion review, or use status/stop/init",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
+      if (args.trim() === "") {
+        ctx.ui.notify(FUSION_HELP, "info");
+        return;
+      }
+
+      const inlineCommand = parseFusionInlineCommand(args);
+      if (inlineCommand === "init") {
+        await runFusionInit(ctx);
+        return;
+      }
+      if (inlineCommand === "status") {
+        await handler.showStatus(ctx);
+        return;
+      }
+      if (inlineCommand === "stop") {
+        await handler.cancelActiveRun(ctx);
+        return;
+      }
       await handler.startRun(args, ctx);
-    },
-  });
-
-  pi.registerCommand("fusion-status", {
-    description: "Show the active or last fusion run",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      await handler.showStatus(ctx);
-    },
-  });
-
-  pi.registerCommand("fusion-cancel", {
-    description: "Cancel the active fusion run",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      await handler.cancelActiveRun(ctx);
-    },
-  });
-}
-
-export function registerFusionInitCommand(
-  pi: Pick<ExtensionAPI, "registerCommand">,
-): void {
-  pi.registerCommand("fusion-init", {
-    description: "Create a project-local .pi/fusion.json template",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      await runFusionInit(ctx);
     },
   });
 }
@@ -89,7 +93,7 @@ export async function runFusionInit(
 ): Promise<FusionInitResult> {
   if (!ctx.isProjectTrusted()) {
     ctx.ui.notify(
-      "Project is not trusted. /fusion-init did not write .pi/fusion.json.",
+      "Project is not trusted. /fusion init did not write .pi/fusion.json.",
       "error",
     );
     return { status: "skipped", reason: "untrusted" };
@@ -99,7 +103,7 @@ export async function runFusionInit(
   if (await fileExists(configPath, deps.readTextFile ?? readUtf8File)) {
     if (!ctx.hasUI) {
       ctx.ui.notify(
-        `${configPath} already exists. Run /fusion-init in UI mode to confirm overwrite.`,
+        `${configPath} already exists. Run /fusion init in UI mode to confirm overwrite.`,
         "warning",
       );
       return { status: "skipped", reason: "exists", path: configPath };
@@ -118,6 +122,19 @@ export async function runFusionInit(
   const writtenPath = await writeProjectFusionConfigTemplate(ctx.cwd, deps);
   ctx.ui.notify(`Wrote ${writtenPath}.`, "info");
   return { status: "written", path: writtenPath };
+}
+
+export function parseFusionInlineCommand(
+  input: string | readonly string[],
+): FusionInlineCommand | undefined {
+  const tokens =
+    typeof input === "string" ? tokenizeCommandArgs(input) : [...input];
+  if (tokens.length !== 1) return undefined;
+  const command = tokens[0];
+  if (command === "init" || command === "status" || command === "stop") {
+    return command;
+  }
+  return undefined;
 }
 
 export function parseFusionArgs(

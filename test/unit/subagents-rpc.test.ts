@@ -8,7 +8,7 @@ import {
   subagentsRpcReplyChannel,
   type SubagentsEventBus,
   type SubagentsRpcMethod,
-} from "../subagents-rpc.js";
+} from "../../src/subagents-rpc.js";
 
 test("SubagentsRpcClient resolves successful replies and cleans listeners", async () => {
   const bus = new FakeEventBus();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractPanelResults } from "../result-extract.js";
-import type { PanelMemberConfig } from "../types.js";
+import { extractPanelResults } from "../../src/result-extract.js";
+import type { PanelMemberConfig } from "../../src/types.js";
 
 const PANEL: PanelMemberConfig[] = [
   {

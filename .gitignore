@@ -1,3 +1,13 @@
-.pi
-.pi-subagents
-node_modules
+.pi/
+.pi-subagents/
+.gitnexus/
+.ralphex/
+.codegraph/
+.claude/
+node_modules/
+coverage/
+dist/
+.eslintcache
+*.log
+*.tgz
+.DS_Store

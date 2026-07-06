@@ -5,8 +5,8 @@ import {
   extractFusionProgressCounts,
   formatFusionStatusText,
   publishFusionStatus,
-} from "../status.js";
-import type { FusionRun } from "../types.js";
+} from "../../src/status.js";
+import type { FusionRun } from "../../src/types.js";
 
 const RUN: FusionRun = {
   id: "fusion-1",

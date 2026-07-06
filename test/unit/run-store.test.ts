@@ -9,7 +9,7 @@ import {
   readLastFusionRunState,
   readLastFusionRunSummary,
   type FusionTerminalPhase,
-} from "../run-store.js";
+} from "../../src/run-store.js";
 
 test("FusionRunStore starts one active run at a time", () => {
   const store = new FusionRunStore({

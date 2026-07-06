@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseFusionArgs, tokenizeCommandArgs } from "../commands.js";
+import {
+  parseFusionArgs,
+  parseFusionInlineCommand,
+  tokenizeCommandArgs,
+} from "../../src/commands.js";
+
+test("parseFusionInlineCommand detects exact one-word commands", () => {
+  assert.equal(parseFusionInlineCommand("init"), "init");
+  assert.equal(parseFusionInlineCommand("status"), "status");
+  assert.equal(parseFusionInlineCommand("stop"), "stop");
+  assert.equal(parseFusionInlineCommand("status active run"), undefined);
+  assert.equal(parseFusionInlineCommand("--profile fast status"), undefined);
+});
 
 test("parseFusionArgs parses a prompt without an explicit profile", () => {
   assert.deepEqual(parseFusionArgs("compare the approaches"), {

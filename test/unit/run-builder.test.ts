@@ -6,8 +6,8 @@ import {
   buildPanelSpawnParams,
   type PanelOutput,
   type FailedPanelSummary,
-} from "../run-builder.js";
-import type { FusionProfile } from "../types.js";
+} from "../../src/run-builder.js";
+import type { FusionProfile } from "../../src/types.js";
 
 const PROFILE: FusionProfile = {
   panel: [

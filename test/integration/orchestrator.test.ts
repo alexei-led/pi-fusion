@@ -5,9 +5,9 @@ import {
   type FusionCommandContext,
   type FusionMessageSink,
   type FusionRpcClientLike,
-} from "../orchestrator.js";
-import { FusionRunStore } from "../run-store.js";
-import type { FusionConfig } from "../types.js";
+} from "../../src/orchestrator.js";
+import { FusionRunStore } from "../../src/run-store.js";
+import type { FusionConfig } from "../../src/types.js";
 
 const CONFIG: FusionConfig = {
   defaultProfile: "quality",

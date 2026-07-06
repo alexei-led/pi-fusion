@@ -25,13 +25,19 @@
     "README.md",
     "LICENSE",
     "AGENTS.md",
+    "docs/user-guide.md",
     "tsconfig.json"
   ],
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --import jiti/register --test src/__tests__/*.test.ts",
+    "test": "npm run test:unit",
+    "test:unit": "node --import jiti/register --test test/unit/*.test.ts",
+    "test:integration": "node --import jiti/register --test test/integration/*.test.ts",
+    "test:e2e": "node --import jiti/register --test test/e2e/*.test.ts",
     "pack:dry": "npm pack --dry-run",
-    "publish:dry": "npm publish --dry-run"
+    "publish:dry": "npm publish --dry-run",
+    "lint": "eslint . --cache --cache-strategy content",
+    "test:all": "npm run lint && npm run check && npm run test:unit && npm run test:integration && npm run test:e2e && npm run pack:dry"
   },
   "pi": {
     "extensions": [
@@ -49,7 +55,20 @@
     "typebox": "*"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
     "jiti": "^2.7.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1"
+  },
+  "packageManager": "npm@11.18.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexei-led/pi-fusion.git"
+  },
+  "homepage": "https://github.com/alexei-led/pi-fusion#readme",
+  "bugs": {
+    "url": "https://github.com/alexei-led/pi-fusion/issues"
   }
 }

@@ -163,7 +163,12 @@ export class SubagentsRpcClient {
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       let unsubscribe: (() => void) | undefined;
-      let timer: ReturnType<typeof setTimeout>;
+
+      const timer = setTimeout(() => {
+        rejectOnce(
+          new SubagentsRpcTimeoutError({ requestId, method, timeoutMs }),
+        );
+      }, timeoutMs);
 
       const cleanup = (): void => {
         clearTimeout(timer);
@@ -183,12 +188,6 @@ export class SubagentsRpcClient {
         cleanup();
         reject(error);
       };
-
-      timer = setTimeout(() => {
-        rejectOnce(
-          new SubagentsRpcTimeoutError({ requestId, method, timeoutMs }),
-        );
-      }, timeoutMs);
 
       const maybeUnsubscribe = this.events.on(
         replyChannel,
@@ -378,8 +377,22 @@ function parseOptionalMethod(
   throw new SubagentsRpcProtocolError({
     requestId,
     method: expectedMethod,
-    message: `Unsupported subagents RPC reply method: ${String(value)}.`,
+    message: `Unsupported subagents RPC reply method: ${formatUnknown(value)}.`,
   });
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  try {
+    return JSON.stringify(value) ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 function normalizeTimeoutMs(value: number): number {

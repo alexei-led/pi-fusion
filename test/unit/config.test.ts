@@ -3,15 +3,15 @@ import test from "node:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { runFusionInit } from "../commands.js";
+import { runFusionInit } from "../../src/commands.js";
 import {
   createDefaultFusionConfig,
   getGlobalFusionConfigPath,
   getProjectFusionConfigPath,
   loadFusionConfig,
   resolveProfile,
-} from "../config.js";
-import type { FusionConfig } from "../types.js";
+} from "../../src/config.js";
+import type { FusionConfig } from "../../src/types.js";
 
 const PANEL_MEMBER = {
   id: "one",

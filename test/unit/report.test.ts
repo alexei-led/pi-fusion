@@ -6,8 +6,8 @@ import {
   renderJudgeReport,
   renderPanelFailureReport,
   renderSinglePanelReport,
-} from "../report.js";
-import type { FailedPanelSummary, PanelOutput } from "../run-builder.js";
+} from "../../src/report.js";
+import type { FailedPanelSummary, PanelOutput } from "../../src/run-builder.js";
 
 const RUN_PANEL = {
   id: "fusion-1",
