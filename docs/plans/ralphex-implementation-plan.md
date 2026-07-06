@@ -156,14 +156,14 @@ Implementation notes:
 
 ### Task 4: Build panel/judge spawn params and result extraction
 
-- [ ] Implement `src/run-builder.ts` to convert a `FusionProfile` and prompt into `pi-subagents` async parallel panel spawn params.
-- [ ] Append thinking as a model suffix only when a model exists and the suffix is not already present, e.g. `openai/gpt-5.5:xhigh`.
-- [ ] Include panel role, prompt, output contract, and no-edit instruction in every panelist task.
-- [ ] Build judge spawn params from successful panel outputs. The judge prompt must include original task, panel status, successful outputs, and failed panelists.
-- [ ] Implement `src/result-extract.ts` to normalize `pi-subagents` status/result data into successful panel outputs and failed panel summaries.
-- [ ] Return typed error variants when result shape is missing or unknown instead of throwing from deep helpers.
-- [ ] Add tests for spawn param shape, thinking suffix handling, task text, judge prompt, successful output extraction, failed output extraction, missing fields, and artifact-path fallback.
-- [ ] Run `npm run check` and `npm test`.
+- [x] Implement `src/run-builder.ts` to convert a `FusionProfile` and prompt into `pi-subagents` async parallel panel spawn params.
+- [x] Append thinking as a model suffix only when a model exists and the suffix is not already present, e.g. `openai/gpt-5.5:xhigh`.
+- [x] Include panel role, prompt, output contract, and no-edit instruction in every panelist task.
+- [x] Build judge spawn params from successful panel outputs. The judge prompt must include original task, panel status, successful outputs, and failed panelists.
+- [x] Implement `src/result-extract.ts` to normalize `pi-subagents` status/result data into successful panel outputs and failed panel summaries.
+- [x] Return typed error variants when result shape is missing or unknown instead of throwing from deep helpers.
+- [x] Add tests for spawn param shape, thinking suffix handling, task text, judge prompt, successful output extraction, failed output extraction, missing fields, and artifact-path fallback.
+- [x] Run `npm run check` and `npm test`.
 
 Implementation notes:
 
