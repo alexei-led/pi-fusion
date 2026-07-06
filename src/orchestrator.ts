@@ -241,6 +241,8 @@ export class FusionOrchestrator {
       run: active,
       method,
       ...(targetRunId ? { targetRunId } : {}),
+      panelOutputs: this.activePanelOutputs,
+      failures: this.activePanelFailures,
     });
     const cancelled = this.runStore.cancelRun(active.id, {
       report,
@@ -394,6 +396,8 @@ export class FusionOrchestrator {
     const report = renderJudgeReport({
       run: active,
       judgeOutput: output.output,
+      panelOutputs: this.activePanelOutputs,
+      failures: this.activePanelFailures,
     });
     return this.completeActiveRun(report);
   }
@@ -444,7 +448,12 @@ export class FusionOrchestrator {
   private defaultFailureReport(error: string): string {
     const active = this.runStore.getActiveRun();
     if (!active) return error;
-    return renderFailureReport({ run: active, error });
+    return renderFailureReport({
+      run: active,
+      error,
+      panelOutputs: this.activePanelOutputs,
+      failures: this.activePanelFailures,
+    });
   }
 
   private clearActiveRuntime(): void {

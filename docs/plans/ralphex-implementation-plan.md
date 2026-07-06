@@ -195,14 +195,14 @@ Implementation notes:
 
 ### Task 6: Implement report rendering and focused docs
 
-- [ ] Implement `src/report.ts` to render deterministic Markdown reports for success, partial success, single-panel result, judge failure, all-panel failure, and cancellation.
-- [ ] Include report sections: Summary, Agent Status, Consensus, Disagreements, Unique Insights, Blind Spots, Recommendation, Risks, Next Step, and Run Metadata when available.
-- [ ] Ensure failed/timed-out panelists appear in Agent Status.
-- [ ] Add report tests with stable snapshots or exact string assertions.
-- [ ] Write minimal `README.md` with install, required `pi-subagents`, optional `pi-powerline-footer` config, usage commands, config example, privacy note, and development commands.
-- [ ] Document that prompts and inspected file contents can be sent to configured model providers.
-- [ ] Document that panel agents are read-only by default and the extension never owns the footer.
-- [ ] Run `npm run check` and `npm test`.
+- [x] Implement `src/report.ts` to render deterministic Markdown reports for success, partial success, single-panel result, judge failure, all-panel failure, and cancellation.
+- [x] Include report sections: Summary, Agent Status, Consensus, Disagreements, Unique Insights, Blind Spots, Recommendation, Risks, Next Step, and Run Metadata when available.
+- [x] Ensure failed/timed-out panelists appear in Agent Status.
+- [x] Add report tests with stable snapshots or exact string assertions.
+- [x] Write minimal `README.md` with install, required `pi-subagents`, optional `pi-powerline-footer` config, usage commands, config example, privacy note, and development commands.
+- [x] Document that prompts and inspected file contents can be sent to configured model providers.
+- [x] Document that panel agents are read-only by default and the extension never owns the footer.
+- [x] Run `npm run check` and `npm test`.
 
 Implementation notes:
 
