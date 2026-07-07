@@ -1,16 +1,18 @@
 # pi-fusion user guide
 
-Use this when the README is not enough.
+README covers the why. This guide covers commands, config, and troubleshooting.
 
 ## Mental model
 
-`pi-fusion` turns one hard question into a small review panel:
+`pi-fusion` turns one hard question into a small parallel panel:
 
 ```text
 prompt → parallel panel → judge synthesis → final report
 ```
 
 Normal execution is a single `pi-subagents` async chain. If that chain completes without a judge result but at least two panelists still produced usable answers, `pi-fusion` runs one fallback judge pass instead of losing the review.
+
+Panel diversity can come from different model choices, different perspective prompts, or both. In practice, mixing models is usually the main lever.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -108,9 +110,9 @@ Panel member:
 - `id`: stable machine name
 - `label`: human-readable report label
 - `agent`: subagent name
-- `model`: optional model override
+- `model`: optional model override; often the main source of panel diversity
 - `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
-- `role`: short perspective instruction
+- `role`: optional perspective hint layered on top of the model
 
 Judge:
 

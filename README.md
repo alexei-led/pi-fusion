@@ -1,75 +1,121 @@
 # pi-fusion
 
-[![npm](https://img.shields.io/badge/npm-%40alexeiled%2Fpi--fusion-cb3837?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@alexeiled/pi-fusion)
+[![npm version](https://img.shields.io/npm/v/%40alexeiled%2Fpi-fusion?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@alexeiled/pi-fusion)
+[![CI](https://img.shields.io/github/actions/workflow/status/alexei-led/pi-fusion/test.yml?branch=master&style=flat-square&label=ci)](https://github.com/alexei-led/pi-fusion/actions/workflows/test.yml?query=branch%3Amaster)
 [![node](https://img.shields.io/badge/node-%3E%3D22.19.0-5fa04e?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 
-> Parallel panel. One judge. One report.
+> Parallel models. One judge. Better answers.
 
-`pi-fusion` is a Pi extension for questions that need deliberation, not a guess.
-It runs a small panel of read-only subagents in parallel, then asks a judge agent
-to synthesize one final Markdown report.
+`pi-fusion` is a Pi extension for hard technical questions.
+It uses `pi-subagents` to send the same prompt through a small parallel model panel,
+then asks a judge agent to compare the outputs and return the best realistic answer.
 
-## Fusion model
+CI covers lint, typecheck, unit tests, integration tests, package smoke tests,
+and `npm pack --dry-run`.
 
-My approach is simple:
+![pi-fusion flow](https://raw.githubusercontent.com/alexei-led/pi-fusion/master/docs/assets/fusion-flow.png)
 
-- one hard question becomes a short review panel
-- panelists work independently in parallel
-- the judge reconciles evidence, not votes
-- if the judge result is missing but the panel still produced enough signal,
-  Fusion retries only the judge step
+## Why Fusion exists
 
-This is evidence-first, not majority vote.
-The judge is a synthesizer, not a tie-breaker by headcount.
+Hard questions are often bottlenecked by one model's search path.
+`pi-fusion` trades latency for diversity:
+
+- the same prompt fans out to several model runs in parallel
+- each model explores the problem from a different training prior and reasoning path
+- overlap raises confidence
+- disagreement exposes risk
+- the judge keeps the strongest parts and drops weak, partial, or conflicting ones
+
+This is evidence selection, not majority vote.
 
 ```mermaid
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 28, "rankSpacing": 48}, "themeVariables": {"background": "#050816", "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", "primaryTextColor": "#E5F0FF", "lineColor": "#38bdf8", "tertiaryColor": "#0b1220"}}}%%
 flowchart LR
-  classDef input fill:#f8fafc,stroke:#94a3b8,color:#0f172a,stroke-width:1px;
-  classDef panel fill:#e0f2fe,stroke:#38bdf8,color:#0f172a,stroke-width:1px;
-  classDef judge fill:#fef3c7,stroke:#f59e0b,color:#0f172a,stroke-width:1px;
-  classDef report fill:#dcfce7,stroke:#22c55e,color:#0f172a,stroke-width:1px;
-  classDef fallback fill:#fae8ff,stroke:#c084fc,color:#0f172a,stroke-width:1px,stroke-dasharray:4 3;
+  classDef prompt fill:#071321,stroke:#38bdf8,color:#dbeafe,stroke-width:2px;
+  classDef modelA fill:#081223,stroke:#38bdf8,color:#dbeafe,stroke-width:2px;
+  classDef modelB fill:#120826,stroke:#a855f7,color:#f3e8ff,stroke-width:2px;
+  classDef modelC fill:#08180f,stroke:#22c55e,color:#dcfce7,stroke-width:2px;
+  classDef modelD fill:#241307,stroke:#f59e0b,color:#fef3c7,stroke-width:2px;
+  classDef modelE fill:#260712,stroke:#ff4d8d,color:#ffd1e7,stroke-width:2px;
+  classDef judge fill:#2b1905,stroke:#f59e0b,color:#fef3c7,stroke-width:3px;
+  classDef answer fill:#062814,stroke:#22c55e,color:#dcfce7,stroke-width:3px;
+  classDef note fill:#0b1220,stroke:#475569,color:#cbd5e1,stroke-width:1px;
 
-  U[You in Pi]:::input --> Q[/fusion prompt/]:::input
+  P["input prompt<br/>same question to every model"]:::prompt
 
-  subgraph P[Parallel panel]
-    direction LR
-    A[Architect]:::panel
-    I[Implementer]:::panel
-    T[Tester]:::panel
+  subgraph PANEL[parallel model panel]
+    direction TB
+    A["model A<br/>strong baseline candidate"]:::modelA
+    B["model B<br/>finds contradiction"]:::modelB
+    C["model C<br/>adds unique insight"]:::modelC
+    D["model D<br/>fast practical path"]:::modelD
+    E["model E<br/>catches edge case"]:::modelE
   end
 
-  Q --> A
-  Q --> I
-  Q --> T
-  A --> J{{Judge}}:::judge
-  I --> J
-  T --> J
-  J --> R[Final Markdown report]:::report
-  J -. missing judge result .-> F[Fallback judge retry]:::fallback
-  F --> R
+  J["judge<br/>consensus • contradictions • blind spots"]:::judge
+  R["best answer<br/>selected or synthesized"]:::answer
+  N["not majority vote<br/>best evidence wins"]:::note
+
+  P --> A
+  P --> B
+  P --> C
+  P --> D
+  P --> E
+
+  A --> J
+  B --> J
+  C --> J
+  D --> J
+  E --> J
+
+  J --> R
+  J -.-> N
+
+  linkStyle 0,5 stroke:#38bdf8,stroke-width:3px;
+  linkStyle 1,6 stroke:#a855f7,stroke-width:3px;
+  linkStyle 2,7 stroke:#22c55e,stroke-width:3px;
+  linkStyle 3,8 stroke:#f59e0b,stroke-width:3px;
+  linkStyle 4,9 stroke:#ff4d8d,stroke-width:3px;
+  linkStyle 10 stroke:#22c55e,stroke-width:4px;
+  linkStyle 11 stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5;
 ```
 
-## How the judge works
+## Why a panel can beat one model
+
+Single-model answers are brittle on hard tasks. They are limited by one model's
+priors, one reasoning path, and one failure mode.
+
+A panel helps because:
+
+- different models are trained differently and make different bets
+- errors are less correlated, so blind spots do not line up perfectly
+- consensus is a useful confidence signal without pretending certainty
+- disagreement tells you where the answer is fragile
+- a judge can select or synthesize the best realistic answer from the set
+
+The result is slower, but usually better for design choices, risk review,
+tricky debugging, and research-heavy questions.
+
+## What the judge actually does
 
 The judge gets:
 
 - the original prompt
-- the panel outputs
-- the panel failures and blind spots
+- every panel output
+- panel failures and blind spots
 - the configured judge model
 
-It produces one report that highlights:
+It then:
 
-- consensus
-- disagreements
-- risks
-- missing evidence
-- next step
+- finds consensus
+- preserves real disagreements
+- spots weak or incomplete answers
+- pulls forward unique insights worth keeping
+- returns one clear recommendation and next step
 
-It does not edit files or spawn more subagents. It does one job: turn
-competing notes into one clear recommendation.
+It does not edit files or spawn more subagents. It does one job: choose or
+synthesize the best realistic answer.
 
 ## Good fit
 
@@ -89,6 +135,7 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion
 /fusion <prompt>
 /fusion --profile <name> <prompt>
+/fusion -p <name> <prompt>
 /fusion status
 /fusion stop
 /fusion init
@@ -113,7 +160,7 @@ Then reload Pi:
 /reload
 ```
 
-For full config examples and profile details, see [`docs/user-guide.md`](./docs/user-guide.md).
+For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./docs/user-guide.md).
 
 ## Notes
 
