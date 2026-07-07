@@ -1,6 +1,6 @@
 {
   "name": "@alexeiled/pi-fusion",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Subagent-native multi-model deliberation for Pi",
   "type": "module",
   "main": "./src/index.ts",
