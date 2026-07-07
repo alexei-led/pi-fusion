@@ -4,6 +4,7 @@ import {
   appendThinkingSuffix,
   buildJudgeSpawnParams,
   buildPanelSpawnParams,
+  FUSION_ACCEPTANCE_DISABLED,
   type PanelOutput,
   type FailedPanelSummary,
 } from "../../src/run-builder.js";
@@ -68,7 +69,7 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal(params.concurrency, 2);
   assert.equal(params.timeoutMs, 300_000);
   assert.equal(params.context, "fresh");
-  assert.equal(params.acceptance, "none");
+  assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
   assert.equal("action" in params, false);
   assert.equal("chain" in params, false);
   assert.equal("worktree" in params, false);
@@ -82,17 +83,24 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal(tasks[0]?.output, true);
   assert.equal(tasks[0]?.outputMode, "inline");
   assert.equal(tasks[0]?.skill, false);
+  assert.deepEqual(tasks[0]?.acceptance, FUSION_ACCEPTANCE_DISABLED);
 });
 
-test("buildPanelSpawnParams includes role, prompt, contract, and no-edit instruction", () => {
+test("buildPanelSpawnParams includes role, prompt, contract, and read-only instruction", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
   const task = params.tasks[0]?.task ?? "";
 
   assert.match(task, /Panel member: Architect/);
   assert.match(task, /Role: architecture and tradeoffs/);
   assert.match(task, /Compare two API designs/);
-  assert.match(task, /Do not edit files/);
+  assert.match(
+    task,
+    /Read-only: inspect only; leave files, git state, and the workspace untouched\./,
+  );
   assert.match(task, /Do not run subagents/);
+  assert.doesNotMatch(task, /Do not edit files/);
+  assert.doesNotMatch(task, /destructive commands/);
+  assert.doesNotMatch(task, /commit changes/);
   assert.match(task, /## Summary/);
   assert.match(task, /## Recommendation/);
   assert.match(task, /## Confidence/);
@@ -143,8 +151,10 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
   assert.equal(params.output, true);
   assert.equal(params.outputMode, "inline");
   assert.equal(params.skill, false);
-  assert.equal(params.acceptance, "none");
+  assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
 
+  assert.match(params.task, /Read-only synthesis only\./);
+  assert.doesNotMatch(params.task, /Do not edit files/);
   assert.match(params.task, /Original task/);
   assert.match(params.task, /Compare two API designs/);
   assert.match(params.task, /Panel status/);

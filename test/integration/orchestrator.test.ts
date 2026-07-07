@@ -6,6 +6,7 @@ import {
   type FusionMessageSink,
   type FusionRpcClientLike,
 } from "../../src/orchestrator.js";
+import { FUSION_ACCEPTANCE_DISABLED } from "../../src/run-builder.js";
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 
@@ -35,9 +36,14 @@ test("startRun pings subagents, starts a panel run, and publishes UI status", as
   assert.equal(result.status, "started");
   assert.equal(fixture.rpc.pings, 1);
   assert.equal(fixture.rpc.spawns.length, 1);
-  const panelTasks = fixture.rpc.spawns[0]?.tasks;
+  const panelSpawn = fixture.rpc.spawns[0];
+  assert.ok(isRecord(panelSpawn));
+  const panelTasks = panelSpawn.tasks;
   assert.ok(Array.isArray(panelTasks));
+  assert.deepEqual(panelSpawn["acceptance"], FUSION_ACCEPTANCE_DISABLED);
   assert.equal(panelTasks.length, 2);
+  assert.ok(isRecord(panelTasks[0]));
+  assert.deepEqual(panelTasks[0]["acceptance"], FUSION_ACCEPTANCE_DISABLED);
   assert.equal(fixture.orchestrator.getActiveRun()?.panelRunId, "panel-1");
   assert.match(fixture.ui.lastStatus("fusion") ?? "", /panel-1/);
 });

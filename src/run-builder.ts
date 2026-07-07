@@ -5,6 +5,14 @@ import {
   type ThinkingLevel,
 } from "./types.js";
 
+export const FUSION_ACCEPTANCE_DISABLED = {
+  level: "none",
+  reason:
+    "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance.",
+} as const;
+
+export type FusionAcceptanceDisabled = typeof FUSION_ACCEPTANCE_DISABLED;
+
 export interface PanelSubagentTaskParams {
   agent: string;
   task: string;
@@ -12,7 +20,7 @@ export interface PanelSubagentTaskParams {
   outputMode: "inline";
   progress: true;
   skill: false;
-  acceptance: "none";
+  acceptance: FusionAcceptanceDisabled;
   model?: string;
 }
 
@@ -24,7 +32,7 @@ export interface PanelSpawnParams {
   context: "fresh" | "fork";
   output: true;
   outputMode: "inline";
-  acceptance: "none";
+  acceptance: FusionAcceptanceDisabled;
   timeoutMs?: number;
 }
 
@@ -37,7 +45,7 @@ export interface JudgeSpawnParams {
   output: true;
   outputMode: "inline";
   skill: false;
-  acceptance: "none";
+  acceptance: FusionAcceptanceDisabled;
   model?: string;
   timeoutMs?: number;
 }
@@ -112,7 +120,7 @@ export function buildPanelSpawnParams(
     context: profile.context ?? "fresh",
     output: true,
     outputMode: "inline",
-    acceptance: "none",
+    acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(profile.timeoutMs !== undefined
       ? { timeoutMs: profile.timeoutMs }
       : {}),
@@ -135,7 +143,7 @@ export function buildJudgeSpawnParams(
     output: true,
     outputMode: "inline",
     skill: false,
-    acceptance: "none",
+    acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
     ...(input.profile.timeoutMs !== undefined
       ? { timeoutMs: input.profile.timeoutMs }
@@ -155,7 +163,7 @@ function buildPanelTaskParams(
     outputMode: "inline",
     progress: true,
     skill: false,
-    acceptance: "none",
+    acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
   };
 }
@@ -171,10 +179,10 @@ function buildPanelTask(member: PanelMemberConfig, prompt: string): string {
     "",
     "Instructions:",
     "- Work independently from the other panelists.",
-    "- Do not edit files, stage changes, commit changes, or run destructive commands.",
+    "- Read-only: inspect only; leave files, git state, and the workspace untouched.",
     "- Do not ask other agents.",
     "- Do not run subagents.",
-    "- Use read-only local inspection only when code evidence is needed.",
+    "- Use local inspection only when code evidence is needed.",
     "- Be concise and cite evidence when you inspect files.",
     "",
     "Output contract:",
@@ -187,7 +195,7 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const sortedFailures = [...input.failedPanelists].sort(comparePanelItems);
   return [
     "You are the fusion judge.",
-    "Do not edit files. Do not ask other agents. Do not run subagents.",
+    "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
     "Synthesize the panel results. Preserve disagreement instead of forcing consensus.",
     "",
     "Original task:",
