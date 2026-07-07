@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FusionPhase, FusionRun } from "./types.js";
+import { isFiniteNumber, isNonEmptyString, isRecord } from "./utils.js";
 
 export const FUSION_RUN_ENTRY_TYPE = "fusion-run";
 
@@ -421,18 +422,6 @@ function isFusionPhase(value: unknown): value is FusionPhase {
 
 function isTerminalPhase(value: unknown): value is FusionTerminalPhase {
   return value === "done" || value === "failed" || value === "cancelled";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isPanelOutputArray(

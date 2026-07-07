@@ -4,7 +4,7 @@ import {
   parseFusionArgs,
   parseFusionInlineCommand,
   tokenizeCommandArgs,
-} from "../../src/commands.js";
+} from "../../src/fusion-args.js";
 
 test("parseFusionInlineCommand detects exact one-word commands", () => {
   assert.equal(parseFusionInlineCommand("init"), "init");

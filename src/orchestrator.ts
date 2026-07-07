@@ -4,18 +4,17 @@ import {
   type ResolvedFusionProfile,
 } from "./config.js";
 import { FusionArgsError } from "./errors.js";
+import { parseFusionArgs } from "./fusion-args.js";
+import { decidePanelCompletion } from "./panel-completion.js";
 import {
   renderCancelledReport,
   renderFailureReport,
   renderJudgeReport,
-  renderPanelFailureReport,
-  renderSinglePanelReport,
 } from "./report.js";
 import { extractPanelResults } from "./result-extract.js";
 import {
   appendThinkingSuffix,
   buildFusionChainSpawnParams,
-  buildJudgeSpawnParams,
 } from "./run-builder.js";
 import { FusionRunStore, FusionRunStoreError } from "./run-store.js";
 import {
@@ -35,8 +34,8 @@ import type {
   FusionProfile,
   FusionRun,
   PanelOutput,
+  ParsedFusionArgs,
 } from "./types.js";
-import { parseFusionArgs, type ParsedFusionArgs } from "./commands.js";
 import type { SubagentsTargetParams } from "./subagents-rpc.js";
 
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
@@ -124,15 +123,7 @@ export class FusionOrchestrator {
   ): Promise<FusionCommandResult> {
     this.context = ctx;
 
-    let args: ParsedFusionArgs;
-    try {
-      args = typeof input === "string" ? parseFusionArgs(input) : input;
-    } catch (error: unknown) {
-      const message = errorMessage(error);
-      this.notify(ctx, message, "error");
-      return { status: "failed", error: message };
-    }
-
+    const args = typeof input === "string" ? parseFusionArgs(input) : input;
     const existing = this.runStore.getActiveRun();
     if (existing) {
       const message = `Fusion run ${existing.id} is already active.`;
@@ -475,61 +466,13 @@ export class FusionOrchestrator {
       return this.completeActiveRun(report);
     }
 
-    if (extracted.outputs.length === 0) {
-      const report = renderPanelFailureReport({
-        run: updated,
-        failures: extracted.failures,
-        ...withJudgeModel(configuredJudgeModel(profile)),
-      });
-      return this.failActiveRun(
-        "No fusion panelists completed successfully.",
-        report,
-      );
-    }
-
-    if (extracted.outputs.length === 1) {
-      const report = renderSinglePanelReport({
-        run: updated,
-        output: extracted.outputs[0]!,
-        failures: extracted.failures,
-        ...withJudgeModel(configuredJudgeModel(profile)),
-      });
-      return this.completeActiveRun(report);
-    }
-
-    try {
-      const spawnResult = await this.rpc.spawn(
-        buildJudgeSpawnParams({
-          profile,
-          prompt: active.prompt,
-          panelOutputs: extracted.outputs,
-          failedPanelists: extracted.failures,
-        }),
-      );
-      const judgeRunId = extractSubagentRunId(spawnResult);
-      if (!judgeRunId) {
-        throw new FusionArgsError(
-          "pi-subagents spawn did not return a fallback judge run ID.",
-        );
-      }
-      const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
-      const nextRun = this.runStore.updateRun(active.id, {
-        phase: "judge",
-        judgeRunId,
-        ...(judgeAsyncDir ? { judgeAsyncDir } : {}),
-        panelOutputs: extracted.outputs,
-        panelFailures: extracted.failures,
-      });
-      publishFusionStatus(this.context, nextRun);
-      this.notify(
-        this.context,
-        `Fusion fallback judge started: ${judgeRunId}`,
-        "info",
-      );
-      return { status: "started", run: nextRun };
-    } catch (error: unknown) {
-      return this.failActiveRun(errorMessage(error));
-    }
+    return this.finishPanelCompletion(
+      updated,
+      profile,
+      extracted.outputs,
+      extracted.failures,
+      { fallbackJudge: true },
+    );
   }
 
   private async handleLegacyPanelComplete(
@@ -576,53 +519,57 @@ export class FusionOrchestrator {
       extracted.failures,
     );
 
-    if (extracted.outputs.length === 0) {
-      const report = renderPanelFailureReport({
-        run: updated,
-        failures: extracted.failures,
-        ...withJudgeModel(configuredJudgeModel(profile)),
-      });
-      return this.failActiveRun(
-        "No fusion panelists completed successfully.",
-        report,
-      );
-    }
+    return this.finishPanelCompletion(
+      updated,
+      profile,
+      extracted.outputs,
+      extracted.failures,
+      { fallbackJudge: false },
+    );
+  }
 
-    if (extracted.outputs.length === 1) {
-      const report = renderSinglePanelReport({
-        run: updated,
-        output: extracted.outputs[0]!,
-        failures: extracted.failures,
-        ...withJudgeModel(configuredJudgeModel(profile)),
-      });
-      return this.completeActiveRun(report);
+  private async finishPanelCompletion(
+    run: FusionRun,
+    profile: FusionProfile,
+    panelOutputs: readonly PanelOutput[],
+    panelFailures: readonly FailedPanelSummary[],
+    options: { fallbackJudge: boolean },
+  ): Promise<FusionCommandResult> {
+    const decision = decidePanelCompletion({
+      run,
+      profile,
+      panelOutputs,
+      panelFailures,
+      fallbackJudge: options.fallbackJudge,
+    });
+
+    if (decision.kind === "fail") {
+      return this.failActiveRun(decision.error, decision.report);
+    }
+    if (decision.kind === "complete") {
+      return this.completeActiveRun(decision.report);
     }
 
     try {
-      const spawnResult = await this.rpc.spawn(
-        buildJudgeSpawnParams({
-          profile,
-          prompt: active.prompt,
-          panelOutputs: extracted.outputs,
-          failedPanelists: extracted.failures,
-        }),
-      );
+      const spawnResult = await this.rpc.spawn(decision.params);
       const judgeRunId = extractSubagentRunId(spawnResult);
       if (!judgeRunId) {
-        throw new FusionArgsError(
-          "pi-subagents spawn did not return a judge run ID.",
-        );
+        throw new FusionArgsError(decision.missingRunIdError);
       }
       const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
-      const nextRun = this.runStore.updateRun(active.id, {
+      const nextRun = this.runStore.updateRun(run.id, {
         phase: "judge",
         judgeRunId,
         ...(judgeAsyncDir ? { judgeAsyncDir } : {}),
-        panelOutputs: extracted.outputs,
-        panelFailures: extracted.failures,
+        panelOutputs: [...panelOutputs],
+        panelFailures: [...panelFailures],
       });
       publishFusionStatus(this.context, nextRun);
-      this.notify(this.context, `Fusion judge started: ${judgeRunId}`, "info");
+      this.notify(
+        this.context,
+        `${decision.notification}: ${judgeRunId}`,
+        "info",
+      );
       return { status: "started", run: nextRun };
     } catch (error: unknown) {
       return this.failActiveRun(errorMessage(error));

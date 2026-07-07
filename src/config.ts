@@ -11,6 +11,12 @@ import {
   type PanelMemberConfig,
   type ThinkingLevel,
 } from "./types.js";
+import {
+  isNodeErrorCode,
+  isNonEmptyString,
+  isPositiveInteger,
+  isRecord,
+} from "./utils.js";
 
 export const FUSION_CONFIG_FILE = "fusion.json";
 export const DEFAULT_PROFILE_NAME = "quality";
@@ -225,22 +231,6 @@ function isThinkingLevel(value: unknown): value is ThinkingLevel {
 
 function isFusionContextMode(value: unknown): value is FusionContextMode {
   return value === "fresh" || value === "fork";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return isRecord(error) && error.code === code;
 }
 
 async function readUtf8File(path: string): Promise<string> {

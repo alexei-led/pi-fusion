@@ -25,6 +25,15 @@ const CONFIG: FusionConfig = {
       concurrency: 2,
       context: "fresh",
     },
+    fast: {
+      panel: [
+        { id: "architect", label: "Architect", agent: "panel-agent" },
+        { id: "tester", label: "Tester", agent: "panel-agent" },
+      ],
+      judge: { agent: "judge-agent" },
+      concurrency: 2,
+      context: "fresh",
+    },
   },
 };
 
@@ -48,6 +57,23 @@ test("startRun pings subagents, starts a chain run, and publishes UI status", as
   assert.deepEqual(chainSpawn["acceptance"], FUSION_ACCEPTANCE_DISABLED);
   assert.equal(fixture.orchestrator.getActiveRun()?.chainRunId, "chain-1");
   assert.match(fixture.ui.lastStatus("fusion") ?? "", /chain-1/);
+});
+
+test("startRun parses string arguments before launching a profile", async () => {
+  const fixture = makeFixture();
+
+  const result = await fixture.orchestrator.startRun(
+    "--profile fast compare APIs",
+    fixture.ctx,
+  );
+
+  assert.equal(result.status, "started");
+  assert.equal(fixture.orchestrator.getActiveRun()?.profileName, "fast");
+  assert.equal(fixture.orchestrator.getActiveRun()?.prompt, "compare APIs");
+  assert.deepEqual(
+    fixture.rpc.spawns[0],
+    buildFusionChainSpawnParams(CONFIG.profiles.fast!, "compare APIs"),
+  );
 });
 
 test("startRun rejects an active-run conflict without spawning another panel", async () => {
@@ -161,6 +187,11 @@ test("chain completion without a judge result spawns a fallback judge", async ()
   assert.equal(fixture.rpc.spawns[1]?.agent, "judge-agent");
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
+  assert.deepEqual(
+    fixture.orchestrator.getActiveRun()?.panelOutputs?.map((o) => o.output),
+    ["Architect says A.", "Tester says A is testable."],
+  );
+  assert.deepEqual(fixture.orchestrator.getActiveRun()?.panelFailures, []);
 });
 
 test("chain completion uses event results when RPC status has no result details", async () => {

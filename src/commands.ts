@@ -7,10 +7,11 @@ import {
   getProjectFusionConfigPath,
   writeProjectFusionConfigTemplate,
 } from "./config.js";
-import { FusionArgsError, FusionConfigError } from "./errors.js";
+import { FusionConfigError } from "./errors.js";
+import { parseFusionInlineCommand } from "./fusion-args.js";
+import type { ParsedFusionArgs } from "./types.js";
+import { isNodeErrorCode } from "./utils.js";
 
-const FUSION_USAGE =
-  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion status | /fusion stop | /fusion init.";
 const FUSION_HELP = [
   "Fusion commands",
   "/fusion <prompt>",
@@ -20,39 +21,11 @@ const FUSION_HELP = [
   "/fusion init",
 ].join("\n");
 
-export type FusionInlineCommand = "init" | "status" | "stop";
-
-export interface ParsedFusionArgs {
-  prompt: string;
-  profile?: string;
-}
-
-interface FusionInitContext {
-  cwd: string;
-  hasUI: boolean;
-  isProjectTrusted(): boolean;
-  ui: {
-    confirm(title: string, message: string): Promise<boolean>;
-    notify(message: string, type?: "info" | "warning" | "error"): void;
-  };
-}
-
-export interface FusionInitDeps {
-  readTextFile?: (path: string) => Promise<string>;
-  writeTextFile?: (path: string, content: string) => Promise<void>;
-  ensureDir?: (path: string) => Promise<void>;
-}
-
-export type FusionInitResult =
-  | { status: "written"; path: string }
-  | {
-      status: "skipped";
-      reason: "untrusted" | "exists" | "cancelled";
-      path?: string;
-    };
-
 export interface FusionRuntimeCommandHandler {
-  startRun(args: string, ctx: ExtensionCommandContext): Promise<unknown>;
+  startRun(
+    args: string | ParsedFusionArgs,
+    ctx: ExtensionCommandContext,
+  ): Promise<unknown>;
   showStatus(ctx: ExtensionCommandContext): Promise<unknown>;
   cancelActiveRun(ctx: ExtensionCommandContext): Promise<unknown>;
 }
@@ -124,124 +97,29 @@ export async function runFusionInit(
   return { status: "written", path: writtenPath };
 }
 
-export function parseFusionInlineCommand(
-  input: string | readonly string[],
-): FusionInlineCommand | undefined {
-  const tokens =
-    typeof input === "string" ? tokenizeCommandArgs(input) : [...input];
-  if (tokens.length !== 1) return undefined;
-  const command = tokens[0];
-  if (command === "init" || command === "status" || command === "stop") {
-    return command;
-  }
-  return undefined;
+interface FusionInitContext {
+  cwd: string;
+  hasUI: boolean;
+  isProjectTrusted(): boolean;
+  ui: {
+    confirm(title: string, message: string): Promise<boolean>;
+    notify(message: string, type?: "info" | "warning" | "error"): void;
+  };
 }
 
-export function parseFusionArgs(
-  input: string | readonly string[],
-): ParsedFusionArgs {
-  const tokens =
-    typeof input === "string" ? tokenizeCommandArgs(input) : [...input];
-  if (tokens[0] === "/fusion" || tokens[0] === "fusion") tokens.shift();
-
-  let profile: string | undefined;
-  const promptTokens: string[] = [];
-
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
-    if (!token) continue;
-
-    if (
-      promptTokens.length === 0 &&
-      (token === "--profile" || token === "-p")
-    ) {
-      const value = tokens[index + 1];
-      if (!value || value.startsWith("-")) {
-        throw new FusionArgsError(
-          `Missing value for ${token}. ${FUSION_USAGE}`,
-        );
-      }
-      if (profile)
-        throw new FusionArgsError("Profile can only be provided once.");
-      profile = value;
-      index++;
-      continue;
-    }
-
-    if (promptTokens.length === 0 && token.startsWith("--profile=")) {
-      const value = token.slice("--profile=".length).trim();
-      if (!value)
-        throw new FusionArgsError(
-          `Missing value for --profile. ${FUSION_USAGE}`,
-        );
-      if (profile)
-        throw new FusionArgsError("Profile can only be provided once.");
-      profile = value;
-      continue;
-    }
-
-    if (promptTokens.length === 0 && token.startsWith("-")) {
-      throw new FusionArgsError(`Unknown option ${token}. ${FUSION_USAGE}`);
-    }
-
-    promptTokens.push(token, ...tokens.slice(index + 1));
-    break;
-  }
-
-  const prompt = promptTokens.join(" ").trim();
-  if (!prompt) throw new FusionArgsError(FUSION_USAGE);
-  return profile ? { prompt, profile } : { prompt };
+export interface FusionInitDeps {
+  readTextFile?: (path: string) => Promise<string>;
+  writeTextFile?: (path: string, content: string) => Promise<void>;
+  ensureDir?: (path: string) => Promise<void>;
 }
 
-export function tokenizeCommandArgs(input: string): string[] {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | undefined;
-  let escaping = false;
-
-  for (const char of input.trim()) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-
-    if (quote) {
-      if (char === quote) {
-        quote = undefined;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-
-    if (/\s/.test(char)) {
-      if (current) {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (escaping) current += "\\";
-  if (quote)
-    throw new FusionArgsError(`Unclosed ${quote} quote in /fusion arguments.`);
-  if (current) tokens.push(current);
-  return tokens;
-}
+export type FusionInitResult =
+  | { status: "written"; path: string }
+  | {
+      status: "skipped";
+      reason: "untrusted" | "exists" | "cancelled";
+      path?: string;
+    };
 
 async function fileExists(
   path: string,
@@ -257,15 +135,6 @@ async function fileExists(
       `Could not check fusion config at ${path}: ${message}`,
     );
   }
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === code
-  );
 }
 
 async function readUtf8File(path: string): Promise<string> {

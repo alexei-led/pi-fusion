@@ -3,7 +3,11 @@
 .gitnexus/
 .ralphex/
 .codegraph/
+.archfit-cache/
 .claude/
+.env
+.env.*
+!.env.example
 node_modules/
 coverage/
 dist/
@@ -11,3 +15,5 @@ dist/
 *.log
 *.tgz
 .DS_Store
+posts/
+pkg/

@@ -1,0 +1,107 @@
+version: 1
+coupling:
+  min_severity: medium
+  duplicated_knowledge: score
+languages:
+  go:
+    enabled: false
+  python:
+    enabled: false
+  typescript:
+    enabled: auto
+  rust:
+    enabled: false
+analyzers:
+  syntax:
+    enabled: true
+  scip:
+    enabled: true
+  clones:
+    enabled: true
+ai:
+  provider: anthropic
+  model: claude-opus-4-8
+layers:
+  - shared
+  - infra
+  - engine
+  - api
+modules:
+  shared:
+    paths:
+      - src/types.ts
+      - src/errors.ts
+      - src/utils.ts
+      - src/fusion-args.ts
+    public:
+      - src/types.ts
+      - src/errors.ts
+      - src/utils.ts
+      - src/fusion-args.ts
+    layer: shared
+    owner: pi-fusion
+    deploy_unit: pi-fusion
+    subdomain: generic
+    volatility: low
+  infra:
+    paths:
+      - src/run-store.ts
+      - src/status.ts
+      - src/subagents-rpc.ts
+      - src/subagent-artifacts.ts
+    public:
+      - src/run-store.ts
+      - src/status.ts
+      - src/subagents-rpc.ts
+      - src/subagent-artifacts.ts
+    layer: infra
+    owner: pi-fusion
+    deploy_unit: pi-fusion
+    subdomain: supporting
+    volatility: medium
+  config:
+    paths:
+      - src/config.ts
+    public:
+      - src/config.ts
+    layer: infra
+    owner: pi-fusion
+    deploy_unit: pi-fusion
+    subdomain: supporting
+    volatility: medium
+  engine:
+    paths:
+      - src/orchestrator.ts
+      - src/panel-completion.ts
+      - src/report.ts
+      - src/result-extract.ts
+      - src/run-builder.ts
+    public:
+      - src/orchestrator.ts
+    internal:
+      - src/panel-completion.ts
+      - src/report.ts
+      - src/result-extract.ts
+      - src/run-builder.ts
+    layer: engine
+    owner: pi-fusion
+    deploy_unit: pi-fusion
+    subdomain: core
+    volatility: high
+  api:
+    paths:
+      - src/index.ts
+      - src/commands.ts
+    public:
+      - src/index.ts
+    internal:
+      - src/commands.ts
+    layer: api
+    owner: pi-fusion
+    deploy_unit: pi-fusion
+    subdomain: supporting
+    volatility: medium
+rules:
+  - id: no-layer-violations
+    type: forbidden_layer_direction
+    gate: warn

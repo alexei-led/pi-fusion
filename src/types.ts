@@ -38,6 +38,11 @@ export interface FusionConfig {
   profiles: Record<string, FusionProfile>;
 }
 
+export interface ParsedFusionArgs {
+  prompt: string;
+  profile?: string;
+}
+
 export interface PanelOutput {
   index: number;
   agent: string;
