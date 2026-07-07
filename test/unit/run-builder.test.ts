@@ -68,6 +68,7 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal(params.concurrency, 2);
   assert.equal(params.timeoutMs, 300_000);
   assert.equal(params.context, "fresh");
+  assert.equal(params.acceptance, "none");
   assert.equal("action" in params, false);
   assert.equal("chain" in params, false);
   assert.equal("worktree" in params, false);
@@ -142,6 +143,7 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
   assert.equal(params.output, true);
   assert.equal(params.outputMode, "inline");
   assert.equal(params.skill, false);
+  assert.equal(params.acceptance, "none");
 
   assert.match(params.task, /Original task/);
   assert.match(params.task, /Compare two API designs/);

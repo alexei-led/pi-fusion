@@ -24,6 +24,7 @@ export interface PanelSpawnParams {
   context: "fresh" | "fork";
   output: true;
   outputMode: "inline";
+  acceptance: "none";
   timeoutMs?: number;
 }
 
@@ -111,6 +112,7 @@ export function buildPanelSpawnParams(
     context: profile.context ?? "fresh",
     output: true,
     outputMode: "inline",
+    acceptance: "none",
     ...(profile.timeoutMs !== undefined
       ? { timeoutMs: profile.timeoutMs }
       : {}),
