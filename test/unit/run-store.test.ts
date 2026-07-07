@@ -20,7 +20,7 @@ test("FusionRunStore starts one active run at a time", () => {
   const run = store.startRun({ prompt: "compare", profileName: "quality" });
 
   assert.equal(run.id, "run-1");
-  assert.equal(run.phase, "panel");
+  assert.equal(run.phase, "chain");
   assert.equal(run.createdAt, 10);
   assert.equal(run.updatedAt, 10);
   assert.equal(store.getActiveRun()?.id, "run-1");
@@ -102,7 +102,7 @@ test("FusionRunStore persists and restores active run snapshots", () => {
   assert.equal(readLastFusionRunState(entries)?.panelRunId, "panel-1");
   assert.deepEqual(
     readFusionRunStates(entries).map((state) => state.phase),
-    ["panel", "panel"],
+    ["chain", "chain"],
   );
 
   const restoredStore = new FusionRunStore();

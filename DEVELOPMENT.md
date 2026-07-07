@@ -18,6 +18,8 @@ Then reload Pi:
 ## Runtime behavior
 
 - Uses `pi-subagents` over its event-bus RPC channel.
+- Normal execution is one async chain with a parallel panel step followed by a judge step.
+- Completion recovery reads `pi-subagents` lifecycle artifacts; completion events are a fast path, not the only source of truth.
 - Publishes only the `fusion` status key.
 - Bundled panel agents are read-only by default.
 - Does not replace the Pi footer.

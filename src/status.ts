@@ -23,12 +23,16 @@ export function publishFusionStatus(
   ctx: FusionUiContext | undefined,
   run: Pick<
     FusionRun,
-    "id" | "phase" | "profileName" | "panelRunId" | "judgeRunId"
+    "id" | "phase" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
   >,
   progress?: FusionProgressCounts,
+  phaseLabel?: string,
 ): void {
   if (!ctx?.hasUI) return;
-  ctx.ui.setStatus(FUSION_STATUS_KEY, formatFusionStatusText(run, progress));
+  ctx.ui.setStatus(
+    FUSION_STATUS_KEY,
+    formatFusionStatusText(run, progress, phaseLabel),
+  );
 }
 
 export function clearFusionUi(ctx: FusionUiContext | undefined): void {
@@ -37,20 +41,30 @@ export function clearFusionUi(ctx: FusionUiContext | undefined): void {
 }
 
 export function formatFusionStatusText(
-  run: Pick<FusionRun, "phase" | "profileName" | "panelRunId" | "judgeRunId">,
+  run: Pick<
+    FusionRun,
+    "phase" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
+  >,
   progress?: FusionProgressCounts,
+  phaseLabel?: string,
 ): string {
-  const activeRunId = run.phase === "judge" ? run.judgeRunId : run.panelRunId;
-  const progressText = progress ? ` ${formatProgressCounts(progress)}` : "";
-  const runText = activeRunId ? ` ${activeRunId}` : " starting";
-  return `fusion: ${run.phase} ${run.profileName}${runText}${progressText}`;
+  const activeRunId =
+    run.phase === "judge" ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
+  const phase = phaseLabel ?? run.phase;
+  if (progress) {
+    return `fusion: panel · ${formatProgressCounts(progress)} · ${run.profileName}`;
+  }
+  if (activeRunId) {
+    return `fusion: ${phase} · ${run.profileName} · ${activeRunId}`;
+  }
+  return `fusion: ${phase} · starting · ${run.profileName}`;
 }
 
 export function extractFusionProgressCounts(
   payload: unknown,
 ): FusionProgressCounts | undefined {
   const container = findProgressContainer(payload);
-  if (!container) return undefined;
+  if (!container || container.length === 0) return undefined;
 
   const counts: FusionProgressCounts = {
     total: container.length,
@@ -84,15 +98,19 @@ function findProgressContainer(
   payload: unknown,
 ): readonly unknown[] | undefined {
   if (!isRecord(payload)) return undefined;
-  const progress = unknownArray(payload.progress);
+  const progress = nonEmptyArray(payload.progress);
   if (progress) return progress;
-  const results = unknownArray(payload.results);
+  const results = nonEmptyArray(payload.results);
   if (results) return results;
+  const steps = nonEmptyArray(payload.steps);
+  if (steps) return steps;
   if (isRecord(payload.details)) {
-    const detailsProgress = unknownArray(payload.details.progress);
+    const detailsProgress = nonEmptyArray(payload.details.progress);
     if (detailsProgress) return detailsProgress;
-    const detailsResults = unknownArray(payload.details.results);
+    const detailsResults = nonEmptyArray(payload.details.results);
     if (detailsResults) return detailsResults;
+    const detailsSteps = nonEmptyArray(payload.details.steps);
+    if (detailsSteps) return detailsSteps;
   }
   if (isRecord(payload.data)) return findProgressContainer(payload.data);
   return undefined;
@@ -127,8 +145,10 @@ function firstString(...values: readonly unknown[]): string | undefined {
   return undefined;
 }
 
-function unknownArray(value: unknown): readonly unknown[] | undefined {
-  return Array.isArray(value) ? (value as readonly unknown[]) : undefined;
+function nonEmptyArray(value: unknown): readonly unknown[] | undefined {
+  return Array.isArray(value) && value.length > 0
+    ? (value as readonly unknown[])
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

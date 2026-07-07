@@ -7,8 +7,10 @@ Use this when the README is not enough.
 `pi-fusion` turns one hard question into a small review panel:
 
 ```text
-prompt → panelists in parallel → judge synthesis → final report
+prompt → parallel panel → judge synthesis → final report
 ```
+
+Normal execution is a single `pi-subagents` async chain. If that chain completes without a judge result but at least two panelists still produced usable answers, `pi-fusion` runs one fallback judge pass instead of losing the review.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -30,7 +32,7 @@ Notes:
 
 - Bare `/fusion` shows a short help message.
 - `/fusion status` shows the active run, last run, warnings, and subagent run IDs.
-- `/fusion stop` stops the active panel or judge run.
+- `/fusion stop` stops the active chain or fallback judge run.
 - `/fusion init` writes `.pi/fusion.json` for the current trusted project.
 - Exact one-word prompts `init`, `status`, and `stop` are reserved as `/fusion` subcommands.
 
@@ -250,3 +252,9 @@ Need the run IDs:
 ```text
 /fusion status
 ```
+
+Notes:
+
+- `Chain run` is the normal end-to-end Fusion run.
+- `Fallback judge run` appears only when Fusion had enough panel output to recover a missing judge result.
+- If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory.

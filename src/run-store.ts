@@ -17,6 +17,7 @@ export type FusionRunSummary = Omit<
     | "phase"
     | "createdAt"
     | "updatedAt"
+    | "chainRunId"
     | "panelRunId"
     | "judgeRunId"
     | "report"
@@ -29,19 +30,26 @@ export interface FusionRunStartInput {
   id?: string;
   prompt: string;
   profileName: string;
+  phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
 }
 
 export interface FusionRunPatch {
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
+  chainRunId?: string;
+  chainAsyncDir?: string;
   panelRunId?: string;
   judgeRunId?: string;
+  judgeAsyncDir?: string;
+  panelOutputs?: FusionRun["panelOutputs"];
+  panelFailures?: FusionRun["panelFailures"];
   report?: string;
   error?: string;
   updatedAt?: number;
 }
 
 export interface FusionRunTransitionPatch {
+  chainRunId?: string;
   panelRunId?: string;
   judgeRunId?: string;
   report?: string;
@@ -106,7 +114,7 @@ export class FusionRunStore {
       id: input.id ?? this.idFactory(),
       prompt: input.prompt,
       profileName: input.profileName,
-      phase: "panel",
+      phase: input.phase ?? "chain",
       createdAt,
       updatedAt: createdAt,
     };
@@ -246,8 +254,21 @@ function applyPatch(
   const updated = cloneRun(run);
   updated.updatedAt = updatedAt;
   if (patch.phase !== undefined) updated.phase = patch.phase;
+  if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
+  if (patch.chainAsyncDir !== undefined) {
+    updated.chainAsyncDir = patch.chainAsyncDir;
+  }
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
+  if (patch.judgeAsyncDir !== undefined) {
+    updated.judgeAsyncDir = patch.judgeAsyncDir;
+  }
+  if (patch.panelOutputs !== undefined) {
+    updated.panelOutputs = clonePanelOutputs(patch.panelOutputs);
+  }
+  if (patch.panelFailures !== undefined) {
+    updated.panelFailures = clonePanelFailures(patch.panelFailures);
+  }
   if (patch.report !== undefined) updated.report = patch.report;
   if (patch.error !== undefined) updated.error = patch.error;
   return updated;
@@ -264,6 +285,7 @@ function applyTransitionPatch(
     phase,
   };
   updated.updatedAt = updatedAt;
+  if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
   if (patch.report !== undefined) updated.report = patch.report;
@@ -281,6 +303,7 @@ function toRunSummary(
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
+    ...(run.chainRunId !== undefined ? { chainRunId: run.chainRunId } : {}),
     ...(run.panelRunId !== undefined ? { panelRunId: run.panelRunId } : {}),
     ...(run.judgeRunId !== undefined ? { judgeRunId: run.judgeRunId } : {}),
     ...(run.report !== undefined ? { report: run.report } : {}),
@@ -296,8 +319,21 @@ function cloneRun(run: FusionRun): FusionRun {
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
+    ...(run.chainRunId !== undefined ? { chainRunId: run.chainRunId } : {}),
+    ...(run.chainAsyncDir !== undefined
+      ? { chainAsyncDir: run.chainAsyncDir }
+      : {}),
     ...(run.panelRunId !== undefined ? { panelRunId: run.panelRunId } : {}),
     ...(run.judgeRunId !== undefined ? { judgeRunId: run.judgeRunId } : {}),
+    ...(run.judgeAsyncDir !== undefined
+      ? { judgeAsyncDir: run.judgeAsyncDir }
+      : {}),
+    ...(run.panelOutputs !== undefined
+      ? { panelOutputs: clonePanelOutputs(run.panelOutputs) }
+      : {}),
+    ...(run.panelFailures !== undefined
+      ? { panelFailures: clonePanelFailures(run.panelFailures) }
+      : {}),
     ...(run.report !== undefined ? { report: run.report } : {}),
     ...(run.error !== undefined ? { error: run.error } : {}),
   };
@@ -326,10 +362,37 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (!isFusionPhase(value.phase)) return false;
   if (!isFiniteNumber(value.createdAt)) return false;
   if (!isFiniteNumber(value.updatedAt)) return false;
+  if (value.chainRunId !== undefined && typeof value.chainRunId !== "string") {
+    return false;
+  }
+  if (
+    value.chainAsyncDir !== undefined &&
+    typeof value.chainAsyncDir !== "string"
+  ) {
+    return false;
+  }
   if (value.panelRunId !== undefined && typeof value.panelRunId !== "string") {
     return false;
   }
   if (value.judgeRunId !== undefined && typeof value.judgeRunId !== "string") {
+    return false;
+  }
+  if (
+    value.judgeAsyncDir !== undefined &&
+    typeof value.judgeAsyncDir !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.panelOutputs !== undefined &&
+    !isPanelOutputArray(value.panelOutputs)
+  ) {
+    return false;
+  }
+  if (
+    value.panelFailures !== undefined &&
+    !isPanelFailureArray(value.panelFailures)
+  ) {
     return false;
   }
   if (value.report !== undefined && typeof value.report !== "string") {
@@ -348,6 +411,7 @@ function isFusionRunSummary(value: unknown): value is FusionRunSummary {
 function isFusionPhase(value: unknown): value is FusionPhase {
   return (
     value === "panel" ||
+    value === "chain" ||
     value === "judge" ||
     value === "done" ||
     value === "failed" ||
@@ -369,4 +433,60 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPanelOutputArray(
+  value: unknown,
+): value is NonNullable<FusionRun["panelOutputs"]> {
+  return Array.isArray(value) && value.every(isPanelOutput);
+}
+
+function isPanelOutput(
+  value: unknown,
+): value is NonNullable<FusionRun["panelOutputs"]>[number] {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.index) &&
+    isNonEmptyString(value.agent) &&
+    typeof value.output === "string" &&
+    (value.id === undefined || typeof value.id === "string") &&
+    (value.label === undefined || typeof value.label === "string") &&
+    (value.artifactPath === undefined ||
+      typeof value.artifactPath === "string") &&
+    (value.sessionPath === undefined || typeof value.sessionPath === "string")
+  );
+}
+
+function isPanelFailureArray(
+  value: unknown,
+): value is NonNullable<FusionRun["panelFailures"]> {
+  return Array.isArray(value) && value.every(isPanelFailure);
+}
+
+function isPanelFailure(
+  value: unknown,
+): value is NonNullable<FusionRun["panelFailures"]>[number] {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.index) &&
+    isNonEmptyString(value.agent) &&
+    typeof value.summary === "string" &&
+    (value.id === undefined || typeof value.id === "string") &&
+    (value.label === undefined || typeof value.label === "string") &&
+    (value.artifactPath === undefined ||
+      typeof value.artifactPath === "string") &&
+    (value.sessionPath === undefined || typeof value.sessionPath === "string")
+  );
+}
+
+function clonePanelOutputs(
+  outputs: NonNullable<FusionRun["panelOutputs"]>,
+): NonNullable<FusionRun["panelOutputs"]> {
+  return outputs.map((output) => ({ ...output }));
+}
+
+function clonePanelFailures(
+  failures: NonNullable<FusionRun["panelFailures"]>,
+): NonNullable<FusionRun["panelFailures"]> {
+  return failures.map((failure) => ({ ...failure }));
 }

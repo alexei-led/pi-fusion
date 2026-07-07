@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendThinkingSuffix,
+  buildFusionChainSpawnParams,
   buildJudgeSpawnParams,
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
@@ -104,6 +105,43 @@ test("buildPanelSpawnParams includes role, prompt, contract, and read-only instr
   assert.match(task, /## Summary/);
   assert.match(task, /## Recommendation/);
   assert.match(task, /## Confidence/);
+});
+
+test("buildFusionChainSpawnParams creates a parallel panel step followed by a judge step", () => {
+  const params = buildFusionChainSpawnParams(
+    PROFILE,
+    "Compare two API designs",
+  );
+
+  assert.equal(params.async, true);
+  assert.equal(params.clarify, false);
+  assert.equal(params.context, "fresh");
+  assert.equal(params.task, "Compare two API designs");
+  assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
+  assert.equal(params.chain.length, 2);
+
+  const panelStep = params.chain[0];
+  assert.equal(panelStep.concurrency, 2);
+  assert.equal(panelStep.failFast, false);
+  assert.equal(panelStep.parallel.length, 3);
+  assert.equal(panelStep.parallel[0]?.label, "Architect");
+  assert.equal(panelStep.parallel[0]?.phase, "Panel");
+  assert.equal(panelStep.parallel[0]?.as, "architect");
+  assert.equal(panelStep.parallel[0]?.model, "openai/gpt-5.5:xhigh");
+  assert.deepEqual(
+    panelStep.parallel[0]?.acceptance,
+    FUSION_ACCEPTANCE_DISABLED,
+  );
+
+  const judgeStep = params.chain[1];
+  assert.equal(judgeStep.agent, "pi-fusion.fusion-judge");
+  assert.equal(judgeStep.label, "Judge");
+  assert.equal(judgeStep.phase, "Judge");
+  assert.equal(judgeStep.model, "openai/gpt-5.5:high");
+  assert.match(judgeStep.task, /Original task:\n\{task\}/);
+  assert.match(judgeStep.task, /\{outputs\.architect\}/);
+  assert.match(judgeStep.task, /\{outputs\.tester\}/);
+  assert.match(judgeStep.task, /# Fusion Report/);
 });
 
 test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, and report contract", () => {

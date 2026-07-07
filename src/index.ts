@@ -29,6 +29,7 @@ export default function fusionExtension(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", () => {
     orchestrator.clearUi();
+    orchestrator.dispose();
     if (typeof unsubscribeComplete === "function") unsubscribeComplete();
   });
 }

@@ -156,3 +156,35 @@ test("extractPanelResults falls back to artifact paths when inline output is abs
     },
   ]);
 });
+
+test("extractPanelResults can limit extraction to the panel prefix of a chain result", () => {
+  const result = extractPanelResults(
+    {
+      runId: "chain-run",
+      results: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: true,
+          output: "Architect says A.",
+        },
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: true,
+          output: "Tester says A.",
+        },
+        {
+          agent: "pi-fusion.fusion-judge",
+          success: true,
+          output: "# Fusion Report\n\n## Summary\nUse A.",
+        },
+      ],
+    },
+    { panel: PANEL, limit: 2 },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs.length, 2);
+  assert.equal(result.failures.length, 0);
+  assert.equal(result.outputs[1]?.label, "Tester");
+});

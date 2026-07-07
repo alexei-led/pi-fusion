@@ -170,9 +170,13 @@ export class FakeEventBus {
 
   private spawnData(params: unknown): unknown {
     assert.ok(isRecord(params));
-    return Array.isArray(params.tasks)
-      ? { details: { runId: "panel-1" } }
-      : { details: { runId: "judge-1" } };
+    if (Array.isArray(params.chain)) {
+      return { details: { runId: "chain-1" } };
+    }
+    if (Array.isArray(params.tasks)) {
+      return { details: { runId: "panel-1" } };
+    }
+    return { details: { runId: "judge-1" } };
   }
 
   private statusData(params: unknown): unknown {

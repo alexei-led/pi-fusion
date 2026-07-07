@@ -1,4 +1,8 @@
-import type { FailedPanelSummary, PanelOutput } from "./run-builder.js";
+import {
+  appendThinkingSuffix,
+  type FailedPanelSummary,
+  type PanelOutput,
+} from "./run-builder.js";
 import type { PanelMemberConfig } from "./types.js";
 
 export type ResultExtractErrorCode =
@@ -12,6 +16,7 @@ export interface ResultExtractError {
 
 export interface ExtractPanelResultsOptions {
   panel?: readonly PanelMemberConfig[];
+  limit?: number;
 }
 
 export type ExtractPanelResultsResult =
@@ -40,7 +45,11 @@ export function extractPanelResults(
 
   const outputs: PanelOutput[] = [];
   const failures: FailedPanelSummary[] = [];
-  for (const [index, rawResult] of container.results.entries()) {
+  const results =
+    options.limit === undefined
+      ? container.results
+      : container.results.slice(0, options.limit);
+  for (const [index, rawResult] of results.entries()) {
     const child = normalizeChildResult(rawResult, index, options);
     if (!child.ok) return child;
     if (child.status === "success") outputs.push(child.output);
@@ -232,12 +241,17 @@ function buildPanelOutput(input: {
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): PanelOutput {
+  const model = input.member
+    ? appendThinkingSuffix(input.member.model, input.member.thinking)
+    : undefined;
   return {
     index: input.index,
     agent: input.agent,
     output: input.output,
     ...(input.member?.id ? { id: input.member.id } : {}),
     ...(input.member?.label ? { label: input.member.label } : {}),
+    ...(input.member?.role ? { role: input.member.role } : {}),
+    ...(model ? { model } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
   };
@@ -251,12 +265,17 @@ function buildFailedPanelSummary(input: {
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): FailedPanelSummary {
+  const model = input.member
+    ? appendThinkingSuffix(input.member.model, input.member.thinking)
+    : undefined;
   return {
     index: input.index,
     agent: input.agent,
     summary: input.summary,
     ...(input.member?.id ? { id: input.member.id } : {}),
     ...(input.member?.label ? { label: input.member.label } : {}),
+    ...(input.member?.role ? { role: input.member.role } : {}),
+    ...(model ? { model } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
   };

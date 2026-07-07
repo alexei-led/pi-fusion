@@ -6,7 +6,10 @@ import {
   type FusionMessageSink,
   type FusionRpcClientLike,
 } from "../../src/orchestrator.js";
-import { FUSION_ACCEPTANCE_DISABLED } from "../../src/run-builder.js";
+import {
+  buildFusionChainSpawnParams,
+  FUSION_ACCEPTANCE_DISABLED,
+} from "../../src/run-builder.js";
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 
@@ -25,7 +28,7 @@ const CONFIG: FusionConfig = {
   },
 };
 
-test("startRun pings subagents, starts a panel run, and publishes UI status", async () => {
+test("startRun pings subagents, starts a chain run, and publishes UI status", async () => {
   const fixture = makeFixture();
 
   const result = await fixture.orchestrator.startRun(
@@ -36,16 +39,15 @@ test("startRun pings subagents, starts a panel run, and publishes UI status", as
   assert.equal(result.status, "started");
   assert.equal(fixture.rpc.pings, 1);
   assert.equal(fixture.rpc.spawns.length, 1);
-  const panelSpawn = fixture.rpc.spawns[0];
-  assert.ok(isRecord(panelSpawn));
-  const panelTasks = panelSpawn.tasks;
-  assert.ok(Array.isArray(panelTasks));
-  assert.deepEqual(panelSpawn["acceptance"], FUSION_ACCEPTANCE_DISABLED);
-  assert.equal(panelTasks.length, 2);
-  assert.ok(isRecord(panelTasks[0]));
-  assert.deepEqual(panelTasks[0]["acceptance"], FUSION_ACCEPTANCE_DISABLED);
-  assert.equal(fixture.orchestrator.getActiveRun()?.panelRunId, "panel-1");
-  assert.match(fixture.ui.lastStatus("fusion") ?? "", /panel-1/);
+  const chainSpawn = fixture.rpc.spawns[0];
+  assert.ok(isRecord(chainSpawn));
+  assert.deepEqual(
+    chainSpawn,
+    buildFusionChainSpawnParams(CONFIG.profiles.quality!, "compare APIs"),
+  );
+  assert.deepEqual(chainSpawn["acceptance"], FUSION_ACCEPTANCE_DISABLED);
+  assert.equal(fixture.orchestrator.getActiveRun()?.chainRunId, "chain-1");
+  assert.match(fixture.ui.lastStatus("fusion") ?? "", /chain-1/);
 });
 
 test("startRun rejects an active-run conflict without spawning another panel", async () => {
@@ -65,27 +67,25 @@ test("startRun rejects an active-run conflict without spawning another panel", a
 test("showStatus reports active run IDs, progress counts, and warnings", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
-  fixture.rpc.statusResults.set("panel-1", {
-    runId: "panel-1",
-    details: {
-      progress: [{ status: "completed" }, { status: "running" }],
-    },
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    steps: [{ status: "completed" }, { status: "running" }],
   });
 
   const report = await fixture.orchestrator.showStatus(fixture.ctx);
 
   assert.match(report, /State: active/);
-  assert.match(report, /Panel run: panel-1/);
+  assert.match(report, /Chain run: chain-1/);
   assert.match(report, /Progress: 1\/2 done, 1 running, 0 failed/);
   assert.match(report, /Warnings: none/);
   assert.equal(fixture.messages.at(-1)?.customType, "fusion-status");
 });
 
-test("panel completion with zero successful panelists fails with a clear report", async () => {
+test("chain completion with zero successful panelists fails with a clear report", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
-  fixture.rpc.statusResults.set("panel-1", {
-    runId: "panel-1",
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
     results: [
       { agent: "panel-agent", success: false, error: "boom" },
       { agent: "panel-agent", success: false, summary: "timed out" },
@@ -93,7 +93,7 @@ test("panel completion with zero successful panelists fails with a clear report"
   });
 
   const result = await fixture.orchestrator.handleSubagentComplete({
-    runId: "panel-1",
+    runId: "chain-1",
   });
 
   assert.equal(result.status, "failed");
@@ -106,11 +106,11 @@ test("panel completion with zero successful panelists fails with a clear report"
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
 });
 
-test("panel completion with one success skips judge and completes the run", async () => {
+test("chain completion with one success skips judge and completes the run", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
-  fixture.rpc.statusResults.set("panel-1", {
-    runId: "panel-1",
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
     results: [
       { agent: "panel-agent", success: true, output: "Choose A." },
       { agent: "panel-agent", success: false, error: "boom" },
@@ -118,7 +118,7 @@ test("panel completion with one success skips judge and completes the run", asyn
   });
 
   const result = await fixture.orchestrator.handleSubagentComplete({
-    runId: "panel-1",
+    runId: "chain-1",
   });
 
   assert.equal(result.status, "done");
@@ -131,14 +131,29 @@ test("panel completion with one success skips judge and completes the run", asyn
   assert.match(fixture.messages.at(-1)?.content ?? "", /Choose A/);
 });
 
-test("panel completion with multiple successes spawns and stores a judge run", async () => {
+test("chain completion with judge output completes the run without a fallback spawn", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", successfulChainStatus());
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Use A/);
+});
+
+test("chain completion without a judge result spawns a fallback judge", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
-  fixture.rpc.statusResults.set("panel-1", successfulPanelStatus());
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
 
   const result = await fixture.orchestrator.handleSubagentComplete({
-    runId: "panel-1",
+    runId: "chain-1",
   });
 
   assert.equal(result.status, "started");
@@ -148,31 +163,72 @@ test("panel completion with multiple successes spawns and stores a judge run", a
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
 });
 
-test("panel completion uses event results when RPC status has no result details", async () => {
+test("chain completion uses event results when RPC status has no result details", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
-  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
   fixture.rpc.statusResults.set(
-    "panel-1",
-    completedStatusWithoutResults("panel-1"),
+    "chain-1",
+    completedStatusWithoutResults("chain-1"),
   );
 
   const result = await fixture.orchestrator.handleSubagentComplete(
-    successfulPanelStatus(),
+    successfulChainStatus(),
   );
 
-  assert.equal(result.status, "started");
-  assert.equal(fixture.rpc.spawns.length, 2);
-  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
-  assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
+  assert.equal(result.status, "done");
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+});
+
+test("chain completion treats terminal status text as complete even when event payload has no results", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set(
+    "chain-1",
+    completedStatusWithoutResults("chain-1"),
+  );
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    fixture.messages.at(-1)?.content ?? "",
+    /No panelists completed successfully/,
+  );
+});
+
+test("judge completion treats terminal status text as complete even when event payload has no results", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  fixture.rpc.statusResults.set(
+    "judge-1",
+    completedStatusWithoutResults("judge-1"),
+  );
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "judge-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    fixture.messages.at(-1)?.content ?? "",
+    /Fusion judge completed without output/,
+  );
 });
 
 test("judge completion uses event output when RPC status has no result details", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
-  fixture.rpc.statusResults.set("panel-1", successfulPanelStatus());
-  await fixture.orchestrator.handleSubagentComplete({ runId: "panel-1" });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
   fixture.rpc.statusResults.set(
     "judge-1",
     completedStatusWithoutResults("judge-1"),
@@ -197,8 +253,8 @@ test("judge completion renders the final judge report and clears active UI", asy
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
-  fixture.rpc.statusResults.set("panel-1", successfulPanelStatus());
-  await fixture.orchestrator.handleSubagentComplete({ runId: "panel-1" });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
   fixture.rpc.statusResults.set("judge-1", {
     runId: "judge-1",
     results: [
@@ -228,8 +284,8 @@ test("cancelActiveRun stops the active run and falls back to interrupt", async (
   const result = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
 
   assert.equal(result.status, "cancelled");
-  assert.deepEqual(fixture.rpc.stops, [{ id: "panel-1" }]);
-  assert.deepEqual(fixture.rpc.interrupts, [{ id: "panel-1" }]);
+  assert.deepEqual(fixture.rpc.stops, [{ id: "chain-1" }]);
+  assert.deepEqual(fixture.rpc.interrupts, [{ id: "chain-1" }]);
   assert.match(
     fixture.messages.at(-1)?.content ?? "",
     /Cancellation method: interrupt/,
@@ -246,15 +302,34 @@ test("clearUi clears the fusion status key", async () => {
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
 });
 
-function successfulPanelStatus(): unknown {
+function successfulPanelStatus(runId = "panel-1"): unknown {
   return {
-    runId: "panel-1",
+    runId,
     results: [
       { agent: "panel-agent", success: true, output: "Architect says A." },
       {
         agent: "panel-agent",
         success: true,
         output: "Tester says A is testable.",
+      },
+    ],
+  };
+}
+
+function successfulChainStatus(): unknown {
+  return {
+    runId: "chain-1",
+    results: [
+      { agent: "panel-agent", success: true, output: "Architect says A." },
+      {
+        agent: "panel-agent",
+        success: true,
+        output: "Tester says A is testable.",
+      },
+      {
+        agent: "judge-agent",
+        success: true,
+        output: "# Fusion Report\n\n## Summary\nUse A.",
       },
     ],
   };
@@ -299,7 +374,7 @@ class FakeRpc implements FusionRpcClientLike {
   readonly statuses: Array<unknown> = [];
   readonly stops: Array<unknown> = [];
   readonly interrupts: Array<unknown> = [];
-  readonly spawnResults: unknown[] = [{ details: { runId: "panel-1" } }];
+  readonly spawnResults: unknown[] = [{ details: { runId: "chain-1" } }];
   readonly statusResults = new Map<string, unknown>();
   stopError: Error | undefined;
   interruptError: Error | undefined;

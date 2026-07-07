@@ -38,7 +38,32 @@ export interface FusionConfig {
   profiles: Record<string, FusionProfile>;
 }
 
-export type FusionPhase = "panel" | "judge" | "done" | "failed" | "cancelled";
+export interface PanelOutput {
+  index: number;
+  agent: string;
+  output: string;
+  id?: string;
+  label?: string;
+  role?: string;
+  model?: string;
+  artifactPath?: string;
+  sessionPath?: string;
+}
+
+export interface FailedPanelSummary {
+  index: number;
+  agent: string;
+  summary: string;
+  id?: string;
+  label?: string;
+  role?: string;
+  model?: string;
+  artifactPath?: string;
+  sessionPath?: string;
+}
+
+export type FusionPhase =
+  "panel" | "chain" | "judge" | "done" | "failed" | "cancelled";
 
 export interface FusionRun {
   id: string;
@@ -47,8 +72,13 @@ export interface FusionRun {
   phase: FusionPhase;
   createdAt: number;
   updatedAt: number;
+  chainRunId?: string;
+  chainAsyncDir?: string;
   panelRunId?: string;
   judgeRunId?: string;
+  judgeAsyncDir?: string;
+  panelOutputs?: PanelOutput[];
+  panelFailures?: FailedPanelSummary[];
   report?: string;
   error?: string;
 }

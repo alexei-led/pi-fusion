@@ -3,7 +3,7 @@ import type { FusionRun } from "./types.js";
 
 type ReportRun = Pick<
   FusionRun,
-  "id" | "prompt" | "profileName" | "panelRunId" | "judgeRunId"
+  "id" | "prompt" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
 > &
   Partial<Pick<FusionRun, "phase" | "createdAt" | "updatedAt">>;
 
@@ -11,12 +11,14 @@ export interface RenderPanelFailureReportInput {
   run: ReportRun;
   failures: readonly FailedPanelSummary[];
   error?: string;
+  judgeModel?: string;
 }
 
 export interface RenderSinglePanelReportInput {
   run: ReportRun;
   output: PanelOutput;
   failures: readonly FailedPanelSummary[];
+  judgeModel?: string;
 }
 
 export interface RenderJudgeReportInput {
@@ -24,6 +26,7 @@ export interface RenderJudgeReportInput {
   judgeOutput: string;
   panelOutputs?: readonly PanelOutput[];
   failures?: readonly FailedPanelSummary[];
+  judgeModel?: string;
 }
 
 export interface RenderFailureReportInput {
@@ -31,6 +34,7 @@ export interface RenderFailureReportInput {
   error: string;
   panelOutputs?: readonly PanelOutput[];
   failures?: readonly FailedPanelSummary[];
+  judgeModel?: string;
 }
 
 export interface RenderCancelledReportInput {
@@ -39,6 +43,7 @@ export interface RenderCancelledReportInput {
   targetRunId?: string;
   panelOutputs?: readonly PanelOutput[];
   failures?: readonly FailedPanelSummary[];
+  judgeModel?: string;
 }
 
 type ReportSectionTitle =
@@ -62,6 +67,7 @@ interface AgentStatusOptions {
   panelOutputs?: readonly PanelOutput[];
   failures?: readonly FailedPanelSummary[];
   judgeStatus: string;
+  judgeModel?: string;
   extra?: readonly string[];
 }
 
@@ -80,6 +86,7 @@ export function renderPanelFailureReport(
         panelOutputs: [],
         failures: input.failures,
         judgeStatus: "not run - no successful panelists",
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
       }),
     },
     {
@@ -132,6 +139,7 @@ export function renderSinglePanelReport(
         panelOutputs: [input.output],
         failures: input.failures,
         judgeStatus: "skipped - one successful panelist",
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
       }),
     },
     {
@@ -193,6 +201,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
         panelOutputs,
         failures,
         judgeStatus: "succeeded",
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
       }),
     },
     {
@@ -244,6 +253,7 @@ export function renderFailureReport(input: RenderFailureReportInput): string {
           : {}),
         ...(input.failures !== undefined ? { failures: input.failures } : {}),
         judgeStatus: `failed - ${firstLine(input.error)}`,
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
         extra: [`- Phase: ${phase}`],
       }),
     },
@@ -291,6 +301,7 @@ export function renderCancelledReport(
           : {}),
         ...(input.failures !== undefined ? { failures: input.failures } : {}),
         judgeStatus: "cancelled or not completed",
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
         extra: [
           `- Phase: ${input.run.phase ?? "unknown"}`,
           `- Cancellation method: ${input.method}`,
@@ -371,15 +382,21 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
   }
 
   lines.push(`- Judge: ${options.judgeStatus}`);
+  if (options.judgeModel) lines.push(`  Model: ${options.judgeModel}`);
   if (options.extra) lines.push(...options.extra);
   return lines;
 }
 
 function formatPanelDetails(
-  item: Pick<PanelOutput, "agent" | "artifactPath" | "sessionPath">,
+  item: Pick<
+    PanelOutput,
+    "agent" | "role" | "model" | "artifactPath" | "sessionPath"
+  >,
 ): string[] {
   return [
     `  Agent: ${item.agent}`,
+    ...(item.role ? [`  Role: ${item.role}`] : []),
+    ...(item.model ? [`  Model: ${item.model}`] : []),
     ...(item.artifactPath ? [`  Artifact: ${item.artifactPath}`] : []),
     ...(item.sessionPath ? [`  Session: ${item.sessionPath}`] : []),
   ];
@@ -391,8 +408,9 @@ function formatRunMetadata(run: ReportRun): string[] {
     `- Profile: ${run.profileName}`,
     ...(run.phase ? [`- Phase: ${run.phase}`] : []),
     `- Prompt: ${firstLine(run.prompt)}`,
+    ...(run.chainRunId ? [`- Chain run: ${run.chainRunId}`] : []),
     ...(run.panelRunId ? [`- Panel run: ${run.panelRunId}`] : []),
-    ...(run.judgeRunId ? [`- Judge run: ${run.judgeRunId}`] : []),
+    ...(run.judgeRunId ? [`- Fallback judge run: ${run.judgeRunId}`] : []),
     ...(typeof run.createdAt === "number"
       ? [`- Created: ${formatTimestamp(run.createdAt)}`]
       : []),

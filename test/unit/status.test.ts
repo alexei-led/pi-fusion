@@ -18,7 +18,7 @@ const RUN: FusionRun = {
   panelRunId: "panel-1",
 };
 
-test("formatFusionStatusText includes phase, profile, run ID, and counts", () => {
+test("formatFusionStatusText includes phase, profile, and counts", () => {
   const text = formatFusionStatusText(RUN, {
     total: 3,
     pending: 1,
@@ -27,10 +27,7 @@ test("formatFusionStatusText includes phase, profile, run ID, and counts", () =>
     failed: 0,
   });
 
-  assert.equal(
-    text,
-    "fusion: panel quality panel-1 1/3 done, 1 running, 0 failed",
-  );
+  assert.equal(text, "fusion: panel · 1/3 done, 1 running, 0 failed · quality");
 });
 
 test("publishFusionStatus and clearFusionUi use only the fusion status key", () => {
@@ -41,7 +38,7 @@ test("publishFusionStatus and clearFusionUi use only the fusion status key", () 
   clearFusionUi(ctx);
 
   assert.deepEqual(ui.statuses, [
-    { key: "fusion", text: "fusion: panel quality panel-1" },
+    { key: "fusion", text: "fusion: panel · quality · panel-1" },
     { key: "fusion", text: undefined },
   ]);
 });
@@ -66,6 +63,16 @@ test("extractFusionProgressCounts reads progress and result containers", () => {
     }),
     { total: 3, pending: 1, running: 0, completed: 1, failed: 1 },
   );
+
+  assert.deepEqual(
+    extractFusionProgressCounts({
+      results: [],
+      steps: [{ status: "running" }],
+    }),
+    { total: 1, pending: 0, running: 1, completed: 0, failed: 0 },
+  );
+
+  assert.equal(extractFusionProgressCounts({ results: [] }), undefined);
 });
 
 class FakeUi {
