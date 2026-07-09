@@ -8,7 +8,10 @@ import {
 import { FusionRunStore } from "./run-store.js";
 import { SubagentsRpcClient } from "./subagents-rpc.js";
 
-function registerFusionTool(pi: ExtensionAPI): void {
+function registerFusionTool(
+  pi: ExtensionAPI,
+  orchestrator: FusionOrchestrator,
+): void {
   pi.registerTool({
     name: "start_fusion_review",
     label: "Fusion Review",
@@ -24,15 +27,28 @@ function registerFusionTool(pi: ExtensionAPI): void {
         Type.String({ description: "Fusion profile name (optional)" }),
       ),
     }),
-    execute(_toolCallId, params) {
-      const cmd = params.profile
-        ? `/fusion --profile ${params.profile} ${params.prompt}`
-        : `/fusion ${params.prompt}`;
-      pi.sendUserMessage(cmd, { deliverAs: "followUp" });
-      return Promise.resolve({
-        content: [{ type: "text", text: "Starting fusion panel review…" }],
-        details: { prompt: params.prompt, profile: params.profile },
-      });
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const result = await orchestrator.startRun(
+        {
+          prompt: params.prompt,
+          ...(params.profile ? { profile: params.profile } : {}),
+        },
+        ctx,
+      );
+      const text =
+        result.status === "started"
+          ? "Fusion panel review started. The report will be posted when the panel and judge finish."
+          : result.status === "conflict"
+            ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
+            : `Fusion review failed to start: ${result.status === "failed" ? result.error : result.status}`;
+      return {
+        content: [{ type: "text", text }],
+        details: {
+          prompt: params.prompt,
+          profile: params.profile,
+          status: result.status,
+        },
+      };
     },
   });
 }
@@ -45,7 +61,7 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   });
 
   registerFusionCommands(pi, orchestrator);
-  registerFusionTool(pi);
+  registerFusionTool(pi, orchestrator);
 
   const unsubscribeComplete = pi.events.on(
     SUBAGENT_ASYNC_COMPLETE_EVENT,
