@@ -58,6 +58,11 @@ export class FakePi {
     this.commands.set(name, command);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerTool(_definition: any): void {
+    // no-op in tests; tool registration is an integration concern
+  }
+
   on(
     event: string,
     handler: (payload: unknown, ctx: FakeCommandContext) => unknown,
