@@ -21,6 +21,7 @@
   ],
   "files": [
     "agents/*.md",
+    "skills/**/*.md",
     "src/*.ts",
     "docs/user-guide.md"
   ],
@@ -38,6 +39,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ],
     "subagents": {
       "agents": [
