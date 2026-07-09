@@ -110,7 +110,8 @@ Panel member:
 - `id`: stable machine name
 - `label`: human-readable report label
 - `agent`: subagent name
-- `model`: optional model override; often the main source of panel diversity
+- `model`: optional model override; often the main source of panel diversity. Supports normal Pi model ids, and if `pi-claude-alias` is configured, Claude alias shorthand like `claude-work/opus-4.8`
+- Claude alias handles must be unique across global and project alias files; duplicate handles are rejected.
 - `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
 - `role`: optional perspective hint layered on top of the model
 
@@ -162,7 +163,7 @@ Deliberate review:
           "id": "architect",
           "label": "Architect",
           "agent": "pi-fusion.fusion-panelist",
-          "model": "anthropic/claude-sonnet-4",
+          "model": "claude-work/sonnet-4.6",
           "thinking": "high",
           "role": "architecture and failure modes"
         },
@@ -177,7 +178,7 @@ Deliberate review:
       ],
       "judge": {
         "agent": "pi-fusion.fusion-judge",
-        "model": "anthropic/claude-sonnet-4",
+        "model": "claude-work/sonnet-4.6",
         "thinking": "high"
       },
       "concurrency": 2,

@@ -1,6 +1,7 @@
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import { FusionConfigError } from "./errors.js";
 import {
   THINKING_LEVELS,
@@ -104,12 +105,15 @@ export async function loadFusionConfig(
   if (ctx.isProjectTrusted()) {
     const projectPath = getProjectFusionConfigPath(ctx.cwd);
     const projectConfig = await readOptionalConfig(projectPath, readTextFile);
-    if (projectConfig) return projectConfig;
+    if (projectConfig) {
+      return applyClaudeAliasShorthand(projectConfig, ctx, deps);
+    }
   }
 
   const globalPath = getGlobalFusionConfigPath(deps.agentDir);
   const globalConfig = await readOptionalConfig(globalPath, readTextFile);
-  return globalConfig ?? createDefaultFusionConfig();
+  const config = globalConfig ?? createDefaultFusionConfig();
+  return applyClaudeAliasShorthand(config, ctx, deps);
 }
 
 export function resolveProfile(

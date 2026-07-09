@@ -84,6 +84,61 @@ test("loadFusionConfig ignores project config when the project is untrusted", as
   assert.equal(config.profiles.project, undefined);
 });
 
+test("loadFusionConfig resolves Claude alias shorthand in panel and judge models", async (t) => {
+  const root = await makeTempDir(t);
+  const cwd = join(root, "project");
+  const agentDir = join(root, "agent");
+
+  await writeJson(join(agentDir, "claude-alias.json"), {
+    aliases: [
+      { slug: "work", handle: "claude-work", label: "Work" },
+      { slug: "labs", handle: "claude-labs", label: "Labs" },
+    ],
+  });
+  await writeJson(getProjectFusionConfigPath(cwd), {
+    defaultProfile: "quality",
+    profiles: {
+      quality: {
+        panel: [
+          { ...PANEL_MEMBER, model: "claude-work/opus-4.8" },
+          { ...PANEL_MEMBER, id: "two", label: "Two", model: "claude-labs/claude-sonnet-4-6" },
+        ],
+        judge: { ...JUDGE, model: "claude-work/haiku-4.5" },
+      },
+    },
+  });
+
+  const config = await loadFusionConfig(
+    { cwd, isProjectTrusted: () => true },
+    { agentDir },
+  );
+
+  const profile = config.profiles.quality;
+  assert.ok(profile);
+  assert.equal(profile.panel[0]?.model, "anthropic-work/claude-opus-4-8");
+  assert.equal(profile.panel[1]?.model, "anthropic-labs/claude-sonnet-4-6");
+  assert.equal(profile.judge.model, "anthropic-work/claude-haiku-4-5");
+});
+
+test("loadFusionConfig rejects duplicate Claude handles across global and project aliases", async (t) => {
+  const root = await makeTempDir(t);
+  const cwd = join(root, "project");
+  const agentDir = join(root, "agent");
+
+  await writeJson(join(agentDir, "claude-alias.json"), {
+    aliases: [{ slug: "work", handle: "claude-shared", label: "Work" }],
+  });
+  await writeJson(getProjectFusionConfigPath(cwd), configWithProfile("quality"));
+  await writeJson(join(cwd, ".pi", "claude-alias.json"), {
+    aliases: [{ slug: "client", handle: "claude-shared", label: "Client" }],
+  });
+
+  await assert.rejects(
+    loadFusionConfig({ cwd, isProjectTrusted: () => true }, { agentDir }),
+    /Duplicate Claude alias handle "claude-shared" across merged config/,
+  );
+});
+
 test("loadFusionConfig fails on malformed JSON", async (t) => {
   const root = await makeTempDir(t);
   const agentDir = join(root, "agent");
