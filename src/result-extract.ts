@@ -3,6 +3,10 @@ import {
   type FailedPanelSummary,
   type PanelOutput,
 } from "./run-builder.js";
+import {
+  extractPanelDecision,
+  extractRunObservation,
+} from "./run-observations.js";
 import type { PanelMemberConfig } from "./types.js";
 
 export type ResultExtractErrorCode =
@@ -17,16 +21,19 @@ export interface ResultExtractError {
 export interface ExtractPanelResultsOptions {
   panel?: readonly PanelMemberConfig[];
   limit?: number;
+  completedOnly?: boolean;
+  stoppedPanelIndices?: readonly number[];
 }
 
+export type ExtractPanelResultsSuccess = {
+  ok: true;
+  outputs: PanelOutput[];
+  failures: FailedPanelSummary[];
+  runId?: string;
+};
+
 export type ExtractPanelResultsResult =
-  | {
-      ok: true;
-      outputs: PanelOutput[];
-      failures: FailedPanelSummary[];
-      runId?: string;
-    }
-  | { ok: false; error: ResultExtractError };
+  ExtractPanelResultsSuccess | { ok: false; error: ResultExtractError };
 
 interface ResultsContainer {
   payload: Record<string, unknown>;
@@ -35,6 +42,17 @@ interface ResultsContainer {
 }
 
 type ChildStatus = "success" | "failed";
+
+function isCompletedResult(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const status = firstString(value.status, value.state);
+  return !(
+    status === "running" ||
+    status === "active" ||
+    status === "pending" ||
+    status === "queued"
+  );
+}
 
 export function extractPanelResults(
   payload: unknown,
@@ -50,6 +68,7 @@ export function extractPanelResults(
       ? container.results
       : container.results.slice(0, options.limit);
   for (const [index, rawResult] of results.entries()) {
+    if (options.completedOnly && !isCompletedResult(rawResult)) continue;
     const child = normalizeChildResult(rawResult, index, options);
     if (!child.ok) return child;
     if (child.status === "success") outputs.push(child.output);
@@ -78,11 +97,32 @@ function findResultsContainer(
     );
   }
 
+  if (Array.isArray(payload.results) && payload.results.length > 0) {
+    return { ok: true, payload, results: payload.results, path: "$.results" };
+  }
+
+  if (
+    isRecord(payload.details) &&
+    Array.isArray(payload.details.results) &&
+    payload.details.results.length > 0
+  ) {
+    return {
+      ok: true,
+      payload: { ...payload, ...payload.details },
+      results: payload.details.results,
+      path: "$.details.results",
+    };
+  }
+
+  if (Array.isArray(payload.steps)) {
+    return { ok: true, payload, results: payload.steps, path: "$.steps" };
+  }
+
   if (Array.isArray(payload.results)) {
     return { ok: true, payload, results: payload.results, path: "$.results" };
   }
 
-  if ("results" in payload) {
+  if ("results" in payload && !Array.isArray(payload.results)) {
     return error(
       "unknown-result-shape",
       "Subagents result payload results field must be an array.",
@@ -91,6 +131,25 @@ function findResultsContainer(
   }
 
   if (isRecord(payload.details)) {
+    if (
+      Array.isArray(payload.details.results) &&
+      payload.details.results.length > 0
+    ) {
+      return {
+        ok: true,
+        payload: { ...payload, ...payload.details },
+        results: payload.details.results,
+        path: "$.details.results",
+      };
+    }
+    if (Array.isArray(payload.details.steps)) {
+      return {
+        ok: true,
+        payload: { ...payload, ...payload.details },
+        results: payload.details.steps,
+        path: "$.details.steps",
+      };
+    }
     if (Array.isArray(payload.details.results)) {
       return {
         ok: true,
@@ -99,7 +158,10 @@ function findResultsContainer(
         path: "$.details.results",
       };
     }
-    if ("results" in payload.details) {
+    if (
+      "results" in payload.details &&
+      !Array.isArray(payload.details.results)
+    ) {
       return error(
         "unknown-result-shape",
         "Subagents result details.results field must be an array.",
@@ -149,13 +211,19 @@ function normalizeChildResult(
   const status = classifyChildStatus(rawResult);
 
   if (status === "success") {
+    const rawOutput = firstNonBlankString(
+      rawResult.output,
+      rawResult.finalOutput,
+      rawResult.summary,
+      rawResult.text,
+      recentOutputText(rawResult.recentOutput),
+    );
+    const decision =
+      extractPanelDecision(rawResult.structuredOutput) ??
+      extractPanelDecision(rawOutput);
     const output =
-      firstNonBlankString(
-        rawResult.output,
-        rawResult.finalOutput,
-        rawResult.summary,
-        rawResult.text,
-      ) ?? artifactOutput(artifactPath);
+      firstNonBlankString(decision?.answerMarkdown, rawOutput) ??
+      artifactOutput(artifactPath);
     if (!output) {
       return error(
         "missing-result-field",
@@ -171,12 +239,18 @@ function normalizeChildResult(
         member,
         agent,
         output,
+        decision,
+        observation: extractRunObservation(rawResult),
         artifactPath,
         sessionPath,
       }),
     };
   }
 
+  const stoppedAfterAgreement =
+    options.stoppedPanelIndices?.includes(index) === true;
+  const observation = extractRunObservation(rawResult);
+  if (stoppedAfterAgreement) delete observation.providerFailures;
   return {
     ok: true,
     status,
@@ -184,7 +258,11 @@ function normalizeChildResult(
       index,
       member,
       agent,
-      summary: failureSummary(rawResult, artifactPath),
+      summary: stoppedAfterAgreement
+        ? "Stopped after strong panel agreement."
+        : failureSummary(rawResult, artifactPath),
+      reason: failureReason(rawResult, stoppedAfterAgreement),
+      observation,
       artifactPath,
       sessionPath,
     }),
@@ -238,13 +316,14 @@ function buildPanelOutput(input: {
   member: PanelMemberConfig | undefined;
   agent: string;
   output: string;
+  decision: PanelOutput["decision"];
+  observation: PanelOutput["observation"];
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): PanelOutput {
-  const model = input.member
-    ? appendThinkingSuffix(input.member.model, input.member.thinking)
-    : undefined;
-  return {
+  const configuredModel = configuredMemberModel(input.member);
+  const model = input.observation?.model ?? configuredModel;
+  const output: PanelOutput = {
     index: input.index,
     agent: input.agent,
     output: input.output,
@@ -252,9 +331,15 @@ function buildPanelOutput(input: {
     ...(input.member?.label ? { label: input.member.label } : {}),
     ...(input.member?.role ? { role: input.member.role } : {}),
     ...(model ? { model } : {}),
+    ...(configuredModel ? { configuredModel } : {}),
+    ...(input.decision ? { decision: input.decision } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
   };
+  if (hasObservation(input.observation)) {
+    output.observation = input.observation;
+  }
+  return output;
 }
 
 function buildFailedPanelSummary(input: {
@@ -262,13 +347,14 @@ function buildFailedPanelSummary(input: {
   member: PanelMemberConfig | undefined;
   agent: string;
   summary: string;
+  reason: FailedPanelSummary["reason"];
+  observation: FailedPanelSummary["observation"];
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): FailedPanelSummary {
-  const model = input.member
-    ? appendThinkingSuffix(input.member.model, input.member.thinking)
-    : undefined;
-  return {
+  const configuredModel = configuredMemberModel(input.member);
+  const model = input.observation?.model ?? configuredModel;
+  const failure: FailedPanelSummary = {
     index: input.index,
     agent: input.agent,
     summary: input.summary,
@@ -276,9 +362,46 @@ function buildFailedPanelSummary(input: {
     ...(input.member?.label ? { label: input.member.label } : {}),
     ...(input.member?.role ? { role: input.member.role } : {}),
     ...(model ? { model } : {}),
+    ...(configuredModel ? { configuredModel } : {}),
+    ...(input.reason ? { reason: input.reason } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
   };
+  if (hasObservation(input.observation)) {
+    failure.observation = input.observation;
+  }
+  return failure;
+}
+
+function failureReason(
+  result: Record<string, unknown>,
+  stoppedAfterAgreement = false,
+): FailedPanelSummary["reason"] {
+  if (stoppedAfterAgreement) return "stopped-after-agreement";
+  if (result.timedOut === true) return "timeout";
+  if (result.interrupted === true) return "interrupted";
+  return undefined;
+}
+
+function hasObservation(
+  observation: PanelOutput["observation"] | undefined,
+): observation is NonNullable<PanelOutput["observation"]> {
+  return Boolean(
+    observation &&
+    (observation.model ||
+      observation.durationMs !== undefined ||
+      observation.usage ||
+      observation.attempts ||
+      observation.providerFailures),
+  );
+}
+
+function configuredMemberModel(
+  member: PanelMemberConfig | undefined,
+): string | undefined {
+  return member
+    ? appendThinkingSuffix(member.model, member.thinking)
+    : undefined;
 }
 
 function extractArtifactPath(
@@ -304,6 +427,16 @@ function firstString(...values: readonly unknown[]): string | undefined {
     if (typeof value === "string") return value;
   }
   return undefined;
+}
+
+function recentOutputText(value: unknown): string | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string")
+  ) {
+    return undefined;
+  }
+  return value.join("\n").trim() || undefined;
 }
 
 function firstNonBlankString(

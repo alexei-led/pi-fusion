@@ -13,6 +13,10 @@ Use the `start_fusion_review` tool to launch a fusion panel without the user nee
 
 ## When to use
 
+Use Fusion for hard decisions, design tradeoffs, risk review, tricky debugging, or questions where independent model perspectives are useful.
+
+Do not use Fusion for routine edits, formatting, obvious one-step fixes, or simple questions. Keep those on the normal Pi path.
+
 - "invoke fusion panel to discuss this"
 - "run fusion on this"
 - "get a panel review of …"

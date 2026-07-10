@@ -83,6 +83,57 @@ test("FusionRunStore persists done, failed, and cancelled transitions", () => {
   }
 });
 
+test("FusionRunStore persists panel stop and judge observations", () => {
+  const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
+    [];
+  const store = new FusionRunStore({
+    idFactory: () => "run-active",
+    now: () => 10,
+    persistence: {
+      appendEntry: (customType, data) =>
+        entries.push({ type: "custom", customType, data }),
+    },
+  });
+
+  store.startRun({ prompt: "compare", profileName: "quality", phase: "panel" });
+  store.updateRun("run-active", {
+    panelRunId: "panel-1",
+    panelAsyncDir: "/tmp/panel-1",
+    panelStopReason: "agreement",
+    panelStoppedIndices: [2],
+    panelOutputs: [
+      {
+        index: 0,
+        agent: "panel",
+        output: "Choose A.",
+        model: "anthropic/observed",
+        configuredModel: "openai/requested",
+      },
+    ],
+    judgeObservation: {
+      model: "ollama/qwen",
+      durationMs: 500,
+      usage: { inputTokens: 20, outputTokens: 10, costUsd: 0 },
+    },
+  });
+
+  const restoredStore = new FusionRunStore();
+  restoredStore.restoreFromEntries(entries);
+  const restored = restoredStore.getActiveRun();
+  assert.equal(restored?.panelAsyncDir, "/tmp/panel-1");
+  assert.equal(restored?.panelStopReason, "agreement");
+  assert.deepEqual(restored?.panelStoppedIndices, [2]);
+  assert.equal(
+    restored?.panelOutputs?.[0]?.configuredModel,
+    "openai/requested",
+  );
+  assert.deepEqual(restored?.judgeObservation?.usage, {
+    inputTokens: 20,
+    outputTokens: 10,
+    costUsd: 0,
+  });
+});
+
 test("FusionRunStore persists and restores active run snapshots", () => {
   const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
     [];

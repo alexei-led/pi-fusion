@@ -1,6 +1,6 @@
 {
   "name": "@alexeiled/pi-fusion",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "description": "Stronger answers for hard Pi questions via a parallel model panel + judge, built on pi-subagents",
   "type": "module",
   "main": "./src/index.ts",

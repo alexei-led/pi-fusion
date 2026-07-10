@@ -42,12 +42,13 @@ test("fusionExtension starts and completes a run through pi-subagents RPC events
 
   await pi.runCommand("fusion", "compare APIs", ctx);
 
-  assert.match(ctx.ui.lastStatus("fusion") ?? "", /chain-1/);
+  assert.match(ctx.ui.lastStatus("fusion") ?? "", /panel-1/);
   assert.equal(pi.entries.length, 2);
   assert.equal(pi.entries.at(-1)?.customType, FUSION_RUN_ENTRY_TYPE);
 
-  pi.events.statusResults.set("chain-1", {
-    runId: "chain-1",
+  pi.events.statusResults.set("panel-1", {
+    runId: "panel-1",
+    state: "complete",
     results: [
       {
         agent: "pi-fusion.fusion-panelist",
@@ -56,7 +57,7 @@ test("fusionExtension starts and completes a run through pi-subagents RPC events
       },
     ],
   });
-  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "chain-1" });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
   await nextTick();
 
   assert.equal(pi.messages.at(-1)?.customType, "fusion-report");
@@ -77,10 +78,11 @@ test("fusionExtension restores an active run on session_start and unsubscribes o
 
   await restoredPi.emitLifecycle("session_start", {}, restoredCtx);
 
-  assert.match(restoredCtx.ui.lastStatus("fusion") ?? "", /chain-1/);
+  assert.match(restoredCtx.ui.lastStatus("fusion") ?? "", /panel-1/);
 
-  restoredPi.events.statusResults.set("chain-1", {
-    runId: "chain-1",
+  restoredPi.events.statusResults.set("panel-1", {
+    runId: "panel-1",
+    state: "complete",
     results: [
       {
         agent: "pi-fusion.fusion-panelist",
@@ -89,7 +91,7 @@ test("fusionExtension restores an active run on session_start and unsubscribes o
       },
     ],
   });
-  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "chain-1" });
+  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
   await nextTick();
 
   assert.match(restoredPi.messages.at(-1)?.content ?? "", /Restored output/);

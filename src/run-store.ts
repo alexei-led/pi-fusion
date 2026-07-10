@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { FusionPhase, FusionRun } from "./types.js";
+import type {
+  FusionPhase,
+  FusionRun,
+  ModelAttempt,
+  PanelDecision,
+  ProviderFailure,
+  RunObservation,
+  RunUsage,
+} from "./types.js";
 import { isFiniteNumber, isNonEmptyString, isRecord } from "./utils.js";
 
 export const FUSION_RUN_ENTRY_TYPE = "fusion-run";
@@ -40,8 +48,12 @@ export interface FusionRunPatch {
   chainRunId?: string;
   chainAsyncDir?: string;
   panelRunId?: string;
+  panelAsyncDir?: string;
+  panelStopReason?: FusionRun["panelStopReason"];
+  panelStoppedIndices?: FusionRun["panelStoppedIndices"];
   judgeRunId?: string;
   judgeAsyncDir?: string;
+  judgeObservation?: FusionRun["judgeObservation"];
   panelOutputs?: FusionRun["panelOutputs"];
   panelFailures?: FusionRun["panelFailures"];
   report?: string;
@@ -260,9 +272,21 @@ function applyPatch(
     updated.chainAsyncDir = patch.chainAsyncDir;
   }
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
+  if (patch.panelAsyncDir !== undefined) {
+    updated.panelAsyncDir = patch.panelAsyncDir;
+  }
+  if (patch.panelStopReason !== undefined) {
+    updated.panelStopReason = patch.panelStopReason;
+  }
+  if (patch.panelStoppedIndices !== undefined) {
+    updated.panelStoppedIndices = [...patch.panelStoppedIndices];
+  }
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
   if (patch.judgeAsyncDir !== undefined) {
     updated.judgeAsyncDir = patch.judgeAsyncDir;
+  }
+  if (patch.judgeObservation !== undefined) {
+    updated.judgeObservation = cloneObservation(patch.judgeObservation);
   }
   if (patch.panelOutputs !== undefined) {
     updated.panelOutputs = clonePanelOutputs(patch.panelOutputs);
@@ -325,9 +349,21 @@ function cloneRun(run: FusionRun): FusionRun {
       ? { chainAsyncDir: run.chainAsyncDir }
       : {}),
     ...(run.panelRunId !== undefined ? { panelRunId: run.panelRunId } : {}),
+    ...(run.panelAsyncDir !== undefined
+      ? { panelAsyncDir: run.panelAsyncDir }
+      : {}),
+    ...(run.panelStopReason !== undefined
+      ? { panelStopReason: run.panelStopReason }
+      : {}),
+    ...(run.panelStoppedIndices !== undefined
+      ? { panelStoppedIndices: [...run.panelStoppedIndices] }
+      : {}),
     ...(run.judgeRunId !== undefined ? { judgeRunId: run.judgeRunId } : {}),
     ...(run.judgeAsyncDir !== undefined
       ? { judgeAsyncDir: run.judgeAsyncDir }
+      : {}),
+    ...(run.judgeObservation !== undefined
+      ? { judgeObservation: cloneObservation(run.judgeObservation) }
       : {}),
     ...(run.panelOutputs !== undefined
       ? { panelOutputs: clonePanelOutputs(run.panelOutputs) }
@@ -375,12 +411,40 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (value.panelRunId !== undefined && typeof value.panelRunId !== "string") {
     return false;
   }
+  if (
+    value.panelAsyncDir !== undefined &&
+    typeof value.panelAsyncDir !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.panelStopReason !== undefined &&
+    value.panelStopReason !== "agreement"
+  ) {
+    return false;
+  }
+  if (
+    value.panelStoppedIndices !== undefined &&
+    (!Array.isArray(value.panelStoppedIndices) ||
+      !value.panelStoppedIndices.every(
+        (index: unknown) =>
+          typeof index === "number" && Number.isInteger(index) && index >= 0,
+      ))
+  ) {
+    return false;
+  }
   if (value.judgeRunId !== undefined && typeof value.judgeRunId !== "string") {
     return false;
   }
   if (
     value.judgeAsyncDir !== undefined &&
     typeof value.judgeAsyncDir !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.judgeObservation !== undefined &&
+    !isRunObservation(value.judgeObservation)
   ) {
     return false;
   }
@@ -440,9 +504,14 @@ function isPanelOutput(
     typeof value.output === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
     (value.label === undefined || typeof value.label === "string") &&
+    (value.configuredModel === undefined ||
+      typeof value.configuredModel === "string") &&
     (value.artifactPath === undefined ||
       typeof value.artifactPath === "string") &&
-    (value.sessionPath === undefined || typeof value.sessionPath === "string")
+    (value.sessionPath === undefined ||
+      typeof value.sessionPath === "string") &&
+    (value.decision === undefined || isPanelDecision(value.decision)) &&
+    (value.observation === undefined || isRunObservation(value.observation))
   );
 }
 
@@ -462,20 +531,134 @@ function isPanelFailure(
     typeof value.summary === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
     (value.label === undefined || typeof value.label === "string") &&
+    (value.configuredModel === undefined ||
+      typeof value.configuredModel === "string") &&
     (value.artifactPath === undefined ||
       typeof value.artifactPath === "string") &&
-    (value.sessionPath === undefined || typeof value.sessionPath === "string")
+    (value.sessionPath === undefined ||
+      typeof value.sessionPath === "string") &&
+    (value.reason === undefined || isPanelFailureReason(value.reason)) &&
+    (value.observation === undefined || isRunObservation(value.observation))
   );
 }
 
 function clonePanelOutputs(
   outputs: NonNullable<FusionRun["panelOutputs"]>,
 ): NonNullable<FusionRun["panelOutputs"]> {
-  return outputs.map((output) => ({ ...output }));
+  return outputs.map((output) => ({
+    ...output,
+    ...(output.decision
+      ? { decision: clonePanelDecision(output.decision) }
+      : {}),
+    ...(output.observation
+      ? { observation: cloneObservation(output.observation) }
+      : {}),
+  }));
 }
 
 function clonePanelFailures(
   failures: NonNullable<FusionRun["panelFailures"]>,
 ): NonNullable<FusionRun["panelFailures"]> {
-  return failures.map((failure) => ({ ...failure }));
+  return failures.map((failure) => ({
+    ...failure,
+    ...(failure.observation
+      ? { observation: cloneObservation(failure.observation) }
+      : {}),
+  }));
+}
+
+function cloneObservation(observation: RunObservation): RunObservation {
+  return {
+    ...(observation.model ? { model: observation.model } : {}),
+    ...(observation.durationMs !== undefined
+      ? { durationMs: observation.durationMs }
+      : {}),
+    ...(observation.usage ? { usage: { ...observation.usage } } : {}),
+    ...(observation.attempts
+      ? { attempts: observation.attempts.map((attempt) => ({ ...attempt })) }
+      : {}),
+    ...(observation.providerFailures
+      ? {
+          providerFailures: observation.providerFailures.map((failure) => ({
+            ...failure,
+          })),
+        }
+      : {}),
+  };
+}
+
+function clonePanelDecision(decision: PanelDecision): PanelDecision {
+  return { ...decision };
+}
+
+function isRunObservation(value: unknown): value is RunObservation {
+  if (!isRecord(value)) return false;
+  if (value.model !== undefined && typeof value.model !== "string")
+    return false;
+  if (value.durationMs !== undefined && !isFiniteNumber(value.durationMs)) {
+    return false;
+  }
+  if (value.usage !== undefined && !isRunUsage(value.usage)) return false;
+  if (value.attempts !== undefined && !isModelAttemptArray(value.attempts)) {
+    return false;
+  }
+  return (
+    value.providerFailures === undefined ||
+    (Array.isArray(value.providerFailures) &&
+      value.providerFailures.every(isProviderFailure))
+  );
+}
+
+function isRunUsage(value: unknown): value is RunUsage {
+  if (!isRecord(value)) return false;
+  return (
+    (value.inputTokens === undefined || isFiniteNumber(value.inputTokens)) &&
+    (value.outputTokens === undefined || isFiniteNumber(value.outputTokens)) &&
+    (value.costUsd === undefined || isFiniteNumber(value.costUsd))
+  );
+}
+
+function isModelAttemptArray(value: unknown): value is ModelAttempt[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => {
+      if (!isRecord(item)) return false;
+      return (
+        typeof item.model === "string" &&
+        typeof item.success === "boolean" &&
+        (item.error === undefined || typeof item.error === "string")
+      );
+    })
+  );
+}
+
+function isProviderFailure(value: unknown): value is ProviderFailure {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.provider === "string" &&
+    typeof value.message === "string" &&
+    (value.model === undefined || typeof value.model === "string") &&
+    (value.count === undefined || isFiniteNumber(value.count))
+  );
+}
+
+function isPanelDecision(value: unknown): value is PanelDecision {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.recommendation === "string" &&
+    (value.confidence === "low" ||
+      value.confidence === "medium" ||
+      value.confidence === "high") &&
+    typeof value.needsMoreEvidence === "boolean" &&
+    typeof value.answerMarkdown === "string"
+  );
+}
+
+function isPanelFailureReason(value: unknown): boolean {
+  return (
+    value === "provider" ||
+    value === "timeout" ||
+    value === "interrupted" ||
+    value === "stopped-after-agreement"
+  );
 }

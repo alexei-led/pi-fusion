@@ -95,7 +95,8 @@ A panel helps because:
 - a judge can select or synthesize the best realistic answer from the set
 
 The result is slower, but usually better for design choices, risk review,
-tricky debugging, and research-heavy questions.
+tricky debugging, and research-heavy questions. It is not intended for routine
+edits, formatting, or obvious one-step fixes.
 
 ## What the judge actually does
 
@@ -170,7 +171,10 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
 - Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events.
 - `pi-fusion` does not own the footer.
-- Prompts and inspected snippets may be sent to your configured model providers through `pi-subagents`.
+- Prompts and inspected snippets may be sent to every configured panel provider and to the judge through `pi-subagents`.
+- Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown; `$0.0000` remains a known zero-cost value.
+- `Model` is lifecycle metadata. `Configured model` is the profile request; both appear when execution differs from the request.
+- `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
 
 ## Read more
 

@@ -129,11 +129,105 @@ test("renderJudgeReport renders deterministic success sections", () => {
       "- Phase: judge",
       "- Prompt: Compare APIs",
       "- Panel run: panel-1",
-      "- Fallback judge run: judge-1",
+      "- Judge run: judge-1",
       "- Created: 1970-01-01T00:00:00.000Z",
       "- Updated: 1970-01-01T00:00:01.000Z",
     ].join("\n"),
   );
+});
+
+test("renderJudgeReport includes readable per-panel and judge run details", () => {
+  const report = renderJudgeReport({
+    run: RUN_JUDGE,
+    judgeOutput: "Prefer A.",
+    panelOutputs: [
+      {
+        ...ARCHITECT,
+        observation: {
+          model: "ollama/qwen",
+          durationMs: 1200,
+          usage: { inputTokens: 100, outputTokens: 40, costUsd: 0 },
+        },
+      },
+      {
+        ...TESTER,
+        observation: {
+          model: "openai/gpt-mini",
+          durationMs: 2300,
+          usage: { inputTokens: 120, outputTokens: 50, costUsd: 0.02 },
+          providerFailures: [
+            {
+              provider: "openai",
+              model: "openai/gpt-mini",
+              message: "retry",
+              count: 2,
+            },
+          ],
+        },
+      },
+    ],
+    failures: [],
+    judgeObservation: {
+      model: "anthropic/claude-haiku",
+      durationMs: 800,
+      usage: { inputTokens: 300, outputTokens: 100, costUsd: 0.01 },
+    },
+  });
+
+  assert.match(report, /## Run Details/);
+  assert.match(report, /Architect.*ollama\/qwen.*1\.2s/);
+  assert.match(report, /Tester.*openai\/gpt-mini.*2\.3s/);
+  assert.match(report, /Judge.*anthropic\/claude-haiku.*0\.8s/);
+  assert.match(report, /Total estimated cost: \$0\.0300/);
+  assert.match(report, /openai\/gpt-mini.*retry.*x2/);
+});
+
+test("renderJudgeReport distinguishes configured from observed models", () => {
+  const report = renderJudgeReport({
+    run: RUN_JUDGE,
+    judgeOutput: "Prefer A.",
+    panelOutputs: [
+      {
+        ...ARCHITECT,
+        model: "anthropic/observed-panel",
+        configuredModel: "deepseek/requested-panel",
+        observation: { model: "anthropic/observed-panel", durationMs: 1200 },
+      },
+    ],
+    failures: [],
+    judgeModel: "deepseek/requested-judge",
+    judgeObservation: { durationMs: 800 },
+  });
+
+  assert.match(report, /Model: anthropic\/observed-panel/);
+  assert.match(report, /Configured model: deepseek\/requested-panel/);
+  assert.match(report, /Configured model: deepseek\/requested-judge/);
+  assert.match(report, /observed-panel.*1\.2s/);
+  assert.match(report, /requested-judge \(configured\).*0\.8s/);
+  assert.match(report, /Aggregate model time: 2\.0s/);
+});
+
+test("renderJudgeReport marks totals unknown when any execution lacks telemetry", () => {
+  const report = renderJudgeReport({
+    run: RUN_JUDGE,
+    judgeOutput: "Prefer A.",
+    panelOutputs: [
+      {
+        ...ARCHITECT,
+        observation: {
+          durationMs: 1200,
+          usage: { inputTokens: 100, outputTokens: 40, costUsd: 0.01 },
+        },
+      },
+      TESTER,
+    ],
+    failures: [],
+  });
+
+  assert.match(report, /Tester \(completed\): model unknown/);
+  assert.match(report, /Total input tokens: unknown/);
+  assert.match(report, /Total output tokens: unknown/);
+  assert.match(report, /Total estimated cost: unknown/);
 });
 
 test("renderJudgeReport shows partial success and timed-out panelists", () => {
@@ -190,7 +284,7 @@ test("renderJudgeReport shows partial success and timed-out panelists", () => {
       "- Phase: judge",
       "- Prompt: Compare APIs",
       "- Panel run: panel-1",
-      "- Fallback judge run: judge-1",
+      "- Judge run: judge-1",
       "- Created: 1970-01-01T00:00:00.000Z",
       "- Updated: 1970-01-01T00:00:01.000Z",
     ].join("\n"),
@@ -373,7 +467,7 @@ test("renderFailureReport renders judge failure with panel status", () => {
       "- Phase: judge",
       "- Prompt: Compare APIs",
       "- Panel run: panel-1",
-      "- Fallback judge run: judge-1",
+      "- Judge run: judge-1",
       "- Created: 1970-01-01T00:00:00.000Z",
       "- Updated: 1970-01-01T00:00:01.000Z",
     ].join("\n"),
@@ -438,7 +532,7 @@ test("renderCancelledReport renders cancellation details", () => {
       "- Phase: judge",
       "- Prompt: Compare APIs",
       "- Panel run: panel-1",
-      "- Fallback judge run: judge-1",
+      "- Judge run: judge-1",
       "- Created: 1970-01-01T00:00:00.000Z",
       "- Updated: 1970-01-01T00:00:01.000Z",
     ].join("\n"),

@@ -79,6 +79,7 @@ export function createDefaultFusionConfig(): FusionConfig {
         concurrency: 3,
         timeoutMs: 300_000,
         context: "fresh",
+        stopWhenPanelAgrees: false,
       },
     },
   };
@@ -202,6 +203,12 @@ function isFusionProfile(value: unknown): value is FusionProfile {
     return false;
   if (value.context !== undefined && !isFusionContextMode(value.context))
     return false;
+  if (
+    value.stopWhenPanelAgrees !== undefined &&
+    typeof value.stopWhenPanelAgrees !== "boolean"
+  ) {
+    return false;
+  }
   return true;
 }
 

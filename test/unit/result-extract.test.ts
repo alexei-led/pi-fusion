@@ -60,9 +60,107 @@ test("extractPanelResults reads successful and failed async result children", ()
       label: "Tester",
       agent: "pi-fusion.fusion-panelist",
       summary: "Timed out\n\nstderr tail",
+      observation: {
+        providerFailures: [
+          { provider: "unknown provider", message: "Timed out" },
+        ],
+      },
       sessionPath: "/tmp/tester-session.jsonl",
     },
   ]);
+});
+
+test("extractPanelResults uses structured panel output for the human-readable answer", () => {
+  const result = extractPanelResults(
+    {
+      runId: "panel-run",
+      results: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: true,
+          structuredOutput: {
+            recommendation: "Choose A",
+            confidence: "high",
+            needsMoreEvidence: false,
+            answerMarkdown: "## Summary\\nChoose A.",
+          },
+          output: "compact structured output",
+        },
+      ],
+    },
+    { panel: PANEL },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.outputs[0]?.decision, {
+    recommendation: "Choose A",
+    confidence: "high",
+    needsMoreEvidence: false,
+    answerMarkdown: "## Summary\\nChoose A.",
+  });
+  assert.equal(result.outputs[0]?.output, "## Summary\\nChoose A.");
+});
+
+test("extractPanelResults preserves configured and observed model identities", () => {
+  const result = extractPanelResults(
+    {
+      results: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: true,
+          model: "anthropic/fallback",
+          output: "Choose A.",
+        },
+      ],
+    },
+    {
+      panel: [
+        {
+          ...PANEL[0]!,
+          model: "openai/requested",
+        },
+      ],
+    },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs[0]?.model, "anthropic/fallback");
+  assert.equal(result.outputs[0]?.configuredModel, "openai/requested");
+});
+
+test("extractPanelResults reads completed status steps for partial panel observations", () => {
+  const result = extractPanelResults(
+    {
+      runId: "panel-run",
+      steps: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          status: "complete",
+          recentOutput: [
+            "## Summary",
+            "Choose A.",
+            '<fusion-panel-decision>{"recommendation":"Choose A","confidence":"high","needsMoreEvidence":false}</fusion-panel-decision>',
+          ],
+        },
+        { agent: "pi-fusion.fusion-panelist", status: "running" },
+      ],
+    },
+    { panel: PANEL, completedOnly: true },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs.length, 1);
+  assert.equal(result.outputs[0]?.index, 0);
+  assert.deepEqual(result.outputs[0]?.decision, {
+    recommendation: "Choose A",
+    confidence: "high",
+    needsMoreEvidence: false,
+    answerMarkdown: "## Summary\nChoose A.",
+  });
+  assert.equal(result.failures.length, 0);
 });
 
 test("extractPanelResults reads status RPC details results", () => {
@@ -90,6 +188,28 @@ test("extractPanelResults reads status RPC details results", () => {
   assert.equal(result.outputs.length, 1);
   assert.equal(result.outputs[0]?.output, "Details output");
   assert.equal(result.failures.length, 0);
+});
+
+test("extractPanelResults prefers populated nested results to an empty wrapper array", () => {
+  const result = extractPanelResults(
+    {
+      results: [],
+      details: {
+        results: [
+          {
+            agent: "pi-fusion.fusion-panelist",
+            success: true,
+            output: "Nested result.",
+          },
+        ],
+      },
+    },
+    { panel: PANEL },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs[0]?.output, "Nested result.");
 });
 
 test("extractPanelResults treats failed statuses as failed panel summaries", () => {
@@ -121,6 +241,36 @@ test("extractPanelResults treats failed statuses as failed panel summaries", () 
       artifactPath: "/tmp/failure.md",
     },
   ]);
+});
+
+test("extractPanelResults labels only stopped panel indices as agreement stops", () => {
+  const result = extractPanelResults(
+    {
+      results: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: false,
+          timedOut: true,
+          error: "Subagent timed out after 180000ms.",
+          model: "deepseek/model",
+        },
+      ],
+    },
+    { panel: PANEL, stoppedPanelIndices: [0] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.failures[0], {
+    index: 0,
+    id: "architect",
+    label: "Architect",
+    agent: "pi-fusion.fusion-panelist",
+    model: "deepseek/model",
+    summary: "Stopped after strong panel agreement.",
+    reason: "stopped-after-agreement",
+    observation: { model: "deepseek/model" },
+  });
 });
 
 test("extractPanelResults returns typed errors for missing and unknown shapes", () => {
