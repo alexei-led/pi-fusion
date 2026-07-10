@@ -1,4 +1,8 @@
 import {
+  PANEL_DECISION_CLOSE,
+  PANEL_DECISION_OPEN,
+} from "./run-observations.js";
+import {
   THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
@@ -133,7 +137,13 @@ export function buildPanelSpawnParams(
   prompt: string,
 ): PanelSpawnParams {
   return {
-    tasks: profile.panel.map((member) => buildPanelTaskParams(member, prompt)),
+    tasks: profile.panel.map((member) =>
+      buildPanelTaskParams(
+        member,
+        prompt,
+        profile.stopWhenPanelAgrees === true,
+      ),
+    ),
     async: true,
     clarify: false,
     concurrency: profile.concurrency ?? profile.panel.length,
@@ -216,11 +226,12 @@ export function buildJudgeSpawnParams(
 function buildPanelTaskParams(
   member: PanelMemberConfig,
   prompt: string,
+  includeDecisionRecord: boolean,
 ): PanelSubagentTaskParams {
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
     agent: member.agent,
-    task: buildPanelTask(member, prompt),
+    task: buildPanelTask(member, prompt, includeDecisionRecord),
     output: true,
     outputMode: "inline",
     progress: true,
@@ -237,7 +248,7 @@ function buildPanelChainTaskParams(
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
     agent: member.agent,
-    task: buildPanelTask(member, "{task}"),
+    task: buildPanelTask(member, "{task}", false),
     as: chainOutputName(member, index),
     label: member.label,
     phase: "Panel",
@@ -250,7 +261,11 @@ function buildPanelChainTaskParams(
   };
 }
 
-function buildPanelTask(member: PanelMemberConfig, prompt: string): string {
+function buildPanelTask(
+  member: PanelMemberConfig,
+  prompt: string,
+  includeDecisionRecord: boolean,
+): string {
   const role = member.role?.trim() || "independent analysis and critique";
   return [
     `Panel member: ${member.label} (${member.id})`,
@@ -269,6 +284,19 @@ function buildPanelTask(member: PanelMemberConfig, prompt: string): string {
     "",
     "Output contract:",
     ...PANEL_OUTPUT_CONTRACT,
+    ...(includeDecisionRecord
+      ? [
+          "",
+          "Decision record:",
+          "- End with exactly one single-line JSON record wrapped in the tags below.",
+          "- Keep the complete human-readable answer in the Markdown sections above the record.",
+          "- recommendation: one short plain-language conclusion.",
+          "- confidence: low, medium, or high.",
+          "- needsMoreEvidence: true when the answer should not be trusted without more investigation.",
+          `- Format: ${PANEL_DECISION_OPEN}{"recommendation":"...","confidence":"high","needsMoreEvidence":false}${PANEL_DECISION_CLOSE}`,
+          "- Do not add Markdown or any other text after the record.",
+        ]
+      : []),
   ].join("\n");
 }
 

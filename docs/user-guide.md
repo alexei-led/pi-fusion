@@ -10,7 +10,7 @@ README covers the why. This guide covers commands, config, and troubleshooting.
 prompt → parallel panel → judge synthesis → final report
 ```
 
-Normal execution is a single `pi-subagents` async chain. If that chain completes without a judge result but at least two panelists still produced usable answers, `pi-fusion` runs one fallback judge pass instead of losing the review.
+Fusion keeps the command simple: one prompt starts the panel, then the judge turns the collected evidence into a human-readable Markdown report. Older runs created as a single `pi-subagents` chain remain supported when restored.
 
 Panel diversity can come from different model choices, different perspective prompts, or both. In practice, mixing models is usually the main lever.
 
@@ -34,7 +34,7 @@ Notes:
 
 - Bare `/fusion` shows a short help message.
 - `/fusion status` shows the active run, last run, warnings, and subagent run IDs.
-- `/fusion stop` stops the active chain or fallback judge run.
+- `/fusion stop` stops the active panel, legacy chain, or judge run.
 - `/fusion init` writes `.pi/fusion.json` for the current trusted project.
 - Exact one-word prompts `init`, `status`, and `stop` are reserved as `/fusion` subcommands.
 
@@ -84,7 +84,8 @@ Run this inside a trusted project:
       },
       "concurrency": 3,
       "timeoutMs": 300000,
-      "context": "fresh"
+      "context": "fresh",
+      "stopWhenPanelAgrees": false
     }
   }
 }
@@ -104,6 +105,7 @@ Profile:
 - `concurrency`: max parallel panelists
 - `timeoutMs`: async subagent timeout in milliseconds
 - `context`: `fresh` or `fork`
+- `stopWhenPanelAgrees`: optional boolean, default `false`. When enabled, Fusion may stop unfinished panelists only when at least two completed panelists have the same normalized recommendation, every successful panelist reports `high` confidence, none requests more evidence, and work remains. The judge still runs over the collected answers. The policy is intentionally fixed; there are no agreement threshold knobs.
 
 Panel member:
 
@@ -191,14 +193,7 @@ Deliberate review:
 
 ## Output
 
-Panelists return:
-
-- summary
-- recommendation
-- evidence
-- risks
-- confidence
-- open questions
+When agreement stopping is enabled, panelists append a final tagged JSON decision record containing a short recommendation, confidence, and whether more evidence is needed. Fusion uses it only to decide whether an unfinished panel may stop early; malformed, missing, or non-final records disable early stopping. Users see the preceding human-readable Markdown answer, not the record.
 
 The judge returns:
 
@@ -212,23 +207,64 @@ The judge returns:
 - risks
 - next step
 
+When lifecycle data is available, the final report also includes per-panel and judge time, aggregate model time, token usage, estimated cost, and concise model/provider failure summaries. Aggregate model time sums agent durations and is not wall-clock latency when panelists overlap. Missing usage is shown as unknown; local zero-cost usage remains zero. A model marked `(configured)` was requested by the profile but not confirmed by lifecycle metadata; an unmarked model came from lifecycle metadata.
+
 ## Status and footer integration
 
 `pi-fusion` uses only the Pi status key `fusion` while a run is active.
 
 It does not own the footer. If you use a footer extension, configure it to read the `fusion` status key.
 
-## Privacy and provider use
+## Data sharing and provider use
 
-Fusion sends work to `pi-subagents`. Those subagents use your configured Pi model providers.
+Fusion uses model providers the same way normal Pi work does. The difference is fan-out:
 
-Data that may leave your machine:
+- normal work usually sends a prompt and tool results to one selected model;
+- Fusion sends the prompt to every configured panel model;
+- local file snippets read by a panelist go to that panelist's model;
+- the judge receives the original prompt plus successful panel answers and failure summaries.
 
-- the prompt you pass to `/fusion`
-- relevant local file snippets read by panelists or the judge
-- panel outputs sent to the judge
+This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. Bundled Fusion agents are read-only, but providers still receive the context needed to answer.
 
-Default bundled agents are read-only, but model providers still receive the context needed to answer.
+Fusion does not currently inspect or rewrite the final provider payload. Configure provider privacy and local-model routing in Pi.
+
+## Small and economical profiles
+
+These are configuration examples, not built-in provider presets. Omit `model` to inherit the model selected in Pi, or set any model IDs supported by your Pi `models.json` configuration.
+
+Small local-style panel:
+
+```json
+{
+  "defaultProfile": "small",
+  "profiles": {
+    "small": {
+      "panel": [
+        {
+          "id": "reviewer",
+          "label": "Reviewer",
+          "agent": "pi-fusion.fusion-panelist",
+          "thinking": "low",
+          "role": "practical risks and next step"
+        },
+        {
+          "id": "tester",
+          "label": "Tester",
+          "agent": "pi-fusion.fusion-panelist",
+          "thinking": "low",
+          "role": "edge cases and verification"
+        }
+      ],
+      "judge": { "agent": "pi-fusion.fusion-judge", "thinking": "low" },
+      "concurrency": 2,
+      "timeoutMs": 120000,
+      "context": "fresh"
+    }
+  }
+}
+```
+
+For an economical mixed panel, give each member a fast or inexpensive frontier, Chinese-lab, or local Ollama/LM Studio/vLLM model ID. Keep the profile composition small instead of adding provider-specific code to Fusion.
 
 ## Troubleshooting
 
@@ -258,6 +294,6 @@ Need the run IDs:
 
 Notes:
 
-- `Chain run` is the normal end-to-end Fusion run.
-- `Fallback judge run` appears only when Fusion had enough panel output to recover a missing judge result.
+- `Panel run` is the normal panel phase for new Fusion runs.
+- `Judge run` is the normal synthesis phase for new runs. `Fallback judge run` appears only while restoring a legacy chain that completed without its judge result.
 - If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory.

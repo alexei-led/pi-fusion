@@ -16,10 +16,10 @@ function registerFusionTool(
     name: "start_fusion_review",
     label: "Fusion Review",
     description:
-      "Start a pi-fusion multi-model panel review. Use when the user asks to invoke fusion, run a panel review, get multi-model opinions, or discuss something through the fusion panel.",
+      "Start a pi-fusion multi-model panel review for a hard decision, design tradeoff, risk review, tricky debugging question, or research-heavy topic. Do not use for routine edits, formatting, or obvious one-step fixes.",
     promptSnippet: "Start a fusion panel review for a topic or code",
     promptGuidelines: [
-      "Use start_fusion_review when the user says 'invoke fusion', 'run fusion', 'fusion panel', 'multi-model review', 'panel review', or similar.",
+      "Use start_fusion_review only for hard decisions, design tradeoffs, risk review, tricky debugging, or research-heavy questions. Do not use it for routine edits, formatting, or obvious one-step fixes.",
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "What to review or discuss" }),

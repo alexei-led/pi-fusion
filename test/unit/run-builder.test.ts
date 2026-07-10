@@ -83,8 +83,20 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal("model" in (tasks[2] ?? {}), false);
   assert.equal(tasks[0]?.output, true);
   assert.equal(tasks[0]?.outputMode, "inline");
+  assert.equal("outputSchema" in (tasks[0] ?? {}), false);
   assert.equal(tasks[0]?.skill, false);
   assert.deepEqual(tasks[0]?.acceptance, FUSION_ACCEPTANCE_DISABLED);
+});
+
+test("buildPanelSpawnParams adds a decision record only for agreement stopping", () => {
+  const params = buildPanelSpawnParams(
+    { ...PROFILE, stopWhenPanelAgrees: true },
+    "Compare two API designs",
+  );
+
+  assert.equal("outputSchema" in (params.tasks[0] ?? {}), false);
+  assert.match(params.tasks[0]?.task ?? "", /<fusion-panel-decision>/);
+  assert.match(params.tasks[0]?.task ?? "", /needsMoreEvidence/);
 });
 
 test("buildPanelSpawnParams includes role, prompt, contract, and read-only instruction", () => {
@@ -128,6 +140,7 @@ test("buildFusionChainSpawnParams creates a parallel panel step followed by a ju
   assert.equal(panelStep.parallel[0]?.phase, "Panel");
   assert.equal(panelStep.parallel[0]?.as, "architect");
   assert.equal(panelStep.parallel[0]?.model, "openai/gpt-5.5:xhigh");
+  assert.equal("outputSchema" in (panelStep.parallel[0] ?? {}), false);
   assert.deepEqual(
     panelStep.parallel[0]?.acceptance,
     FUSION_ACCEPTANCE_DISABLED,

@@ -9,6 +9,7 @@ import {
   getGlobalFusionConfigPath,
   getProjectFusionConfigPath,
   loadFusionConfig,
+  parseFusionConfig,
   resolveProfile,
 } from "../../src/config.js";
 import type { FusionConfig } from "../../src/types.js";
@@ -37,6 +38,45 @@ test("loadFusionConfig returns the default quality profile when no config exists
   assert.equal(profile.panel.length, 3);
   assert.equal(profile.judge.agent, "pi-fusion.fusion-judge");
   assert.equal(profile.context, "fresh");
+  assert.equal(profile.stopWhenPanelAgrees, false);
+});
+
+test("parseFusionConfig accepts the intuitive panel agreement setting", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [PANEL_MEMBER],
+          judge: JUDGE,
+          stopWhenPanelAgrees: true,
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.equal(config.profiles.quality?.stopWhenPanelAgrees, true);
+});
+
+test("parseFusionConfig rejects a non-boolean panel agreement setting", () => {
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles: {
+            quality: {
+              panel: [PANEL_MEMBER],
+              judge: JUDGE,
+              stopWhenPanelAgrees: "yes",
+            },
+          },
+        }),
+        "test",
+      ),
+    /Invalid fusion config/,
+  );
 });
 
 test("loadFusionConfig prefers trusted project config over global config", async (t) => {
@@ -101,7 +141,12 @@ test("loadFusionConfig resolves Claude alias shorthand in panel and judge models
       quality: {
         panel: [
           { ...PANEL_MEMBER, model: "claude-work/opus-4.8" },
-          { ...PANEL_MEMBER, id: "two", label: "Two", model: "claude-labs/claude-sonnet-4-6" },
+          {
+            ...PANEL_MEMBER,
+            id: "two",
+            label: "Two",
+            model: "claude-labs/claude-sonnet-4-6",
+          },
         ],
         judge: { ...JUDGE, model: "claude-work/haiku-4.5" },
       },
@@ -128,7 +173,10 @@ test("loadFusionConfig rejects duplicate Claude handles across global and projec
   await writeJson(join(agentDir, "claude-alias.json"), {
     aliases: [{ slug: "work", handle: "claude-shared", label: "Work" }],
   });
-  await writeJson(getProjectFusionConfigPath(cwd), configWithProfile("quality"));
+  await writeJson(
+    getProjectFusionConfigPath(cwd),
+    configWithProfile("quality"),
+  );
   await writeJson(join(cwd, ".pi", "claude-alias.json"), {
     aliases: [{ slug: "client", handle: "claude-shared", label: "Client" }],
   });

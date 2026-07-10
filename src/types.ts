@@ -31,6 +31,43 @@ export interface FusionProfile {
   concurrency?: number;
   timeoutMs?: number;
   context?: FusionContextMode;
+  stopWhenPanelAgrees?: boolean;
+}
+
+export type PanelConfidence = "low" | "medium" | "high";
+
+export interface PanelDecision {
+  recommendation: string;
+  confidence: PanelConfidence;
+  needsMoreEvidence: boolean;
+  answerMarkdown: string;
+}
+
+export interface RunUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+export interface ModelAttempt {
+  model: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface ProviderFailure {
+  provider: string;
+  model?: string;
+  message: string;
+  count?: number;
+}
+
+export interface RunObservation {
+  model?: string;
+  durationMs?: number;
+  usage?: RunUsage;
+  attempts?: ModelAttempt[];
+  providerFailures?: ProviderFailure[];
 }
 
 export interface FusionConfig {
@@ -51,9 +88,14 @@ export interface PanelOutput {
   label?: string;
   role?: string;
   model?: string;
+  decision?: PanelDecision;
+  observation?: RunObservation;
   artifactPath?: string;
   sessionPath?: string;
 }
+
+export type PanelFailureReason =
+  "provider" | "timeout" | "interrupted" | "stopped-after-agreement";
 
 export interface FailedPanelSummary {
   index: number;
@@ -63,6 +105,8 @@ export interface FailedPanelSummary {
   label?: string;
   role?: string;
   model?: string;
+  reason?: PanelFailureReason;
+  observation?: RunObservation;
   artifactPath?: string;
   sessionPath?: string;
 }
@@ -80,8 +124,12 @@ export interface FusionRun {
   chainRunId?: string;
   chainAsyncDir?: string;
   panelRunId?: string;
+  panelAsyncDir?: string;
+  panelStopReason?: "agreement";
+  panelStoppedIndices?: number[];
   judgeRunId?: string;
   judgeAsyncDir?: string;
+  judgeObservation?: RunObservation;
   panelOutputs?: PanelOutput[];
   panelFailures?: FailedPanelSummary[];
   report?: string;

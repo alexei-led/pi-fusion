@@ -11,11 +11,11 @@ import {
   renderFailureReport,
   renderJudgeReport,
 } from "./report.js";
-import { extractPanelResults } from "./result-extract.js";
 import {
-  appendThinkingSuffix,
-  buildFusionChainSpawnParams,
-} from "./run-builder.js";
+  extractPanelResults,
+  type ExtractPanelResultsSuccess,
+} from "./result-extract.js";
+import { appendThinkingSuffix, buildPanelSpawnParams } from "./run-builder.js";
 import { FusionRunStore, FusionRunStoreError } from "./run-store.js";
 import {
   clearFusionUi,
@@ -36,6 +36,11 @@ import type {
   PanelOutput,
   ParsedFusionArgs,
 } from "./types.js";
+import {
+  extractRunObservation,
+  hasStrongPanelAgreement,
+  mergeRunObservations,
+} from "./run-observations.js";
 import type { SubagentsTargetParams } from "./subagents-rpc.js";
 
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
@@ -94,6 +99,7 @@ export type FusionCommandResult =
 interface RunLifecycleSnapshot {
   statusPayload?: unknown;
   resultPayload?: unknown;
+  resultIsTerminal: boolean;
 }
 
 export class FusionOrchestrator {
@@ -156,37 +162,79 @@ export class FusionOrchestrator {
     const run = this.runStore.startRun({
       prompt: args.prompt,
       profileName: resolved.name,
-      phase: "chain",
+      phase: "panel",
     });
     this.activeProfile = resolved.profile;
     publishFusionStatus(ctx, run);
 
     try {
       const spawnResult = await this.rpc.spawn(
-        buildFusionChainSpawnParams(resolved.profile, args.prompt),
+        buildPanelSpawnParams(resolved.profile, args.prompt),
       );
-      const chainRunId = extractSubagentRunId(spawnResult);
-      if (!chainRunId) {
+      const panelRunId = extractSubagentRunId(spawnResult);
+      if (!panelRunId) {
         throw new FusionArgsError(
-          "pi-subagents spawn did not return a fusion chain run ID.",
+          "pi-subagents spawn did not return a fusion panel run ID.",
         );
       }
-      const chainAsyncDir = extractSubagentAsyncDir(spawnResult);
+      const panelAsyncDir = extractSubagentAsyncDir(spawnResult);
+      const current = this.runStore.getActiveRun();
+      if (!current || current.id !== run.id) {
+        await this.stopOrphanedRun(panelRunId);
+        const cancelled = this.runStore.getLastRunSummary();
+        return cancelled?.id === run.id &&
+          cancelled.phase === "cancelled" &&
+          cancelled.report
+          ? { status: "cancelled", run: cancelled, report: cancelled.report }
+          : { status: "ignored" };
+      }
       const updated = this.runStore.updateRun(run.id, {
-        chainRunId,
-        ...(chainAsyncDir ? { chainAsyncDir } : {}),
+        panelRunId,
+        ...(panelAsyncDir ? { panelAsyncDir } : {}),
       });
       publishFusionStatus(ctx, updated);
       this.ensureReconcileLoop();
       this.notify(
         ctx,
-        `Fusion ${resolved.name} started (${resolved.profile.panel.length} panelists): "${promptPreview(args.prompt)}" — ${chainRunId}`,
+        `Fusion ${resolved.name} started (${resolved.profile.panel.length} panelists): "${promptPreview(args.prompt)}" — ${panelRunId}`,
         "info",
       );
       return { status: "started", run: updated };
     } catch (error: unknown) {
+      const cancelled = this.runStore.getLastRunSummary();
+      if (
+        cancelled?.id === run.id &&
+        cancelled.phase === "cancelled" &&
+        cancelled.report
+      ) {
+        return {
+          status: "cancelled",
+          run: cancelled,
+          report: cancelled.report,
+        };
+      }
       return this.failActiveRun(errorMessage(error));
     }
+  }
+
+  private async stopOrphanedRun(runId: string): Promise<void> {
+    try {
+      await this.rpc.stop({ id: runId });
+      return;
+    } catch (stopError: unknown) {
+      try {
+        await this.rpc.interrupt({ id: runId });
+        this.installWarning = `Orphaned panel stop fell back to interrupt for ${runId}: ${errorMessage(stopError)}`;
+        return;
+      } catch (interruptError: unknown) {
+        this.installWarning = `Could not stop orphaned panel run ${runId}: ${errorMessage(interruptError)}`;
+      }
+    }
+    this.notify(
+      this.context,
+      this.installWarning ?? "Could not stop orphaned panel run.",
+      "warning",
+    );
   }
 
   async handleSubagentComplete(payload: unknown): Promise<FusionCommandResult> {
@@ -425,7 +473,7 @@ export class FusionOrchestrator {
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
-      !hasResultsArray(snapshot.resultPayload) &&
+      !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
       return { status: "ignored" };
@@ -444,10 +492,15 @@ export class FusionOrchestrator {
       );
     }
 
+    const observedPanels = mergePanelObservations(
+      extracted,
+      snapshot.statusPayload,
+      profile,
+    );
     const updated = this.storePanelResults(
       active.id,
-      extracted.outputs,
-      extracted.failures,
+      observedPanels.outputs,
+      observedPanels.failures,
     );
 
     if (hasJudgeResult(snapshot.resultPayload, profile.panel.length)) {
@@ -456,12 +509,26 @@ export class FusionOrchestrator {
       });
       if (!output.ok) return this.failActiveRun(output.error);
 
+      const judgeObservation = mergeRunObservations(
+        extractRunObservation(
+          findStepsArray(snapshot.statusPayload)[profile.panel.length] ??
+            snapshot.statusPayload,
+        ),
+        extractRunObservation(
+          findResult(snapshot.resultPayload, profile.panel.length) ??
+            snapshot.resultPayload,
+        ),
+      );
+      const observed = this.runStore.updateRun(updated.id, {
+        judgeObservation,
+      });
       const report = renderJudgeReport({
-        run: updated,
+        run: observed,
         judgeOutput: output.output,
-        panelOutputs: storedPanelOutputs(updated),
-        failures: storedPanelFailures(updated),
+        panelOutputs: storedPanelOutputs(observed),
+        failures: storedPanelFailures(observed),
         ...withJudgeModel(configuredJudgeModel(profile)),
+        judgeObservation,
       });
       return this.completeActiveRun(report);
     }
@@ -469,8 +536,8 @@ export class FusionOrchestrator {
     return this.finishPanelCompletion(
       updated,
       profile,
-      extracted.outputs,
-      extracted.failures,
+      observedPanels.outputs,
+      observedPanels.failures,
       { fallbackJudge: true },
     );
   }
@@ -489,13 +556,35 @@ export class FusionOrchestrator {
     const snapshot = await this.loadRunLifecycle({
       run: active,
       ...(active.panelRunId ? { runId: active.panelRunId } : {}),
-      ...(active.chainAsyncDir ? { asyncDir: active.chainAsyncDir } : {}),
+      ...(active.panelAsyncDir
+        ? { asyncDir: active.panelAsyncDir }
+        : active.chainAsyncDir
+          ? { asyncDir: active.chainAsyncDir }
+          : {}),
       eventPayload: payload,
     });
+
+    if (!active.panelStopReason) {
+      const partial = extractPanelResults(snapshot.statusPayload, {
+        panel: profile.panel,
+        completedOnly: true,
+      });
+      if (
+        partial.ok &&
+        shouldStopWhenPanelAgrees(profile, partial.outputs, partial.failures)
+      ) {
+        return this.stopPanelAfterAgreement(
+          active,
+          partial,
+          profile.panel.length,
+        );
+      }
+    }
+
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
-      !hasResultsArray(snapshot.resultPayload) &&
+      !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
       return { status: "ignored" };
@@ -505,6 +594,10 @@ export class FusionOrchestrator {
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
       {
         panel: profile.panel,
+        limit: profile.panel.length,
+        ...(active.panelStoppedIndices
+          ? { stoppedPanelIndices: active.panelStoppedIndices }
+          : {}),
       },
     );
     if (!extracted.ok) {
@@ -513,19 +606,74 @@ export class FusionOrchestrator {
       );
     }
 
+    const observedPanels = mergePanelObservations(
+      extracted,
+      snapshot.statusPayload,
+      profile,
+    );
     const updated = this.storePanelResults(
       active.id,
-      extracted.outputs,
-      extracted.failures,
+      observedPanels.outputs,
+      observedPanels.failures,
     );
 
     return this.finishPanelCompletion(
       updated,
       profile,
-      extracted.outputs,
-      extracted.failures,
+      observedPanels.outputs,
+      observedPanels.failures,
       { fallbackJudge: false },
     );
+  }
+
+  private async stopPanelAfterAgreement(
+    active: FusionRun,
+    partial: ExtractPanelResultsSuccess,
+    panelSize: number,
+  ): Promise<FusionCommandResult> {
+    if (!active.panelRunId) return { status: "ignored" };
+
+    let method: "stop" | "interrupt" = "stop";
+    try {
+      await this.rpc.stop({ id: active.panelRunId });
+    } catch (stopError: unknown) {
+      try {
+        await this.rpc.interrupt({ id: active.panelRunId });
+        method = "interrupt";
+      } catch (interruptError: unknown) {
+        this.installWarning = `Could not stop panel run ${active.panelRunId} after agreement: ${errorMessage(interruptError)}`;
+        this.notify(this.context, this.installWarning, "warning");
+        return { status: "ignored" };
+      }
+      this.installWarning = `Panel stop fell back to interrupt for ${active.panelRunId}: ${errorMessage(stopError)}`;
+    }
+
+    const completedIndices = new Set([
+      ...partial.outputs.map((output) => output.index),
+      ...partial.failures.map((failure) => failure.index),
+    ]);
+    const panelStoppedIndices = Array.from(
+      { length: panelSize },
+      (_, index) => index,
+    ).filter((index) => !completedIndices.has(index));
+    const updated = this.runStore.updateRun(active.id, {
+      panelStopReason: "agreement",
+      panelStoppedIndices,
+      panelOutputs: partial.outputs,
+      panelFailures: partial.failures,
+    });
+    publishFusionStatus(
+      this.context,
+      updated,
+      undefined,
+      "stopping after panel agreement",
+    );
+    this.notify(
+      this.context,
+      `Panel agreement found; stopping remaining panelists (${method}).`,
+      "info",
+    );
+    return { status: "started", run: updated };
   }
 
   private async finishPanelCompletion(
@@ -589,7 +737,7 @@ export class FusionOrchestrator {
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
-      !hasResultsArray(snapshot.resultPayload) &&
+      !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
       return { status: "ignored" };
@@ -600,16 +748,29 @@ export class FusionOrchestrator {
     );
     if (!output.ok) return this.failActiveRun(output.error);
 
-    const report = renderJudgeReport({
-      run: active,
-      judgeOutput: output.output,
-      panelOutputs: storedPanelOutputs(active),
-      failures: storedPanelFailures(active),
-      ...withJudgeModel(
-        this.activeProfile
-          ? configuredJudgeModel(this.activeProfile)
-          : undefined,
+    const judgeModel = this.activeProfile
+      ? configuredJudgeModel(this.activeProfile)
+      : undefined;
+    const judgeObservation = mergeRunObservations(
+      extractRunObservation(
+        findStepsArray(snapshot.statusPayload)[0] ?? snapshot.statusPayload,
       ),
+      extractRunObservation(
+        findResult(
+          snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
+        ) ?? snapshot.resultPayload,
+      ),
+    );
+    const observed = this.runStore.updateRun(active.id, {
+      judgeObservation,
+    });
+    const report = renderJudgeReport({
+      run: observed,
+      judgeOutput: output.output,
+      panelOutputs: storedPanelOutputs(observed),
+      failures: storedPanelFailures(observed),
+      ...withJudgeModel(judgeModel),
+      judgeObservation,
     });
     return this.completeActiveRun(report);
   }
@@ -645,7 +806,11 @@ export class FusionOrchestrator {
 
     const eventHasResults = hasResultsArray(input.eventPayload);
     if (eventPayloadMatches && eventHasResults) {
-      return { statusPayload, resultPayload: input.eventPayload };
+      return {
+        statusPayload,
+        resultPayload: input.eventPayload,
+        resultIsTerminal: true,
+      };
     }
 
     const artifactResult = readSubagentResultArtifact({
@@ -653,22 +818,43 @@ export class FusionOrchestrator {
       ...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
     });
     if (hasResultsArray(artifactResult)) {
-      return { statusPayload, resultPayload: artifactResult };
+      return {
+        statusPayload,
+        resultPayload: artifactResult,
+        resultIsTerminal: true,
+      };
     }
 
     if (hasResultsArray(statusPayload)) {
-      return { statusPayload, resultPayload: statusPayload };
+      const resultIsTerminal =
+        eventPayloadMatches ||
+        isTerminalSubagentState(extractSubagentState(statusPayload));
+      return {
+        statusPayload,
+        resultPayload: statusPayload,
+        resultIsTerminal,
+      };
     }
 
     if (isTerminalSubagentState(extractSubagentState(statusPayload))) {
-      return { statusPayload, resultPayload: statusPayload };
+      return {
+        statusPayload,
+        resultPayload: statusPayload,
+        resultIsTerminal: true,
+      };
     }
 
     if (eventPayloadMatches) {
-      return { statusPayload, resultPayload: input.eventPayload };
+      return {
+        statusPayload,
+        resultPayload: input.eventPayload,
+        resultIsTerminal: isTerminalSubagentState(
+          extractSubagentState(input.eventPayload),
+        ),
+      };
     }
 
-    return { statusPayload };
+    return { statusPayload, resultIsTerminal: false };
   }
 
   private storePanelResults(
@@ -895,7 +1081,9 @@ function formatFusionStatusReport(input: {
     else if (input.active.panelRunId)
       lines.push(`Panel run: ${input.active.panelRunId}`);
     if (input.active.judgeRunId) {
-      lines.push(`Fallback judge run: ${input.active.judgeRunId}`);
+      lines.push(
+        `${input.active.chainRunId ? "Fallback judge run" : "Judge run"}: ${input.active.judgeRunId}`,
+      );
     }
     lines.push(
       `Progress: ${input.progress ? formatProgressCounts(input.progress) : "unknown"}`,
@@ -912,7 +1100,9 @@ function formatFusionStatusReport(input: {
     else if (input.last.panelRunId)
       lines.push(`Panel run: ${input.last.panelRunId}`);
     if (input.last.judgeRunId) {
-      lines.push(`Fallback judge run: ${input.last.judgeRunId}`);
+      lines.push(
+        `${input.last.chainRunId ? "Fallback judge run" : "Judge run"}: ${input.last.judgeRunId}`,
+      );
     }
   } else {
     lines.push("State: idle");
@@ -967,7 +1157,10 @@ function activeRunId(run: FusionRun | undefined): string | undefined {
 
 function activeAsyncDir(run: FusionRun | undefined): string | undefined {
   if (!run) return undefined;
-  return run.phase === "judge" ? run.judgeAsyncDir : run.chainAsyncDir;
+  if (run.phase === "judge") return run.judgeAsyncDir;
+  return run.phase === "panel"
+    ? (run.panelAsyncDir ?? run.chainAsyncDir)
+    : run.chainAsyncDir;
 }
 
 function buildFusionStatusDetails(
@@ -1003,22 +1196,28 @@ function buildFusionStatusDetails(
     const step = panelSteps[index];
     const model = configuredPanelModel(member);
     const activity = describeStepActivity(step);
+    const metrics = describeStepMetrics(step);
     return {
       label: member.label,
       ...(member.role ? { role: member.role } : {}),
       ...(model ? { model } : {}),
       status: describePanelStatus(step),
-      ...(activity ? { activity } : {}),
+      ...([activity, metrics].filter(Boolean).length > 0
+        ? { activity: [activity, metrics].filter(Boolean).join(" · ") }
+        : {}),
     };
   });
   details.panelists = panelists;
 
   const judgeActivity = describeStepActivity(steps[profile.panel.length]);
+  const judgeMetrics = describeStepMetrics(steps[profile.panel.length]);
   details.judge = {
     label: "Judge",
     ...(judgeModel ? { model: judgeModel } : {}),
     status: describeChainJudgeStatus(steps[profile.panel.length], panelists),
-    ...(judgeActivity ? { activity: judgeActivity } : {}),
+    ...([judgeActivity, judgeMetrics].filter(Boolean).length > 0
+      ? { activity: [judgeActivity, judgeMetrics].filter(Boolean).join(" · ") }
+      : {}),
   };
   return details;
 }
@@ -1167,6 +1366,19 @@ function describeStepActivity(step: unknown): string | undefined {
   return recentOutput || undefined;
 }
 
+function describeStepMetrics(step: unknown): string | undefined {
+  const observation = extractRunObservation(step);
+  const metrics = [
+    observation.durationMs !== undefined
+      ? `${(observation.durationMs / 1000).toFixed(1)}s`
+      : undefined,
+    observation.usage?.costUsd !== undefined
+      ? `$${observation.usage.costUsd.toFixed(4)}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return metrics.length > 0 ? metrics.join(", ") : undefined;
+}
+
 function summarizeActivityArg(value: string): string {
   const parts = value.split("/").filter(Boolean);
   if (parts.length >= 3) return parts.slice(-3).join("/");
@@ -1308,6 +1520,71 @@ function extractArtifactPath(
     return firstString(result.outputReference.path);
   }
   return undefined;
+}
+
+function mergePanelObservations(
+  result: ExtractPanelResultsSuccess,
+  statusPayload: unknown,
+  profile: FusionProfile,
+): ExtractPanelResultsSuccess {
+  const status = extractPanelResults(statusPayload, {
+    panel: profile.panel,
+    completedOnly: true,
+    limit: profile.panel.length,
+  });
+  if (!status.ok) return result;
+
+  const observations = new Map<number, PanelOutput["observation"]>();
+  for (const output of status.outputs) {
+    observations.set(output.index, output.observation);
+  }
+  for (const failure of status.failures) {
+    observations.set(failure.index, failure.observation);
+  }
+
+  return {
+    ...result,
+    outputs: result.outputs.map((output) =>
+      withMergedObservation(output, observations.get(output.index)),
+    ),
+    failures: result.failures.map((failure) =>
+      withMergedObservation(failure, observations.get(failure.index)),
+    ),
+  };
+}
+
+function withMergedObservation<T extends PanelOutput | FailedPanelSummary>(
+  item: T,
+  statusObservation: PanelOutput["observation"] | undefined,
+): T {
+  const observation = mergeRunObservations(statusObservation, item.observation);
+  return hasObservationData(observation) ? { ...item, observation } : item;
+}
+
+function hasObservationData(observation: PanelOutput["observation"]): boolean {
+  return Boolean(
+    observation &&
+    (observation.model ||
+      observation.durationMs !== undefined ||
+      observation.usage ||
+      observation.attempts ||
+      observation.providerFailures),
+  );
+}
+
+function shouldStopWhenPanelAgrees(
+  profile: FusionProfile,
+  outputs: readonly PanelOutput[],
+  failures: readonly FailedPanelSummary[],
+): boolean {
+  return (
+    profile.stopWhenPanelAgrees === true &&
+    hasStrongPanelAgreement(
+      outputs,
+      outputs.length + failures.length,
+      profile.panel.length,
+    )
+  );
 }
 
 function storedPanelOutputs(run: FusionRun): readonly PanelOutput[] {

@@ -1,9 +1,16 @@
 import type { FailedPanelSummary, PanelOutput } from "./run-builder.js";
-import type { FusionRun } from "./types.js";
+import { summarizeProviderFailures } from "./run-observations.js";
+import type { FusionRun, ProviderFailure, RunObservation } from "./types.js";
 
 type ReportRun = Pick<
   FusionRun,
-  "id" | "prompt" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
+  | "id"
+  | "prompt"
+  | "profileName"
+  | "chainRunId"
+  | "panelRunId"
+  | "judgeRunId"
+  | "panelStopReason"
 > &
   Partial<Pick<FusionRun, "phase" | "createdAt" | "updatedAt">>;
 
@@ -27,6 +34,7 @@ export interface RenderJudgeReportInput {
   panelOutputs?: readonly PanelOutput[];
   failures?: readonly FailedPanelSummary[];
   judgeModel?: string;
+  judgeObservation?: RunObservation;
 }
 
 export interface RenderFailureReportInput {
@@ -56,6 +64,7 @@ type ReportSectionTitle =
   | "Recommendation"
   | "Risks"
   | "Next Step"
+  | "Run Details"
   | "Run Metadata";
 
 interface ReportSection {
@@ -127,7 +136,7 @@ export function renderSinglePanelReport(
   input: RenderSinglePanelReportInput,
 ): string {
   const panelName = formatPanelName(input.output);
-  return renderReport([
+  const sections: ReportSection[] = [
     {
       title: "Summary",
       content:
@@ -177,7 +186,13 @@ export function renderSinglePanelReport(
         "Use this single-panel result directly, or rerun /fusion if you need judge synthesis.",
     },
     { title: "Run Metadata", content: formatRunMetadata(input.run) },
-  ]);
+  ];
+  const runDetails = formatRunDetails({
+    panelOutputs: [input.output],
+    failures: input.failures,
+  });
+  if (runDetails) sections.splice(-1, 0, runDetails);
+  return renderReport(sections);
 }
 
 export function renderJudgeReport(input: RenderJudgeReportInput): string {
@@ -190,7 +205,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
       ? unsectionedOutput
       : "Judge completed without a recommendation.";
 
-  return renderReport([
+  const reportSections: ReportSection[] = [
     {
       title: "Summary",
       content: sections.get("Summary") ?? judgeSummary(panelOutputs, failures),
@@ -235,7 +250,17 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
         "Review the recommendation and decide whether to act on it.",
     },
     { title: "Run Metadata", content: formatRunMetadata(input.run) },
-  ]);
+  ];
+  const runDetails = formatRunDetails({
+    panelOutputs,
+    failures,
+    ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
+    ...(input.judgeObservation
+      ? { judgeObservation: input.judgeObservation }
+      : {}),
+  });
+  if (runDetails) reportSections.splice(-1, 0, runDetails);
+  return renderReport(reportSections);
 }
 
 export function renderFailureReport(input: RenderFailureReportInput): string {
@@ -357,6 +382,128 @@ function formatSectionContent(content: string | readonly string[]): string {
   return text.trim() || "None.";
 }
 
+interface RunDetailsInput {
+  panelOutputs: readonly PanelOutput[];
+  failures: readonly FailedPanelSummary[];
+  judgeModel?: string;
+  judgeObservation?: RunObservation;
+}
+
+function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
+  const entries = [
+    ...input.panelOutputs
+      .filter((item): item is PanelOutput & { observation: RunObservation } =>
+        Boolean(item.observation),
+      )
+      .map((item) => ({
+        label: formatPanelName(item),
+        status: "completed",
+        configuredModel: item.model,
+        observation: item.observation,
+      })),
+    ...input.failures
+      .filter(
+        (item): item is FailedPanelSummary & { observation: RunObservation } =>
+          Boolean(item.observation),
+      )
+      .map((item) => ({
+        label: formatPanelName(item),
+        status:
+          item.reason === "stopped-after-agreement" ? "stopped" : "failed",
+        configuredModel: item.model,
+        observation: item.observation,
+      })),
+  ];
+  if (input.judgeObservation) {
+    entries.push({
+      label: "Judge",
+      status: "completed",
+      configuredModel: input.judgeModel,
+      observation: input.judgeObservation,
+    });
+  }
+  if (entries.length === 0) return undefined;
+
+  const observations = entries.map((entry) => entry.observation);
+  const providerFailures = summarizeProviderFailures(
+    observations.flatMap((observation) => observation.providerFailures ?? []),
+  );
+  const lines = entries.map(
+    (entry) =>
+      `- ${entry.label} (${entry.status}): ${formatObservation(entry.observation, entry.configuredModel)}`,
+  );
+  lines.push(
+    `- Aggregate model time: ${formatTotal(observations, (observation) => observation.durationMs, formatDuration)}`,
+    `- Total input tokens: ${formatTotal(observations, (observation) => observation.usage?.inputTokens, formatTokens)}`,
+    `- Total output tokens: ${formatTotal(observations, (observation) => observation.usage?.outputTokens, formatTokens)}`,
+    `- Total estimated cost: ${formatTotal(observations, (observation) => observation.usage?.costUsd, formatCost)}`,
+  );
+  if (providerFailures.length > 0) {
+    lines.push("- Model issues:");
+    lines.push(
+      ...providerFailures.map(
+        (failure) => `  - ${formatProviderFailure(failure)}`,
+      ),
+    );
+  }
+  return { title: "Run Details", content: lines };
+}
+
+function formatObservation(
+  observation: RunObservation,
+  configuredModel?: string,
+): string {
+  return [
+    observation.model ??
+      (configuredModel ? `${configuredModel} (configured)` : "model unknown"),
+    observation.durationMs !== undefined
+      ? formatDuration(observation.durationMs)
+      : "time unknown",
+    formatUsage(observation),
+  ].join(" · ");
+}
+
+function formatUsage(observation: RunObservation): string {
+  const input = observation.usage?.inputTokens;
+  const output = observation.usage?.outputTokens;
+  const cost = observation.usage?.costUsd;
+  return [
+    input !== undefined ? `in ${formatTokens(input)}` : "input unknown",
+    output !== undefined ? `out ${formatTokens(output)}` : "output unknown",
+    cost !== undefined ? formatCost(cost) : "cost unknown",
+  ].join(", ");
+}
+
+function formatProviderFailure(failure: ProviderFailure): string {
+  const target = failure.model
+    ? `${failure.provider}/${failure.model.split("/").slice(1).join("/")}`
+    : failure.provider;
+  return `${target}: ${failure.message}${failure.count && failure.count > 1 ? ` (x${failure.count})` : ""}`;
+}
+
+function formatTotal(
+  observations: readonly RunObservation[],
+  read: (observation: RunObservation) => number | undefined,
+  format: (value: number) => string,
+): string {
+  const values = observations.map(read);
+  if (values.some((value) => value === undefined)) return "unknown";
+  const total = values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  return format(total);
+}
+
+function formatDuration(value: number): string {
+  return value >= 100 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+}
+
+function formatTokens(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+function formatCost(value: number): string {
+  return `$${value.toFixed(4)}`;
+}
+
 function formatAgentStatus(options: AgentStatusOptions): string[] {
   const hasPanelStatus =
     options.panelOutputs !== undefined || options.failures !== undefined;
@@ -382,7 +529,9 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
   }
 
   lines.push(`- Judge: ${options.judgeStatus}`);
-  if (options.judgeModel) lines.push(`  Model: ${options.judgeModel}`);
+  if (options.judgeModel) {
+    lines.push(`  Configured model: ${options.judgeModel}`);
+  }
   if (options.extra) lines.push(...options.extra);
   return lines;
 }
@@ -390,13 +539,17 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
 function formatPanelDetails(
   item: Pick<
     PanelOutput,
-    "agent" | "role" | "model" | "artifactPath" | "sessionPath"
+    "agent" | "role" | "model" | "observation" | "artifactPath" | "sessionPath"
   >,
 ): string[] {
   return [
     `  Agent: ${item.agent}`,
     ...(item.role ? [`  Role: ${item.role}`] : []),
-    ...(item.model ? [`  Model: ${item.model}`] : []),
+    ...(item.model
+      ? [
+          `  ${item.observation?.model ? "Model" : "Configured model"}: ${item.model}`,
+        ]
+      : []),
     ...(item.artifactPath ? [`  Artifact: ${item.artifactPath}`] : []),
     ...(item.sessionPath ? [`  Session: ${item.sessionPath}`] : []),
   ];
@@ -410,7 +563,14 @@ function formatRunMetadata(run: ReportRun): string[] {
     `- Prompt: ${firstLine(run.prompt)}`,
     ...(run.chainRunId ? [`- Chain run: ${run.chainRunId}`] : []),
     ...(run.panelRunId ? [`- Panel run: ${run.panelRunId}`] : []),
-    ...(run.judgeRunId ? [`- Fallback judge run: ${run.judgeRunId}`] : []),
+    ...(run.panelStopReason === "agreement"
+      ? ["- Panel stopped after strong agreement"]
+      : []),
+    ...(run.judgeRunId
+      ? [
+          `- ${run.chainRunId ? "Fallback judge run" : "Judge run"}: ${run.judgeRunId}`,
+        ]
+      : []),
     ...(typeof run.createdAt === "number"
       ? [`- Created: ${formatTimestamp(run.createdAt)}`]
       : []),
