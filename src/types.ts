@@ -88,6 +88,7 @@ export interface PanelOutput {
   label?: string;
   role?: string;
   model?: string;
+  configuredModel?: string;
   decision?: PanelDecision;
   observation?: RunObservation;
   artifactPath?: string;
@@ -105,6 +106,7 @@ export interface FailedPanelSummary {
   label?: string;
   role?: string;
   model?: string;
+  configuredModel?: string;
   reason?: PanelFailureReason;
   observation?: RunObservation;
   artifactPath?: string;

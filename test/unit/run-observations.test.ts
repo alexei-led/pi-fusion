@@ -119,6 +119,24 @@ test("mergeRunObservations preserves status timing and result usage", () => {
   );
 });
 
+test("mergeRunObservations does not duplicate cumulative provider failures", () => {
+  assert.deepEqual(
+    mergeRunObservations(
+      {
+        providerFailures: [
+          { provider: "openai", model: "openai/gpt", message: "retry" },
+        ],
+      },
+      {
+        providerFailures: [
+          { provider: "openai", model: "openai/gpt", message: "retry" },
+        ],
+      },
+    ).providerFailures,
+    [{ provider: "openai", model: "openai/gpt", message: "retry" }],
+  );
+});
+
 test("extractRunObservation reads lifecycle timing, usage, model, and attempts", () => {
   const observation = extractRunObservation({
     model: "anthropic/claude-haiku",

@@ -173,7 +173,7 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - `pi-fusion` does not own the footer.
 - Prompts and inspected snippets may be sent to every configured panel provider and to the judge through `pi-subagents`.
 - Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown; `$0.0000` remains a known zero-cost value.
-- A model marked `(configured)` in Run Details was requested by the profile but not confirmed by lifecycle metadata.
+- `Model` is lifecycle metadata. `Configured model` is the profile request; both appear when execution differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
 
 ## Read more

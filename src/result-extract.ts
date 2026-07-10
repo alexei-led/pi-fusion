@@ -101,6 +101,19 @@ function findResultsContainer(
     return { ok: true, payload, results: payload.results, path: "$.results" };
   }
 
+  if (
+    isRecord(payload.details) &&
+    Array.isArray(payload.details.results) &&
+    payload.details.results.length > 0
+  ) {
+    return {
+      ok: true,
+      payload: { ...payload, ...payload.details },
+      results: payload.details.results,
+      path: "$.details.results",
+    };
+  }
+
   if (Array.isArray(payload.steps)) {
     return { ok: true, payload, results: payload.steps, path: "$.steps" };
   }
@@ -308,11 +321,8 @@ function buildPanelOutput(input: {
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): PanelOutput {
-  const model =
-    input.observation?.model ??
-    (input.member
-      ? appendThinkingSuffix(input.member.model, input.member.thinking)
-      : undefined);
+  const configuredModel = configuredMemberModel(input.member);
+  const model = input.observation?.model ?? configuredModel;
   const output: PanelOutput = {
     index: input.index,
     agent: input.agent,
@@ -321,6 +331,7 @@ function buildPanelOutput(input: {
     ...(input.member?.label ? { label: input.member.label } : {}),
     ...(input.member?.role ? { role: input.member.role } : {}),
     ...(model ? { model } : {}),
+    ...(configuredModel ? { configuredModel } : {}),
     ...(input.decision ? { decision: input.decision } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
@@ -341,11 +352,8 @@ function buildFailedPanelSummary(input: {
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): FailedPanelSummary {
-  const model =
-    input.observation?.model ??
-    (input.member
-      ? appendThinkingSuffix(input.member.model, input.member.thinking)
-      : undefined);
+  const configuredModel = configuredMemberModel(input.member);
+  const model = input.observation?.model ?? configuredModel;
   const failure: FailedPanelSummary = {
     index: input.index,
     agent: input.agent,
@@ -354,6 +362,7 @@ function buildFailedPanelSummary(input: {
     ...(input.member?.label ? { label: input.member.label } : {}),
     ...(input.member?.role ? { role: input.member.role } : {}),
     ...(model ? { model } : {}),
+    ...(configuredModel ? { configuredModel } : {}),
     ...(input.reason ? { reason: input.reason } : {}),
     ...(input.artifactPath ? { artifactPath: input.artifactPath } : {}),
     ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
@@ -385,6 +394,14 @@ function hasObservation(
       observation.attempts ||
       observation.providerFailures),
   );
+}
+
+function configuredMemberModel(
+  member: PanelMemberConfig | undefined,
+): string | undefined {
+  return member
+    ? appendThinkingSuffix(member.model, member.thinking)
+    : undefined;
 }
 
 function extractArtifactPath(

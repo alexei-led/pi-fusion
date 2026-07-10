@@ -102,6 +102,34 @@ test("extractPanelResults uses structured panel output for the human-readable an
   assert.equal(result.outputs[0]?.output, "## Summary\\nChoose A.");
 });
 
+test("extractPanelResults preserves configured and observed model identities", () => {
+  const result = extractPanelResults(
+    {
+      results: [
+        {
+          agent: "pi-fusion.fusion-panelist",
+          success: true,
+          model: "anthropic/fallback",
+          output: "Choose A.",
+        },
+      ],
+    },
+    {
+      panel: [
+        {
+          ...PANEL[0]!,
+          model: "openai/requested",
+        },
+      ],
+    },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs[0]?.model, "anthropic/fallback");
+  assert.equal(result.outputs[0]?.configuredModel, "openai/requested");
+});
+
 test("extractPanelResults reads completed status steps for partial panel observations", () => {
   const result = extractPanelResults(
     {
@@ -160,6 +188,28 @@ test("extractPanelResults reads status RPC details results", () => {
   assert.equal(result.outputs.length, 1);
   assert.equal(result.outputs[0]?.output, "Details output");
   assert.equal(result.failures.length, 0);
+});
+
+test("extractPanelResults prefers populated nested results to an empty wrapper array", () => {
+  const result = extractPanelResults(
+    {
+      results: [],
+      details: {
+        results: [
+          {
+            agent: "pi-fusion.fusion-panelist",
+            success: true,
+            output: "Nested result.",
+          },
+        ],
+      },
+    },
+    { panel: PANEL },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs[0]?.output, "Nested result.");
 });
 
 test("extractPanelResults treats failed statuses as failed panel summaries", () => {

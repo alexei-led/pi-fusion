@@ -391,28 +391,18 @@ interface RunDetailsInput {
 
 function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
   const entries = [
-    ...input.panelOutputs
-      .filter((item): item is PanelOutput & { observation: RunObservation } =>
-        Boolean(item.observation),
-      )
-      .map((item) => ({
-        label: formatPanelName(item),
-        status: "completed",
-        configuredModel: item.model,
-        observation: item.observation,
-      })),
-    ...input.failures
-      .filter(
-        (item): item is FailedPanelSummary & { observation: RunObservation } =>
-          Boolean(item.observation),
-      )
-      .map((item) => ({
-        label: formatPanelName(item),
-        status:
-          item.reason === "stopped-after-agreement" ? "stopped" : "failed",
-        configuredModel: item.model,
-        observation: item.observation,
-      })),
+    ...input.panelOutputs.map((item) => ({
+      label: formatPanelName(item),
+      status: "completed",
+      configuredModel: item.configuredModel ?? item.model,
+      observation: item.observation,
+    })),
+    ...input.failures.map((item) => ({
+      label: formatPanelName(item),
+      status: item.reason === "stopped-after-agreement" ? "stopped" : "failed",
+      configuredModel: item.configuredModel ?? item.model,
+      observation: item.observation,
+    })),
   ];
   if (input.judgeObservation) {
     entries.push({
@@ -422,15 +412,15 @@ function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
       observation: input.judgeObservation,
     });
   }
-  if (entries.length === 0) return undefined;
+  if (!entries.some((entry) => entry.observation)) return undefined;
 
-  const observations = entries.map((entry) => entry.observation);
+  const observations = entries.map((entry) => entry.observation ?? {});
   const providerFailures = summarizeProviderFailures(
     observations.flatMap((observation) => observation.providerFailures ?? []),
   );
   const lines = entries.map(
     (entry) =>
-      `- ${entry.label} (${entry.status}): ${formatObservation(entry.observation, entry.configuredModel)}`,
+      `- ${entry.label} (${entry.status}): ${formatObservation(entry.observation ?? {}, entry.configuredModel)}`,
   );
   lines.push(
     `- Aggregate model time: ${formatTotal(observations, (observation) => observation.durationMs, formatDuration)}`,
@@ -539,16 +529,27 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
 function formatPanelDetails(
   item: Pick<
     PanelOutput,
-    "agent" | "role" | "model" | "observation" | "artifactPath" | "sessionPath"
+    | "agent"
+    | "role"
+    | "model"
+    | "configuredModel"
+    | "observation"
+    | "artifactPath"
+    | "sessionPath"
   >,
 ): string[] {
   return [
     `  Agent: ${item.agent}`,
     ...(item.role ? [`  Role: ${item.role}`] : []),
-    ...(item.model
-      ? [
-          `  ${item.observation?.model ? "Model" : "Configured model"}: ${item.model}`,
-        ]
+    ...(item.observation?.model
+      ? [`  Model: ${item.observation.model}`]
+      : (item.configuredModel ?? item.model)
+        ? [`  Configured model: ${item.configuredModel ?? item.model}`]
+        : []),
+    ...(item.configuredModel &&
+    item.observation?.model &&
+    item.configuredModel !== item.observation.model
+      ? [`  Configured model: ${item.configuredModel}`]
       : []),
     ...(item.artifactPath ? [`  Artifact: ${item.artifactPath}`] : []),
     ...(item.sessionPath ? [`  Session: ${item.sessionPath}`] : []),

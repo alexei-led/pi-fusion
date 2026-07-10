@@ -207,7 +207,7 @@ The judge returns:
 - risks
 - next step
 
-When lifecycle data is available, the final report also includes per-panel and judge time, aggregate model time, token usage, estimated cost, and concise model/provider failure summaries. Aggregate model time sums agent durations and is not wall-clock latency when panelists overlap. Missing usage is shown as unknown; local zero-cost usage remains zero. A model marked `(configured)` was requested by the profile but not confirmed by lifecycle metadata; an unmarked model came from lifecycle metadata.
+When lifecycle data is available, the final report also includes per-panel and judge time, aggregate model time, token usage, estimated cost, and concise model/provider failure summaries. Aggregate model time sums agent durations and is not wall-clock latency when panelists overlap. Missing usage is shown as unknown; local zero-cost usage remains zero. `Model` comes from lifecycle metadata; `Configured model` is the profile request. Both appear when a provider reports a different executed model.
 
 ## Status and footer integration
 

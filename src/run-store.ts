@@ -504,6 +504,8 @@ function isPanelOutput(
     typeof value.output === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
     (value.label === undefined || typeof value.label === "string") &&
+    (value.configuredModel === undefined ||
+      typeof value.configuredModel === "string") &&
     (value.artifactPath === undefined ||
       typeof value.artifactPath === "string") &&
     (value.sessionPath === undefined ||
@@ -529,6 +531,8 @@ function isPanelFailure(
     typeof value.summary === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
     (value.label === undefined || typeof value.label === "string") &&
+    (value.configuredModel === undefined ||
+      typeof value.configuredModel === "string") &&
     (value.artifactPath === undefined ||
       typeof value.artifactPath === "string") &&
     (value.sessionPath === undefined ||

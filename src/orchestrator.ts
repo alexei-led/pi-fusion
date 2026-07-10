@@ -114,6 +114,7 @@ export class FusionOrchestrator {
   private configWarning: string | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconciling = false;
+  private pendingCompletionPayload: unknown;
 
   constructor(deps: FusionOrchestratorDeps) {
     this.rpc = deps.rpc;
@@ -159,11 +160,26 @@ export class FusionOrchestrator {
       return { status: "failed", error: message };
     }
 
-    const run = this.runStore.startRun({
-      prompt: args.prompt,
-      profileName: resolved.name,
-      phase: "panel",
-    });
+    let run: FusionRun;
+    try {
+      run = this.runStore.startRun({
+        prompt: args.prompt,
+        profileName: resolved.name,
+        phase: "panel",
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof FusionRunStoreError)) throw error;
+      const active = this.runStore.getActiveRun();
+      if (active) {
+        this.notify(
+          ctx,
+          `Fusion run ${active.id} is already active.`,
+          "warning",
+        );
+        return { status: "conflict", activeRunId: active.id };
+      }
+      return { status: "failed", error: errorMessage(error) };
+    }
     this.activeProfile = resolved.profile;
     publishFusionStatus(ctx, run);
 
@@ -217,22 +233,25 @@ export class FusionOrchestrator {
     }
   }
 
-  private async stopOrphanedRun(runId: string): Promise<void> {
+  private async stopOrphanedRun(
+    runId: string,
+    kind: "panel" | "judge" = "panel",
+  ): Promise<void> {
     try {
       await this.rpc.stop({ id: runId });
       return;
     } catch (stopError: unknown) {
       try {
         await this.rpc.interrupt({ id: runId });
-        this.installWarning = `Orphaned panel stop fell back to interrupt for ${runId}: ${errorMessage(stopError)}`;
+        this.installWarning = `Orphaned ${kind} stop fell back to interrupt for ${runId}: ${errorMessage(stopError)}`;
         return;
       } catch (interruptError: unknown) {
-        this.installWarning = `Could not stop orphaned panel run ${runId}: ${errorMessage(interruptError)}`;
+        this.installWarning = `Could not stop orphaned ${kind} run ${runId}: ${errorMessage(interruptError)}`;
       }
     }
     this.notify(
       this.context,
-      this.installWarning ?? "Could not stop orphaned panel run.",
+      this.installWarning ?? `Could not stop orphaned ${kind} run.`,
       "warning",
     );
   }
@@ -308,6 +327,10 @@ export class FusionOrchestrator {
           return { status: "failed", error: message };
         }
       }
+    }
+
+    if (this.runStore.getActiveRun()?.id !== active.id) {
+      return { status: "ignored" };
     }
 
     const report = renderCancelledReport({
@@ -432,7 +455,12 @@ export class FusionOrchestrator {
   private async reconcileActiveRun(
     eventPayload?: unknown,
   ): Promise<FusionCommandResult> {
-    if (this.reconciling) return { status: "ignored" };
+    if (this.reconciling) {
+      if (eventPayload !== undefined) {
+        this.pendingCompletionPayload = eventPayload;
+      }
+      return { status: "ignored" };
+    }
     const active = this.runStore.getActiveRun();
     if (!active) return { status: "ignored" };
 
@@ -450,6 +478,15 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     } finally {
       this.reconciling = false;
+      const pendingPayload = this.pendingCompletionPayload;
+      this.pendingCompletionPayload = undefined;
+      if (pendingPayload !== undefined) {
+        void this.reconcileActiveRun(pendingPayload).catch((error: unknown) => {
+          const message = `Could not reconcile completed fusion run: ${errorMessage(error)}`;
+          this.installWarning = message;
+          this.notify(this.context, message, "warning");
+        });
+      }
     }
   }
 
@@ -648,6 +685,10 @@ export class FusionOrchestrator {
       this.installWarning = `Panel stop fell back to interrupt for ${active.panelRunId}: ${errorMessage(stopError)}`;
     }
 
+    if (this.runStore.getActiveRun()?.id !== active.id) {
+      return { status: "ignored" };
+    }
+
     const completedIndices = new Set([
       ...partial.outputs.map((output) => output.index),
       ...partial.failures.map((failure) => failure.index),
@@ -705,6 +746,10 @@ export class FusionOrchestrator {
         throw new FusionArgsError(decision.missingRunIdError);
       }
       const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
+      if (this.runStore.getActiveRun()?.id !== run.id) {
+        await this.stopOrphanedRun(judgeRunId, "judge");
+        return { status: "ignored" };
+      }
       const nextRun = this.runStore.updateRun(run.id, {
         phase: "judge",
         judgeRunId,
@@ -933,7 +978,11 @@ export class FusionOrchestrator {
   private ensureReconcileLoop(): void {
     if (this.reconcileTimer) return;
     this.reconcileTimer = setInterval(() => {
-      void this.reconcileActiveRun();
+      void this.reconcileActiveRun().catch((error: unknown) => {
+        const message = `Could not reconcile fusion run: ${errorMessage(error)}`;
+        this.installWarning = message;
+        this.notify(this.context, message, "warning");
+      });
     }, RECONCILE_INTERVAL_MS);
     this.reconcileTimer.unref?.();
   }

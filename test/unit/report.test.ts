@@ -189,8 +189,9 @@ test("renderJudgeReport distinguishes configured from observed models", () => {
     panelOutputs: [
       {
         ...ARCHITECT,
-        model: "deepseek/requested-panel",
-        observation: { durationMs: 1200 },
+        model: "anthropic/observed-panel",
+        configuredModel: "deepseek/requested-panel",
+        observation: { model: "anthropic/observed-panel", durationMs: 1200 },
       },
     ],
     failures: [],
@@ -198,11 +199,35 @@ test("renderJudgeReport distinguishes configured from observed models", () => {
     judgeObservation: { durationMs: 800 },
   });
 
+  assert.match(report, /Model: anthropic\/observed-panel/);
   assert.match(report, /Configured model: deepseek\/requested-panel/);
   assert.match(report, /Configured model: deepseek\/requested-judge/);
-  assert.match(report, /requested-panel \(configured\).*1\.2s/);
+  assert.match(report, /observed-panel.*1\.2s/);
   assert.match(report, /requested-judge \(configured\).*0\.8s/);
   assert.match(report, /Aggregate model time: 2\.0s/);
+});
+
+test("renderJudgeReport marks totals unknown when any execution lacks telemetry", () => {
+  const report = renderJudgeReport({
+    run: RUN_JUDGE,
+    judgeOutput: "Prefer A.",
+    panelOutputs: [
+      {
+        ...ARCHITECT,
+        observation: {
+          durationMs: 1200,
+          usage: { inputTokens: 100, outputTokens: 40, costUsd: 0.01 },
+        },
+      },
+      TESTER,
+    ],
+    failures: [],
+  });
+
+  assert.match(report, /Tester \(completed\): model unknown/);
+  assert.match(report, /Total input tokens: unknown/);
+  assert.match(report, /Total output tokens: unknown/);
+  assert.match(report, /Total estimated cost: unknown/);
 });
 
 test("renderJudgeReport shows partial success and timed-out panelists", () => {

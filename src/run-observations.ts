@@ -111,10 +111,9 @@ export function mergeRunObservations(
 ): RunObservation {
   if (!base) return latest ? cloneObservation(latest) : {};
   if (!latest) return cloneObservation(base);
-  const failures = summarizeProviderFailures([
-    ...(base.providerFailures ?? []),
-    ...(latest.providerFailures ?? []),
-  ]).map(({ count, ...failure }) =>
+  const failures = summarizeProviderFailures(
+    latest.providerFailures ?? base.providerFailures ?? [],
+  ).map(({ count, ...failure }) =>
     count && count > 1 ? { ...failure, count } : failure,
   );
   return {

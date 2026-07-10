@@ -105,6 +105,29 @@ test("restore keeps legacy chain runs on the fallback judge path", async () => {
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
 });
 
+test("concurrent starts return one started run and one conflict", async () => {
+  const fixture = makeFixture();
+  let resolvePing!: (value: unknown) => void;
+  fixture.rpc.pingPromise = new Promise((resolve) => {
+    resolvePing = resolve;
+  });
+
+  const first = fixture.orchestrator.startRun("first", fixture.ctx);
+  const second = fixture.orchestrator.startRun("second", fixture.ctx);
+  resolvePing({ ok: true });
+
+  const results = await Promise.all([first, second]);
+  assert.equal(
+    results.filter((result) => result.status === "started").length,
+    1,
+  );
+  assert.equal(
+    results.filter((result) => result.status === "conflict").length,
+    1,
+  );
+  assert.equal(fixture.rpc.spawns.length, 1);
+});
+
 test("startRun rejects an active-run conflict without spawning another panel", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("first", fixture.ctx);
@@ -468,6 +491,84 @@ test("judge completion renders the final judge report and clears active UI", asy
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
 });
 
+test("completion output is replayed after concurrent status polling", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+
+  let resolveStatus!: (value: unknown) => void;
+  fixture.rpc.statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+  const polling = fixture.orchestrator.getStatusReport();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const completion = fixture.orchestrator.handleSubagentComplete(
+    successfulPanelStatus("chain-1"),
+  );
+  resolveStatus({ runId: "chain-1", state: "running", results: [] });
+  await polling;
+  await completion;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
+});
+
+test("cancelling while the judge spawns stops the orphaned judge", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+
+  let resolveSpawn!: (value: unknown) => void;
+  fixture.rpc.spawnPromise = new Promise((resolve) => {
+    resolveSpawn = resolve;
+  });
+  const completing = fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const cancelled = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
+  assert.equal(cancelled.status, "cancelled");
+  resolveSpawn({ details: { runId: "late-judge" } });
+  assert.equal((await completing).status, "ignored");
+  assert.deepEqual(fixture.rpc.stops, [
+    { id: "chain-1" },
+    { id: "late-judge" },
+  ]);
+});
+
+test("cancelActiveRun does not throw when completion wins during stop", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+
+  let resolveStop!: (value: unknown) => void;
+  fixture.rpc.stopPromise = new Promise((resolve) => {
+    resolveStop = resolve;
+  });
+  const cancelling = fixture.orchestrator.cancelActiveRun(fixture.ctx);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-agent", success: true, output: "Choose A." },
+      { agent: "panel-agent", success: false, error: "boom" },
+    ],
+  });
+  assert.equal(
+    (await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" }))
+      .status,
+    "done",
+  );
+
+  resolveStop({ ok: true });
+  assert.equal((await cancelling).status, "ignored");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+});
+
 test("cancelActiveRun stops a panel that finishes spawning after local cancellation", async () => {
   const fixture = makeFixture();
   let resolveSpawn!: (value: unknown) => void;
@@ -602,13 +703,16 @@ class FakeRpc implements FusionRpcClientLike {
   readonly interrupts: Array<unknown> = [];
   readonly spawnResults: unknown[] = [{ details: { runId: "chain-1" } }];
   readonly statusResults = new Map<string, unknown>();
+  pingPromise: Promise<unknown> | undefined;
   spawnPromise: Promise<unknown> | undefined;
+  statusPromise: Promise<unknown> | undefined;
+  stopPromise: Promise<unknown> | undefined;
   stopError: Error | undefined;
   interruptError: Error | undefined;
 
   async ping(): Promise<unknown> {
     this.pings++;
-    return { ok: true };
+    return this.pingPromise ?? { ok: true };
   }
 
   async spawn(params: object): Promise<unknown> {
@@ -622,6 +726,7 @@ class FakeRpc implements FusionRpcClientLike {
 
   async status(params = {}): Promise<unknown> {
     this.statuses.push(params);
+    if (this.statusPromise) return this.statusPromise;
     const id =
       isRecord(params) && typeof params.id === "string" ? params.id : undefined;
     const result = id ? this.statusResults.get(id) : undefined;
@@ -631,6 +736,7 @@ class FakeRpc implements FusionRpcClientLike {
 
   async stop(params: object): Promise<unknown> {
     this.stops.push(params);
+    if (this.stopPromise) return this.stopPromise;
     if (this.stopError) throw this.stopError;
     return { ok: true };
   }

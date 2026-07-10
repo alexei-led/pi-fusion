@@ -101,6 +101,15 @@ test("FusionRunStore persists panel stop and judge observations", () => {
     panelAsyncDir: "/tmp/panel-1",
     panelStopReason: "agreement",
     panelStoppedIndices: [2],
+    panelOutputs: [
+      {
+        index: 0,
+        agent: "panel",
+        output: "Choose A.",
+        model: "anthropic/observed",
+        configuredModel: "openai/requested",
+      },
+    ],
     judgeObservation: {
       model: "ollama/qwen",
       durationMs: 500,
@@ -114,6 +123,10 @@ test("FusionRunStore persists panel stop and judge observations", () => {
   assert.equal(restored?.panelAsyncDir, "/tmp/panel-1");
   assert.equal(restored?.panelStopReason, "agreement");
   assert.deepEqual(restored?.panelStoppedIndices, [2]);
+  assert.equal(
+    restored?.panelOutputs?.[0]?.configuredModel,
+    "openai/requested",
+  );
   assert.deepEqual(restored?.judgeObservation?.usage, {
     inputTokens: 20,
     outputTokens: 10,
