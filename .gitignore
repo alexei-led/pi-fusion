@@ -15,5 +15,5 @@ dist/
 *.log
 *.tgz
 .DS_Store
-posts/
+docs/posts/
 pkg/
