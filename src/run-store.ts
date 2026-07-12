@@ -23,6 +23,7 @@ export type FusionRunSummary = Omit<
     | "id"
     | "prompt"
     | "profileName"
+    | "operationId"
     | "phase"
     | "createdAt"
     | "updatedAt"
@@ -39,6 +40,7 @@ export interface FusionRunStartInput {
   id?: string;
   prompt: string;
   profileName: string;
+  operationId?: string;
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
 }
@@ -96,6 +98,8 @@ export class FusionRunStoreError extends Error {
 export class FusionRunStore {
   private activeRun: FusionRun | undefined;
   private lastRunSummary: FusionRunSummary | undefined;
+  private readonly runsById = new Map<string, FusionRun>();
+  private readonly runIdsByOperationId = new Map<string, string>();
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly persistence: FusionRunStorePersistence | undefined;
@@ -116,10 +120,28 @@ export class FusionRunStore {
       : undefined;
   }
 
+  getRunById(id: string): FusionRun | undefined {
+    const run = this.runsById.get(id);
+    return run ? cloneRun(run) : undefined;
+  }
+
+  getRunByOperationId(operationId: string): FusionRun | undefined {
+    const runId = this.runIdsByOperationId.get(operationId);
+    return runId ? this.getRunById(runId) : undefined;
+  }
+
   startRun(input: FusionRunStartInput): FusionRun {
     if (this.activeRun) {
       throw new FusionRunStoreError(
         `Fusion run ${this.activeRun.id} is already active.`,
+      );
+    }
+    if (
+      input.operationId !== undefined &&
+      this.runIdsByOperationId.has(input.operationId)
+    ) {
+      throw new FusionRunStoreError(
+        `Fusion operation ${input.operationId} already has a run.`,
       );
     }
     const createdAt = input.createdAt ?? this.now();
@@ -127,11 +149,15 @@ export class FusionRunStore {
       id: input.id ?? this.idFactory(),
       prompt: input.prompt,
       profileName: input.profileName,
+      ...(input.operationId !== undefined
+        ? { operationId: input.operationId }
+        : {}),
       phase: input.phase ?? "chain",
       createdAt,
       updatedAt: createdAt,
     };
     this.activeRun = run;
+    this.rememberRun(run);
     this.persistRun(run);
     return cloneRun(run);
   }
@@ -140,6 +166,7 @@ export class FusionRunStore {
     const active = this.requireActiveRun(id);
     const updated = applyPatch(active, patch, patch.updatedAt ?? this.now());
     this.activeRun = updated;
+    this.rememberRun(updated);
     this.persistRun(updated);
     return cloneRun(updated);
   }
@@ -171,6 +198,7 @@ export class FusionRunStore {
     const summary = toRunSummary(finished);
     this.activeRun = undefined;
     this.lastRunSummary = summary;
+    this.rememberRun(finished);
     this.persistRun(summary);
     return cloneRun(finished);
   }
@@ -178,7 +206,12 @@ export class FusionRunStore {
   restoreFromEntries(
     entries: readonly unknown[],
   ): FusionRunSummary | undefined {
-    const latestState = readLastFusionRunState(entries);
+    const states = readFusionRunStates(entries);
+    this.runsById.clear();
+    this.runIdsByOperationId.clear();
+    for (const state of states) this.rememberRun(state);
+
+    const latestState = states.at(-1);
     const summary = readLastFusionRunSummary(entries);
     this.activeRun =
       latestState && !isTerminalPhase(latestState.phase)
@@ -206,6 +239,16 @@ export class FusionRunStore {
 
   private persistRun(run: FusionRun): void {
     this.persistence?.appendEntry(FUSION_RUN_ENTRY_TYPE, cloneRun(run));
+  }
+
+  private rememberRun(run: FusionRun): void {
+    this.runsById.set(run.id, cloneRun(run));
+    if (
+      run.operationId !== undefined &&
+      !this.runIdsByOperationId.has(run.operationId)
+    ) {
+      this.runIdsByOperationId.set(run.operationId, run.id);
+    }
   }
 
   private requireActiveRun(id: string): FusionRun {
@@ -325,6 +368,7 @@ function toRunSummary(
     id: run.id,
     prompt: run.prompt,
     profileName: run.profileName,
+    ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -341,6 +385,7 @@ function cloneRun(run: FusionRun): FusionRun {
     id: run.id,
     prompt: run.prompt,
     profileName: run.profileName,
+    ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -396,6 +441,9 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (!isNonEmptyString(value.id)) return false;
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
+  if (value.operationId !== undefined && !isNonEmptyString(value.operationId)) {
+    return false;
+  }
   if (!isFusionPhase(value.phase)) return false;
   if (!isFiniteNumber(value.createdAt)) return false;
   if (!isFiniteNumber(value.updatedAt)) return false;

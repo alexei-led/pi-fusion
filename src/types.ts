@@ -78,6 +78,7 @@ export interface FusionConfig {
 export interface ParsedFusionArgs {
   prompt: string;
   profile?: string;
+  operationId?: string;
 }
 
 export interface PanelOutput {
@@ -120,6 +121,7 @@ export interface FusionRun {
   id: string;
   prompt: string;
   profileName: string;
+  operationId?: string;
   phase: FusionPhase;
   createdAt: number;
   updatedAt: number;

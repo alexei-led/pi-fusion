@@ -165,6 +165,7 @@ export class FusionOrchestrator {
       run = this.runStore.startRun({
         prompt: args.prompt,
         profileName: resolved.name,
+        ...(args.operationId !== undefined ? { operationId: args.operationId } : {}),
         phase: "panel",
       });
     } catch (error: unknown) {

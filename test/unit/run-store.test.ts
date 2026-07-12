@@ -134,6 +134,49 @@ test("FusionRunStore persists panel stop and judge observations", () => {
   });
 });
 
+test("FusionRunStore restores durable run and operation lookups across history", () => {
+  const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
+    [];
+  let id = 0;
+  const store = new FusionRunStore({
+    idFactory: () => `run-${++id}`,
+    now: () => id,
+    persistence: {
+      appendEntry: (customType, data) =>
+        entries.push({ type: "custom", customType, data }),
+    },
+  });
+
+  const first = store.startRun({
+    prompt: "first",
+    profileName: "quality",
+    operationId: "operation-1",
+  });
+  store.completeRun(first.id, { report: "first report" });
+  const second = store.startRun({
+    prompt: "second",
+    profileName: "quality",
+    operationId: "operation-2",
+  });
+  store.completeRun(second.id, { report: "second report" });
+
+  const restored = new FusionRunStore();
+  restored.restoreFromEntries(entries);
+
+  assert.equal(restored.getRunById("run-1")?.report, "first report");
+  assert.equal(restored.getRunByOperationId("operation-1")?.id, "run-1");
+  assert.equal(restored.getRunByOperationId("operation-2")?.id, "run-2");
+  assert.throws(
+    () =>
+      restored.startRun({
+        prompt: "duplicate",
+        profileName: "quality",
+        operationId: "operation-1",
+      }),
+    /already has a run/,
+  );
+});
+
 test("FusionRunStore persists and restores active run snapshots", () => {
   const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
     [];

@@ -4,7 +4,9 @@ import { registerFusionCommands } from "./commands.js";
 import {
   FusionOrchestrator,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
+  type FusionCommandContext,
 } from "./orchestrator.js";
+import { registerFusionRpc } from "./fusion-rpc.js";
 import { FusionRunStore } from "./run-store.js";
 import { SubagentsRpcClient } from "./subagents-rpc.js";
 
@@ -54,9 +56,11 @@ function registerFusionTool(
 }
 
 export default function fusionExtension(pi: ExtensionAPI): void {
+  const store = new FusionRunStore({ persistence: pi });
+  let sessionContext: FusionCommandContext | undefined;
   const orchestrator = new FusionOrchestrator({
     rpc: new SubagentsRpcClient({ events: pi.events }),
-    runStore: new FusionRunStore({ persistence: pi }),
+    runStore: store,
     sendMessage: (message) => pi.sendMessage(message),
   });
 
@@ -69,14 +73,23 @@ export default function fusionExtension(pi: ExtensionAPI): void {
       void orchestrator.handleSubagentComplete(payload);
     },
   );
+  const unsubscribeRpc = registerFusionRpc({
+    events: pi.events,
+    orchestrator,
+    store,
+    getContext: () => sessionContext,
+  });
 
   pi.on("session_start", async (_event, ctx) => {
+    sessionContext = ctx;
     await orchestrator.restore(ctx);
   });
 
   pi.on("session_shutdown", () => {
+    sessionContext = undefined;
     orchestrator.clearUi();
     orchestrator.dispose();
     if (typeof unsubscribeComplete === "function") unsubscribeComplete();
+    unsubscribeRpc();
   });
 }

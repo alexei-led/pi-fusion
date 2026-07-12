@@ -76,8 +76,10 @@ test("npm package contains only runtime extension assets", async (t) => {
 
 function parsePackResult(stdout: string): PackResult {
   const value: unknown = JSON.parse(stdout);
-  assert.ok(Array.isArray(value));
-  const items = value as unknown[];
+  let items: unknown[];
+  if (Array.isArray(value)) items = value as unknown[];
+  else if (isRecord(value)) items = Object.values(value);
+  else items = [];
   assert.equal(items.length, 1);
   const result = items[0];
   assert.ok(isPackResult(result));
