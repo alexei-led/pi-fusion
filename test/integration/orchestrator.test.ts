@@ -87,6 +87,25 @@ test("startRun parses string arguments before launching a profile", async () => 
   );
 });
 
+test("startRun preserves a synchronous subagent model error", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults[0] = {
+    isError: true,
+    content: [{ type: "text", text: "Error: Model not found gpt-5.6-luna" }],
+    details: { results: [] },
+  };
+
+  const result = await fixture.orchestrator.startRun(
+    "compare APIs",
+    fixture.ctx,
+  );
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "Error: Model not found gpt-5.6-luna");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Model not found/);
+});
+
 test("restore keeps legacy chain runs on the fallback judge path", async () => {
   const fixture = makeFixture();
   fixture.runStore.startRun({
@@ -266,6 +285,26 @@ test("panel completion without a judge result spawns a judge", async () => {
   assert.deepEqual(fixture.orchestrator.getActiveRun()?.panelFailures, []);
 });
 
+test("judge spawn preserves a synchronous subagent model error", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.spawnResults.push({
+    isError: true,
+    content: [{ type: "text", text: "Error: Model not found gpt-5.6-luna" }],
+    details: { results: [] },
+  });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "Error: Model not found gpt-5.6-luna");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Model not found/);
+});
+
 test("panel completion uses event results when RPC status has no result details", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
@@ -299,6 +338,69 @@ test("partial status results do not finish a running panel", async () => {
 
   assert.equal(fixture.rpc.spawns.length, 1);
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, "panel");
+});
+
+test("matching events with partial results do not finish a running panel", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "running",
+    results: [
+      { agent: "panel-agent", success: true, output: "Architect says A." },
+    ],
+  });
+
+  assert.equal(result.status, "ignored");
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "panel");
+});
+
+test("terminal child failures finish a running panel without waiting for the deadline", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "running",
+    steps: [
+      {
+        agent: "panel-agent",
+        status: "failed",
+        error: "Error: Model not found gpt-5.6-luna",
+      },
+      {
+        agent: "panel-agent",
+        status: "failed",
+        error: "Subagent timed out after 180000ms.",
+      },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Model not found/);
+});
+
+test("terminal subagent errors without child results preserve the provider error", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "failed",
+    error: "Error: Model not found gpt-5.6-luna",
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "Error: Model not found gpt-5.6-luna");
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Model not found/);
 });
 
 test("panel agreement stops unfinished work and still runs the judge", async () => {

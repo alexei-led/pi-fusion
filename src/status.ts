@@ -92,6 +92,20 @@ export function formatProgressCounts(progress: FusionProgressCounts): string {
   return `${progress.completed}/${total} done, ${progress.running} running, ${progress.failed} failed`;
 }
 
+export function isTerminalFusionProgress(payload: unknown): boolean {
+  const progressPayload = findTerminalProgressPayload(payload);
+  const progress = progressPayload
+    ? extractFusionProgressCounts(progressPayload)
+    : undefined;
+  return Boolean(
+    progress &&
+    progress.total !== undefined &&
+    progress.total > 0 &&
+    progress.pending === 0 &&
+    progress.running === 0,
+  );
+}
+
 type ProgressStatus = "pending" | "running" | "completed" | "failed";
 
 function findProgressContainer(
@@ -114,6 +128,23 @@ function findProgressContainer(
   }
   if (isRecord(payload.data)) return findProgressContainer(payload.data);
   return undefined;
+}
+
+function findTerminalProgressPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return undefined;
+  if (Array.isArray(payload.progress)) return { progress: payload.progress };
+  if (Array.isArray(payload.steps)) return { steps: payload.steps };
+  if (isRecord(payload.details)) {
+    if (Array.isArray(payload.details.progress)) {
+      return { progress: payload.details.progress };
+    }
+    if (Array.isArray(payload.details.steps)) {
+      return { steps: payload.details.steps };
+    }
+  }
+  return isRecord(payload.data)
+    ? findTerminalProgressPayload(payload.data)
+    : undefined;
 }
 
 function classifyProgressItem(value: unknown): ProgressStatus {

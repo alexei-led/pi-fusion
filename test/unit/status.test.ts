@@ -4,6 +4,7 @@ import {
   clearFusionUi,
   extractFusionProgressCounts,
   formatFusionStatusText,
+  isTerminalFusionProgress,
   publishFusionStatus,
 } from "../../src/status.js";
 import type { FusionRun } from "../../src/types.js";
@@ -73,6 +74,23 @@ test("extractFusionProgressCounts reads progress and result containers", () => {
   );
 
   assert.equal(extractFusionProgressCounts({ results: [] }), undefined);
+});
+
+test("isTerminalFusionProgress recognizes terminal child steps", () => {
+  assert.equal(
+    isTerminalFusionProgress({
+      state: "running",
+      steps: [{ status: "failed" }, { status: "complete" }],
+    }),
+    true,
+  );
+  assert.equal(
+    isTerminalFusionProgress({
+      state: "running",
+      steps: [{ status: "failed" }, { status: "running" }],
+    }),
+    false,
+  );
 });
 
 class FakeUi {

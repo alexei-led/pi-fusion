@@ -21,6 +21,7 @@ import {
   clearFusionUi,
   extractFusionProgressCounts,
   formatProgressCounts,
+  isTerminalFusionProgress,
   publishFusionStatus,
   type FusionProgressCounts,
   type FusionUi,
@@ -165,7 +166,9 @@ export class FusionOrchestrator {
       run = this.runStore.startRun({
         prompt: args.prompt,
         profileName: resolved.name,
-        ...(args.operationId !== undefined ? { operationId: args.operationId } : {}),
+        ...(args.operationId !== undefined
+          ? { operationId: args.operationId }
+          : {}),
         phase: "panel",
       });
     } catch (error: unknown) {
@@ -188,6 +191,8 @@ export class FusionOrchestrator {
       const spawnResult = await this.rpc.spawn(
         buildPanelSpawnParams(resolved.profile, args.prompt),
       );
+      const spawnError = extractSubagentFailure(spawnResult);
+      if (spawnError) throw new FusionArgsError(spawnError);
       const panelRunId = extractSubagentRunId(spawnResult);
       if (!panelRunId) {
         throw new FusionArgsError(
@@ -517,13 +522,17 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     }
 
-    const extracted = extractPanelResults(
-      snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
-      {
-        panel: profile.panel,
-        limit: profile.panel.length,
-      },
-    );
+    const lifecyclePayload =
+      snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
+    const lifecycleError = extractSubagentFailure(lifecyclePayload);
+    if (!hasLifecycleResults(lifecyclePayload) && lifecycleError) {
+      return this.failActiveRun(lifecycleError);
+    }
+
+    const extracted = extractPanelResults(lifecyclePayload, {
+      panel: profile.panel,
+      limit: profile.panel.length,
+    });
     if (!extracted.ok) {
       return this.failActiveRun(
         `${extracted.error.message} (${extracted.error.path})`,
@@ -628,16 +637,20 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     }
 
-    const extracted = extractPanelResults(
-      snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
-      {
-        panel: profile.panel,
-        limit: profile.panel.length,
-        ...(active.panelStoppedIndices
-          ? { stoppedPanelIndices: active.panelStoppedIndices }
-          : {}),
-      },
-    );
+    const lifecyclePayload =
+      snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
+    const lifecycleError = extractSubagentFailure(lifecyclePayload);
+    if (!hasLifecycleResults(lifecyclePayload) && lifecycleError) {
+      return this.failActiveRun(lifecycleError);
+    }
+
+    const extracted = extractPanelResults(lifecyclePayload, {
+      panel: profile.panel,
+      limit: profile.panel.length,
+      ...(active.panelStoppedIndices
+        ? { stoppedPanelIndices: active.panelStoppedIndices }
+        : {}),
+    });
     if (!extracted.ok) {
       return this.failActiveRun(
         `${extracted.error.message} (${extracted.error.path})`,
@@ -742,6 +755,8 @@ export class FusionOrchestrator {
 
     try {
       const spawnResult = await this.rpc.spawn(decision.params);
+      const spawnError = extractSubagentFailure(spawnResult);
+      if (spawnError) throw new FusionArgsError(spawnError);
       const judgeRunId = extractSubagentRunId(spawnResult);
       if (!judgeRunId) {
         throw new FusionArgsError(decision.missingRunIdError);
@@ -789,9 +804,14 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     }
 
-    const output = extractJudgeOutput(
-      snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
-    );
+    const lifecyclePayload =
+      snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
+    const lifecycleError = extractSubagentFailure(lifecyclePayload);
+    if (!hasLifecycleResults(lifecyclePayload) && lifecycleError) {
+      return this.failActiveRun(lifecycleError);
+    }
+
+    const output = extractJudgeOutput(lifecyclePayload);
     if (!output.ok) return this.failActiveRun(output.error);
 
     const judgeModel = this.activeProfile
@@ -850,12 +870,18 @@ export class FusionOrchestrator {
       );
     }
 
+    const statusIsTerminal =
+      isTerminalSubagentState(extractSubagentState(statusPayload)) ||
+      isTerminalFusionProgress(statusPayload);
+    const eventIsTerminal =
+      isTerminalSubagentState(extractSubagentState(input.eventPayload)) ||
+      isTerminalFusionProgress(input.eventPayload);
     const eventHasResults = hasResultsArray(input.eventPayload);
     if (eventPayloadMatches && eventHasResults) {
       return {
         statusPayload,
         resultPayload: input.eventPayload,
-        resultIsTerminal: true,
+        resultIsTerminal: eventIsTerminal || statusIsTerminal,
       };
     }
 
@@ -872,17 +898,14 @@ export class FusionOrchestrator {
     }
 
     if (hasResultsArray(statusPayload)) {
-      const resultIsTerminal =
-        eventPayloadMatches ||
-        isTerminalSubagentState(extractSubagentState(statusPayload));
       return {
         statusPayload,
         resultPayload: statusPayload,
-        resultIsTerminal,
+        resultIsTerminal: statusIsTerminal,
       };
     }
 
-    if (isTerminalSubagentState(extractSubagentState(statusPayload))) {
+    if (statusIsTerminal) {
       return {
         statusPayload,
         resultPayload: statusPayload,
@@ -894,9 +917,7 @@ export class FusionOrchestrator {
       return {
         statusPayload,
         resultPayload: input.eventPayload,
-        resultIsTerminal: isTerminalSubagentState(
-          extractSubagentState(input.eventPayload),
-        ),
+        resultIsTerminal: eventIsTerminal,
       };
     }
 
@@ -1524,6 +1545,38 @@ function isTerminalSubagentState(state: string | undefined): boolean {
     state === "paused" ||
     state === "detached"
   );
+}
+
+function hasLifecycleResults(payload: unknown): boolean {
+  return hasResultsArray(payload) || findStepsArray(payload).length > 0;
+}
+
+function extractSubagentFailure(payload: unknown): string | undefined {
+  if (!isRecord(payload)) return undefined;
+  const direct = firstNonBlankString(payload.error, payload.errorMessage);
+  if (direct) return direct;
+  if (isRecord(payload.details)) {
+    const detailsError = firstNonBlankString(
+      payload.details.error,
+      payload.details.errorMessage,
+    );
+    if (detailsError) return detailsError;
+  }
+  if (payload.isError === true && Array.isArray(payload.content)) {
+    for (const item of payload.content) {
+      const contentText = isRecord(item)
+        ? firstNonBlankString(item.text)
+        : undefined;
+      if (contentText) return contentText;
+    }
+  }
+  const text = firstNonBlankString(
+    payload.text,
+    isRecord(payload.details) ? payload.details.text : undefined,
+  );
+  if (text && /^error(?:\s|:)/i.test(text)) return text;
+  if (isRecord(payload.data)) return extractSubagentFailure(payload.data);
+  return undefined;
 }
 
 function firstNonBlankStringFromPayload(payload: unknown): string | undefined {
