@@ -15,8 +15,21 @@
   from the optional `pi-web-providers` extension would fail every task for users
   who do not have it installed.
 
+### Changed (config simplification)
+
+- `synthesis` is now inferred from the panel: any member with a `question` means
+  `merge`, otherwise `select`. Requiring the two to be set consistently gave two
+  ways to get a silently wrong report — facets judged for a consensus they
+  cannot have, or a composer told to merge facets that do not exist. An explicit
+  `synthesis` still overrides the inference.
+- `label` is optional and defaults to `id`. Every documented member repeated the
+  id with a capital letter.
+
 ### Fixed
 
+- `/fusion` in-product help now lists `--panel`. It was documented in the README
+  and user guide but missing from the only surface a user sees without opening
+  docs.
 - `--panel` no longer misreads a dotted model name with a thinking suffix as an
   agent reference. `gpt-4.1:high`, `claude-3.5-haiku:low`, and
   `gemini-2.5-pro:medium` stay models; the suffix decides, not the dot.

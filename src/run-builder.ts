@@ -5,6 +5,8 @@ import {
 import {
   COMPOSER_AGENT,
   JUDGE_AGENT,
+  memberLabel,
+  resolveSynthesisMode,
   THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
@@ -295,7 +297,7 @@ function buildPanelChainTaskParams(
     agent: member.agent,
     task: buildPanelTask(member, "{task}", false),
     as: chainOutputName(member, index),
-    label: member.label,
+    label: memberLabel(member),
     phase: "Panel",
     output: true,
     outputMode: "inline",
@@ -313,7 +315,7 @@ function buildPanelTask(
 ): string {
   const role = member.role?.trim() || "independent analysis and critique";
   return [
-    `Panel member: ${member.label} (${member.id})`,
+    `Panel member: ${memberLabel(member)} (${member.id})`,
     `Role: ${role}`,
     "",
     ...formatMemberTask(member, prompt),
@@ -353,7 +355,7 @@ function buildPanelTask(
  * synthesis agent means it.
  */
 function resolveSynthesisAgent(profile: FusionProfile): string {
-  if (profile.synthesis !== "merge") return profile.judge.agent;
+  if (resolveSynthesisMode(profile) !== "merge") return profile.judge.agent;
   return profile.judge.agent === JUDGE_AGENT
     ? COMPOSER_AGENT
     : profile.judge.agent;
@@ -393,7 +395,7 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const blindLabels = input.profile.blindPanelLabels
     ? buildBlindLabelMap([...sortedOutputs, ...sortedFailures])
     : undefined;
-  const merging = input.profile.synthesis === "merge";
+  const merging = resolveSynthesisMode(input.profile) === "merge";
   return [
     ...(merging
       ? COMPOSER_INSTRUCTIONS
@@ -453,7 +455,7 @@ function formatFacetAssignments(
     // that is meant to hide it.
     const name = blindLabels
       ? (blindLabels.get(index) ?? "Candidate (did not report)")
-      : member.label;
+      : memberLabel(member);
     return `- ${name}: ${facet}`;
   });
 }
@@ -471,7 +473,7 @@ function buildChainJudgeTask(panel: readonly PanelMemberConfig[]): string {
     "",
     "Panel outputs:",
     ...panel.flatMap((member, index) => [
-      `## ${member.label} (${member.id})`,
+      `## ${memberLabel(member)} (${member.id})`,
       `Agent: ${member.agent}`,
       "",
       `{outputs.${chainOutputName(member, index)}}`,
