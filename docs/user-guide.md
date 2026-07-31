@@ -10,8 +10,8 @@ README covers the why. This guide covers commands, config, and troubleshooting.
 prompt → parallel panel → judge picks the best answer → report
 ```
 
-Fusion keeps the command simple: one prompt starts the panel, then one synthesis
-step turns the collected evidence into a human-readable Markdown report.
+The command stays simple. One prompt starts the panel. One synthesis step then
+turns the collected evidence into a Markdown report.
 
 There is a second shape. Give panel members a `question` and they answer
 *different facets* instead of the same question, and a composer merges their
@@ -25,9 +25,9 @@ You do not select between these. Facets decide: a panel with `question` fields
 merges, a panel without them selects.
 
 Panel diversity comes from different model choices, different perspective
-prompts, or both. **Mixing models is the main lever** — note that the config
-`/fusion init` writes sets no `model` at all, so out of the box you get one
-model wearing three hats. Add `model` per member to get the real benefit.
+prompts, or both. **Mixing models is the main lever.** The config that
+`/fusion init` writes sets no `model`. By default you therefore get one model in
+three roles. Give each member its own `model` to get the real benefit.
 
 Older runs created as a single `pi-subagents` chain remain supported when restored.
 
@@ -60,7 +60,7 @@ Notes:
 
 Builds a one-off panel without editing config, for trying a composition before
 committing to it. The resolved profile still supplies the judge and every other
-setting; only the panel is replaced.
+setting. Only the panel changes.
 
 ```text
 /fusion --panel opus,openai/gpt-5.5 Which design should we pick?
@@ -80,7 +80,7 @@ contains a `.`, which package-qualified agent names always do. That keeps
 `opus:high` a model with a thinking suffix rather than an agent reference.
 Claude alias shorthand works inline: `--panel claude-work/opus-4.8`.
 
-## Configuration files
+## Config files
 
 Config lookup order:
 
@@ -147,18 +147,18 @@ Profile:
 - `concurrency`: max parallel panelists
 - `timeoutMs`: async subagent timeout in milliseconds
 - `context`: `fresh` or `fork`
-- `stopWhenPanelAgrees`: optional boolean, default `false`. When enabled, Fusion may stop unfinished panelists only when at least two completed panelists have the same normalized recommendation, every successful panelist reports `high` confidence, none requests more evidence, and work remains. The judge still runs over the collected answers. The policy is intentionally fixed; there are no agreement threshold knobs.
+- `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet. All four conditions must hold: two or more finished panelists give the same normalized recommendation, every one of them reports `high` confidence, none of them asks for more evidence, and work remains. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
 - `synthesis`: rarely needed. Inferred from the panel — any member with a `question` means `merge`, otherwise `select`. Set it only to override that. See [Synthesis modes](#synthesis-modes).
-- `blindPanelLabels`: optional boolean, default `false`. Presents panel answers to the judge as `Candidate A`, `Candidate B`, … instead of the configured labels, and withholds agent names and artifact paths, which contain the member id. Role labels read as authority cues before any content is compared. Your report always shows the real names.
-- `judgeToolBudget`: optional `{ "soft": n, "hard": n }`. Caps the tool calls the judge may spend verifying contested claims. `soft` nudges; after `hard`, tool use is blocked so the judge still produces a report. Both must be positive integers and `soft` must not exceed `hard`.
+- `blindPanelLabels`: optional boolean, default `false`. When it is on, the judge sees `Candidate A`, `Candidate B`, and so on, instead of the configured labels. Fusion also withholds agent names and artifact paths, because they contain the member id. A role label reads as an authority cue before the judge compares any content. Your report always shows the real names.
+- `judgeToolBudget`: optional `{ "soft": n, "hard": n }`. It caps the tool calls the judge can spend to verify contested claims. `soft` is a nudge. After `hard`, Fusion blocks further tool use, so the judge still produces a report. Both numbers must be positive integers, and `soft` must not be larger than `hard`.
 
 Panel member:
 
 - `id`: stable machine name
-- `label`: optional report label; defaults to `id`
+- `label`: optional report label. It defaults to `id`
 - `agent`: subagent name. This is where a member's tool access comes from — see [Panel agents and tools](#panel-agents-and-tools).
-- `model`: optional model override; often the main source of panel diversity. Supports normal Pi model ids, and if `pi-claude-alias` is configured, Claude alias shorthand like `claude-work/opus-4.8`
-- Claude alias handles must be unique across global and project alias files; duplicate handles are rejected.
+- `model`: optional model override, and usually the main source of panel diversity. It accepts normal Pi model ids. If `pi-claude-alias` is installed, it also accepts Claude alias shorthand like `claude-work/opus-4.8`
+- A Claude alias handle must be unique across the global and project alias files. Fusion rejects a duplicate handle.
 - `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
 - `role`: optional perspective hint layered on top of the model
 - `question`: optional facet prompt sent **instead of** the raw task. `{task}` is substituted with the original prompt. Use with `synthesis: "merge"` to divide the work rather than duplicate it. If the template omits `{task}`, the original task is still appended so the panelist keeps its context.
@@ -172,18 +172,18 @@ Fusion ships five:
 
 | Agent                            | Tools                                                        | Use for                                                        |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
-| `pi-fusion.fusion-panelist` | `read, grep, find, ls` | Default. Local inspection only; works with no extra extensions. |
+| `pi-fusion.fusion-panelist` | `read, grep, find, ls` | Default. Local inspection only. It needs no extra extension. |
 | `pi-fusion.fusion-panelist-web` | above plus `web_search, web_contents, web_answer` | Opt-in. **Requires `pi-web-providers`.** |
 | `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research` | Opt-in. Requires `pi-web-providers`. **See the warning below.** |
-| `pi-fusion.fusion-judge` | `read, grep, find, ls` | Judge; the read tools are what let it verify contested claims. |
+| `pi-fusion.fusion-judge` | `read, grep, find, ls` | Judge. The read tools let it verify contested claims. |
 | `pi-fusion.fusion-composer` | `read, grep, find, ls` | Synthesis under `synthesis: "merge"`. |
 
 > **Tool names are a strict allowlist, not a loader.** If an agent declares a tool
 > whose provider extension is not installed, every task using that agent fails
 > with `requested unavailable child tools`. That is why the default agents stay on
 > Pi core tools: `pi-web-providers` is optional, so depending on it by default
-> would break every run for anyone without it. Install it before using the `-web`
-> or `-full` variants:
+> breaks every run for anyone without it. Install it before you use the `-web`
+> or `-full` variant:
 >
 > ```bash
 > pi install npm:pi-web-providers
@@ -216,14 +216,14 @@ installed, `web_search, web_contents, web_answer, web_research`. A name outside
 that set resolves to nothing and the run fails with a missing-tool error.
 
 `web_research` is excluded from the default panelist on purpose: it routes to a
-deep-research model that takes minutes, and a panel would fire it concurrently
-for every member.
+deep-research model that takes minutes. A panel runs it for every member at the
+same time.
 
 > **`fusion-panelist-full` voids the read-only guarantee.** It grants `edit`,
 > `write`, and `bash`. Fusion runs panelists **in parallel in the same working
 > directory**, so at `concurrency > 1` two members can mutate the same files or
-> git state at once. The prompt asks them not to; nothing enforces it. Use it
-> with `"concurrency": 1`, or not at all.
+> git state at once. The prompt asks them not to, but nothing enforces this.
+> Use it with `"concurrency": 1`, or do not use it at all.
 
 ## Synthesis modes
 
@@ -234,22 +234,23 @@ the failure mode is one model's bad reasoning path and redundancy is the fix.
 
 `merge` — panelists answer **different facets** and `fusion-composer` unions
 them, reporting a coverage map, the combined answer, gaps, and conflicts only
-where facets genuinely overlap. **You get this by giving members a `question`;
-you do not also have to set `synthesis`.** Use it for breadth questions — audits, "what did
-we miss", release sweeps — where the failure mode is incomplete coverage and
-redundant panelists all miss the same things.
+where facets genuinely overlap. **To get this, give the members a `question`.**
+You do not also have to set `synthesis`. Use merge for breadth questions such as
+audits, "what did we miss", and release sweeps. There the failure mode is
+incomplete coverage, and redundant panelists all miss the same things.
 
-Merge mode swaps the synthesis agent, not the run lifecycle: it reuses the judge
-run slot, so `fusion:rpc:v1` consumers see no new phase.
+Merge mode swaps the synthesis agent, not the run lifecycle. It reuses the judge
+run slot, so a `fusion:rpc:v1` consumer sees no new phase.
 
-**If you set a custom `judge.agent`, it is used in both modes and the merge
-contract becomes your responsibility.** Fusion substitutes `fusion-composer` only
-when `judge.agent` is still the bundled `pi-fusion.fusion-judge` — explicit
-config wins. Under `synthesis: "merge"` your agent receives the composer
-instructions and is expected to emit `Coverage Map`, `Combined Answer`, `Gaps`,
-and `Conflicts At Seams`. Sections it does not produce are rendered as "Not
-specified by the composer" rather than failing the run, so a mismatch shows up as
-an empty report, not an error.
+**If you set a custom `judge.agent`, Fusion uses it in both modes.** The merge
+contract then becomes your responsibility. Fusion substitutes `fusion-composer`
+only when `judge.agent` is still the bundled `pi-fusion.fusion-judge`. Explicit
+config always wins.
+
+Under `synthesis: "merge"` your agent gets the composer instructions. It must
+emit `Coverage Map`, `Combined Answer`, `Gaps`, and `Conflicts At Seams`. For a
+section it does not produce, Fusion writes "Not specified by the composer". The
+run does not fail, so a mismatch appears as an empty report, not as an error.
 
 ```json
 {
@@ -280,9 +281,9 @@ an empty report, not an error.
 }
 ```
 
-Under `merge`, a run where only one panelist survives still goes to the composer
-rather than returning that answer directly — one facet is not the answer, and the
-report needs to name what is missing.
+Under `merge`, one surviving panelist still goes to the composer. Fusion does
+not return that answer directly. One facet is not the answer, and the report must
+name what is missing.
 
 Judge:
 
@@ -360,7 +361,7 @@ Deliberate review:
 
 ## Output
 
-When agreement stopping is enabled, panelists append a final tagged JSON decision record containing a short recommendation, confidence, and whether more evidence is needed. Fusion uses it only to decide whether an unfinished panel may stop early; malformed, missing, or non-final records disable early stopping. Users see the preceding human-readable Markdown answer, not the record.
+When agreement stopping is on, each panelist appends one tagged JSON decision record. The record holds a short recommendation, a confidence level, and whether the panelist needs more evidence. Fusion uses it only to decide whether an unfinished panel can stop early. A record that is malformed, missing, or not final turns early stopping off. You see the Markdown answer above the record, not the record itself.
 
 The judge returns:
 
@@ -374,7 +375,7 @@ The judge returns:
 - risks
 - next step
 
-When lifecycle data is available, the final report also includes per-panel and judge time, aggregate model time, token usage, estimated cost, and concise model/provider failure summaries. Aggregate model time sums agent durations and is not wall-clock latency when panelists overlap. Missing usage is shown as unknown; local zero-cost usage remains zero. `Model` comes from lifecycle metadata; `Configured model` is the profile request. Both appear when a provider reports a different executed model.
+When lifecycle data is available, the report gives more. It adds per-panel and judge time, total model time, token usage, and estimated cost. It also adds a short failure summary per model and provider. Total model time is the sum of the agent durations. It is not wall-clock latency, because panelists overlap. Missing usage is shown as unknown, and local zero-cost usage stays zero. `Model` comes from lifecycle metadata. `Configured model` is what the profile asked for. Both appear when a provider reports a different model.
 
 ## Status and footer integration
 
@@ -386,25 +387,26 @@ It does not own the footer. If you use a footer extension, configure it to read 
 
 Fusion uses model providers the same way normal Pi work does. The difference is fan-out:
 
-- normal work usually sends a prompt and tool results to one selected model;
-- Fusion sends the prompt to every configured panel model;
-- local file snippets read by a panelist go to that panelist's model;
-- the judge receives the original prompt plus successful panel answers and failure summaries.
+- normal work usually sends a prompt and tool results to one model
+- Fusion sends the prompt to every panel model
+- a local file snippet that a panelist reads goes to the model of that panelist
+- the judge gets the original prompt, the successful panel answers, and the failure summaries
 
 **Panelists can reach the web, but only if you opt in.** The default panelist,
-judge, and composer are local-only. A member using `fusion-panelist-web` or
-`fusion-panelist-full` can search: your prompt and whatever query it derives from
-your code then go to the provider configured in `~/.pi/agent/web-providers.json`
-— a third party separate from your model provider. Keeping every member on the
-default agent keeps a run entirely off the web.
+judge, and composer are local-only. A member that uses `fusion-panelist-web` or
+`fusion-panelist-full` can search. Your prompt, and any query that the member
+derives from your code, then go to the provider set in
+`~/.pi/agent/web-providers.json`. That provider is a third party, separate from
+your model provider. Keep every member on the default agent to hold a run
+entirely off the web.
 
-This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. Every bundled Fusion agent except `fusion-panelist-full` is read-only, but providers still receive the context needed to answer. `fusion-panelist-full` is not read-only; see [Panel agents and tools](#panel-agents-and-tools).
+This is not an extra privacy guarantee. A panel with several providers sends copies of the work to each of them. An all-local panel keeps those model calls local, if your Pi model config allows it. Every bundled Fusion agent except `fusion-panelist-full` is read-only. Each provider still gets the context it needs to answer. `fusion-panelist-full` is not read-only. See [Panel agents and tools](#panel-agents-and-tools).
 
 Fusion does not currently inspect or rewrite the final provider payload. Configure provider privacy and local-model routing in Pi.
 
 ## Small and economical profiles
 
-These are configuration examples, not built-in provider presets. Omit `model` to inherit the model selected in Pi, or set any model IDs supported by your Pi `models.json` configuration.
+These are config examples, not built-in provider presets. Omit `model` to inherit the model that Pi has selected. You can also set any model id that your Pi `models.json` config supports.
 
 Small local-style panel:
 
@@ -450,8 +452,8 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 
 `Unknown fusion profile`
 
-- check `defaultProfile`
-- check the requested `--profile` name
+- verify `defaultProfile`
+- verify the requested `--profile` name
 - run `/fusion init` to regenerate a known-good template
 
 Run is stuck or no longer useful:
