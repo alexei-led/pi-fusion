@@ -774,3 +774,48 @@ test("buildInlinePanelProfile accepts a single-model panel", () => {
   assert.equal(profile.panel[0]?.model, "opus");
   assert.deepEqual(profile.judge, base.judge);
 });
+
+test("splitInlinePanelEntry keeps dotted model names with a thinking suffix", () => {
+  // Dotted model versions are common and collide with package-qualified agent
+  // names. The suffix decides: a thinking level means the entry is a model.
+  for (const entry of [
+    "gpt-4.1:high",
+    "claude-3.5-haiku:low",
+    "gemini-2.5-pro:medium",
+    "gpt-4.1:xhigh",
+    "o3.5:minimal",
+  ]) {
+    assert.deepEqual(
+      splitInlinePanelEntry(entry),
+      { agent: "pi-fusion.fusion-panelist", model: entry },
+      `${entry} must stay a model`,
+    );
+  }
+});
+
+test("splitInlinePanelEntry still reads an agent-qualified dotted entry", () => {
+  assert.deepEqual(
+    splitInlinePanelEntry("pi-fusion.fusion-panelist-web:gpt-4.1"),
+    { agent: "pi-fusion.fusion-panelist-web", model: "gpt-4.1" },
+  );
+  assert.deepEqual(
+    splitInlinePanelEntry("pi-fusion.fusion-panelist:gpt-4.1:high"),
+    { agent: "pi-fusion.fusion-panelist", model: "gpt-4.1:high" },
+  );
+});
+
+test("buildInlinePanelProfile drops merge synthesis: inline members have no facets", () => {
+  const base = createDefaultFusionConfig().profiles.quality;
+  assert.ok(base);
+
+  const profile = buildInlinePanelProfile({ ...base, synthesis: "merge" }, [
+    "opus",
+    "gpt-5.5",
+  ]);
+
+  assert.equal(profile.synthesis, undefined);
+  assert.equal(
+    profile.panel.every((member) => member.question === undefined),
+    true,
+  );
+});

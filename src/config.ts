@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import { FusionConfigError } from "./errors.js";
 import {
+  JUDGE_AGENT,
+  PANEL_AGENT,
   THINKING_LEVELS,
   type FusionConfig,
   type FusionContextMode,
@@ -22,11 +24,13 @@ import {
 
 export const FUSION_CONFIG_FILE = "fusion.json";
 export const DEFAULT_PROFILE_NAME = "quality";
-export const PANEL_AGENT = "pi-fusion.fusion-panelist";
-export const PANEL_AGENT_WEB = "pi-fusion.fusion-panelist-web";
-export const PANEL_AGENT_FULL = "pi-fusion.fusion-panelist-full";
-export const JUDGE_AGENT = "pi-fusion.fusion-judge";
-export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
+export {
+  COMPOSER_AGENT,
+  JUDGE_AGENT,
+  PANEL_AGENT,
+  PANEL_AGENT_FULL,
+  PANEL_AGENT_WEB,
+} from "./types.js";
 
 /**
  * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
@@ -175,10 +179,12 @@ export function resolveProfile(
 /**
  * Splits an inline `--panel` entry into agent and model.
  *
- * Model strings already use `:` for the thinking suffix (`opus:high`) and `/`
- * for the provider, so a bare `:` cannot mean "agent-qualified". An entry is
- * only treated as agent-qualified when the segment before the first `:`
- * contains a `.` — package-qualified agent names always do.
+ * Two shapes collide on `:` — an agent-qualified entry
+ * (`pi-fusion.fusion-panelist-web:gpt-5.5`) and a model with a thinking suffix
+ * (`gpt-4.1:high`). A dot in the prefix is not enough to tell them apart:
+ * dotted model versions like `gpt-4.1`, `claude-3.5-haiku`, and
+ * `gemini-2.5-pro` are common. The suffix decides — if it is a thinking level,
+ * the whole entry is a model.
  */
 export function splitInlinePanelEntry(entry: string): {
   agent: string;
@@ -189,7 +195,12 @@ export function splitInlinePanelEntry(entry: string): {
   if (separator > 0) {
     const prefix = trimmed.slice(0, separator);
     const rest = trimmed.slice(separator + 1).trim();
-    if (prefix.includes(".") && !prefix.includes("/") && rest) {
+    if (
+      prefix.includes(".") &&
+      !prefix.includes("/") &&
+      rest &&
+      !isThinkingLevel(rest)
+    ) {
       return { agent: prefix, model: rest };
     }
   }
@@ -224,7 +235,11 @@ export function buildInlinePanelProfile(
       model,
     };
   });
-  return { ...base, panel };
+  // Inline members have no `question`, so they all answer the whole task.
+  // Carrying `synthesis: "merge"` over from the base profile would tell the
+  // composer to merge facets that do not exist.
+  const { synthesis: _dropped, ...rest } = base;
+  return { ...rest, panel };
 }
 
 function uniqueInlineId(
