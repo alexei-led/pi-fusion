@@ -426,3 +426,53 @@ async function makeTempDir(t: TestContext): Promise<string> {
   });
   return path;
 }
+
+test("parseFusionConfig accepts blindPanelLabels", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [PANEL_MEMBER],
+          judge: JUDGE,
+          blindPanelLabels: true,
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.equal(config.profiles.quality?.blindPanelLabels, true);
+});
+
+test("parseFusionConfig defaults blindPanelLabels to absent", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: { quality: { panel: [PANEL_MEMBER], judge: JUDGE } },
+    }),
+    "test",
+  );
+
+  assert.equal(config.profiles.quality?.blindPanelLabels, undefined);
+});
+
+test("parseFusionConfig rejects a non-boolean blindPanelLabels", () => {
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles: {
+            quality: {
+              panel: [PANEL_MEMBER],
+              judge: JUDGE,
+              blindPanelLabels: "yes",
+            },
+          },
+        }),
+        "test",
+      ),
+    /Invalid fusion config/,
+  );
+});

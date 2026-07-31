@@ -312,6 +312,9 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   // Status and failure lists stay in configuration order so the reader can map
   // them to the profile. Only the answers the judge weighs are shuffled.
   const presentedOutputs = shufflePanelItems(sortedOutputs, input.runId);
+  const blindLabels = input.profile.blindPanelLabels
+    ? buildBlindLabelMap([...sortedOutputs, ...sortedFailures])
+    : undefined;
   return [
     "You are the fusion judge.",
     "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
@@ -321,13 +324,13 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     input.prompt.trim(),
     "",
     "Panel status:",
-    ...formatPanelStatus(sortedOutputs, sortedFailures),
+    ...formatPanelStatus(sortedOutputs, sortedFailures, blindLabels),
     "",
     "Successful panel outputs:",
-    ...formatPanelOutputs(presentedOutputs),
+    ...formatPanelOutputs(presentedOutputs, blindLabels),
     "",
     "Failed panelists:",
-    ...formatFailedPanelists(sortedFailures),
+    ...formatFailedPanelists(sortedFailures, blindLabels),
     "",
     "Output contract:",
     ...JUDGE_OUTPUT_CONTRACT,
@@ -361,29 +364,39 @@ function buildChainJudgeTask(panel: readonly PanelMemberConfig[]): string {
 function formatPanelStatus(
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
+  blindLabels?: ReadonlyMap<number, string>,
 ): string[] {
   const lines = [
     `- Successful panelists: ${outputs.length}`,
     `- Failed panelists: ${failures.length}`,
   ];
   for (const output of outputs) {
-    lines.push(`- ${formatPanelName(output)}: succeeded`);
+    lines.push(`- ${formatPanelName(output, blindLabels)}: succeeded`);
   }
   for (const failure of failures) {
     lines.push(
-      `- ${formatPanelName(failure)}: failed - ${firstLine(failure.summary)}`,
+      `- ${formatPanelName(failure, blindLabels)}: failed - ${firstLine(failure.summary)}`,
     );
   }
   return lines;
 }
 
-function formatPanelOutputs(outputs: readonly PanelOutput[]): string[] {
+function formatPanelOutputs(
+  outputs: readonly PanelOutput[],
+  blindLabels?: ReadonlyMap<number, string>,
+): string[] {
   if (outputs.length === 0) return ["(none)"];
+  // Agent names and artifact paths carry the member id, so they are withheld
+  // when blinding. They are debugging aids for the reader, not judging inputs.
   return outputs.flatMap((output) => [
-    `## ${formatPanelName(output)}`,
-    `Agent: ${output.agent}`,
-    ...(output.artifactPath ? [`Artifact: ${output.artifactPath}`] : []),
-    ...(output.sessionPath ? [`Session: ${output.sessionPath}`] : []),
+    `## ${formatPanelName(output, blindLabels)}`,
+    ...(blindLabels
+      ? []
+      : [
+          `Agent: ${output.agent}`,
+          ...(output.artifactPath ? [`Artifact: ${output.artifactPath}`] : []),
+          ...(output.sessionPath ? [`Session: ${output.sessionPath}`] : []),
+        ]),
     "",
     output.output,
     "",
@@ -392,19 +405,61 @@ function formatPanelOutputs(outputs: readonly PanelOutput[]): string[] {
 
 function formatFailedPanelists(
   failures: readonly FailedPanelSummary[],
+  blindLabels?: ReadonlyMap<number, string>,
 ): string[] {
   if (failures.length === 0) return ["(none)"];
-  return failures.flatMap((failure) => [
-    `- ${formatPanelName(failure)} (${failure.agent}): ${failure.summary}`,
-    ...(failure.artifactPath ? [`  Artifact: ${failure.artifactPath}`] : []),
-    ...(failure.sessionPath ? [`  Session: ${failure.sessionPath}`] : []),
-  ]);
+  return failures.flatMap((failure) =>
+    blindLabels
+      ? [`- ${formatPanelName(failure, blindLabels)}: ${failure.summary}`]
+      : [
+          `- ${formatPanelName(failure)} (${failure.agent}): ${failure.summary}`,
+          ...(failure.artifactPath
+            ? [`  Artifact: ${failure.artifactPath}`]
+            : []),
+          ...(failure.sessionPath ? [`  Session: ${failure.sessionPath}`] : []),
+        ],
+  );
 }
 
 function formatPanelName(
   item: Pick<PanelOutput, "index" | "id" | "label">,
+  blindLabels?: ReadonlyMap<number, string>,
 ): string {
-  return item.label ?? item.id ?? `Panelist ${item.index + 1}`;
+  return (
+    blindLabels?.get(item.index) ??
+    item.label ??
+    item.id ??
+    `Panelist ${item.index + 1}`
+  );
+}
+
+/**
+ * Maps panel indices to neutral "Candidate X" names. Assigned by index rather
+ * than presentation order so the mapping is stable and the report can restore
+ * real names without persisting extra run state.
+ */
+export function buildBlindLabelMap(
+  items: readonly Pick<PanelOutput, "index">[],
+): Map<number, string> {
+  const labels = new Map<number, string>();
+  const indices = [...new Set(items.map((item) => item.index))].sort(
+    (left, right) => left - right,
+  );
+  indices.forEach((index, position) => {
+    labels.set(index, `Candidate ${blindLabelFor(position)}`);
+  });
+  return labels;
+}
+
+function blindLabelFor(position: number): string {
+  // A..Z, then AA, AB, ... for panels larger than the alphabet.
+  let remaining = position;
+  let label = "";
+  do {
+    label = String.fromCharCode(65 + (remaining % 26)) + label;
+    remaining = Math.floor(remaining / 26) - 1;
+  } while (remaining >= 0);
+  return label;
 }
 
 function comparePanelItems(
@@ -420,10 +475,7 @@ function comparePanelItems(
  * removes the bias; seeding it from the run id keeps a persisted run rendering
  * identically when it is replayed through `fusion:rpc:v1` adopt.
  */
-export function shufflePanelItems<T>(
-  items: readonly T[],
-  seed: string,
-): T[] {
+export function shufflePanelItems<T>(items: readonly T[], seed: string): T[] {
   const shuffled = [...items];
   const nextRandom = createSeededRandom(seed);
   for (let index = shuffled.length - 1; index > 0; index--) {

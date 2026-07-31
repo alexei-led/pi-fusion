@@ -1,4 +1,8 @@
-import type { FailedPanelSummary, PanelOutput } from "./run-builder.js";
+import {
+  buildBlindLabelMap,
+  type FailedPanelSummary,
+  type PanelOutput,
+} from "./run-builder.js";
 import { summarizeProviderFailures } from "./run-observations.js";
 import type { FusionRun, ProviderFailure, RunObservation } from "./types.js";
 
@@ -35,6 +39,11 @@ export interface RenderJudgeReportInput {
   failures?: readonly FailedPanelSummary[];
   judgeModel?: string;
   judgeObservation?: RunObservation;
+  /**
+   * Set when the judge was shown neutral candidate names. The report always
+   * shows real member names, so the judge's prose is rewritten before parsing.
+   */
+  blindPanelLabels?: boolean;
 }
 
 export interface RenderFailureReportInput {
@@ -195,11 +204,44 @@ export function renderSinglePanelReport(
   return renderReport(sections);
 }
 
+/**
+ * Rewrites the neutral names the judge saw back to the configured member names.
+ * Longest label first so "Candidate AA" is not partly replaced by "Candidate A".
+ */
+function restoreBlindLabels(
+  judgeOutput: string,
+  panelOutputs: readonly PanelOutput[],
+  failures: readonly FailedPanelSummary[],
+): string {
+  const items = [...panelOutputs, ...failures];
+  const blindLabels = buildBlindLabelMap(items);
+  const realNames = new Map(
+    items.map((item) => [
+      item.index,
+      item.label ?? item.id ?? `Panelist ${item.index + 1}`,
+    ]),
+  );
+
+  let restored = judgeOutput;
+  const ordered = [...blindLabels.entries()].sort(
+    (left, right) => right[1].length - left[1].length,
+  );
+  for (const [index, blindLabel] of ordered) {
+    const realName = realNames.get(index);
+    if (!realName) continue;
+    restored = restored.replaceAll(blindLabel, realName);
+  }
+  return restored;
+}
+
 export function renderJudgeReport(input: RenderJudgeReportInput): string {
   const panelOutputs = input.panelOutputs ?? [];
   const failures = input.failures ?? [];
-  const sections = parseMarkdownSections(input.judgeOutput);
-  const unsectionedOutput = stripReportTitle(input.judgeOutput);
+  const judgeOutput = input.blindPanelLabels
+    ? restoreBlindLabels(input.judgeOutput, panelOutputs, failures)
+    : input.judgeOutput;
+  const sections = parseMarkdownSections(judgeOutput);
+  const unsectionedOutput = stripReportTitle(judgeOutput);
   const recommendationFallback =
     sections.size === 0 && unsectionedOutput
       ? unsectionedOutput

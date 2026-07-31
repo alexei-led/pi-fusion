@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   appendThinkingSuffix,
+  buildBlindLabelMap,
   buildFusionChainSpawnParams,
   buildJudgeSpawnParams,
   buildPanelSpawnParams,
@@ -390,3 +391,107 @@ function normaliseAnswerBlocks(task: string): string {
   const blocks = answers.split(/(?=^## )/m).sort();
   return `${head}${blocks.join("")}`;
 }
+
+test("buildBlindLabelMap assigns candidate names by index and scales past Z", () => {
+  const labels = buildBlindLabelMap([{ index: 2 }, { index: 0 }, { index: 1 }]);
+
+  assert.equal(labels.get(0), "Candidate A");
+  assert.equal(labels.get(1), "Candidate B");
+  assert.equal(labels.get(2), "Candidate C");
+
+  const wide = buildBlindLabelMap(
+    Array.from({ length: 28 }, (_, index) => ({ index })),
+  );
+  assert.equal(wide.get(25), "Candidate Z");
+  assert.equal(wide.get(26), "Candidate AA");
+  assert.equal(wide.get(27), "Candidate AB");
+});
+
+test("blindPanelLabels hides labels, roles, agents, and artifact paths from the judge", () => {
+  const outputs: PanelOutput[] = [
+    {
+      index: 0,
+      id: "architect",
+      label: "Architect",
+      role: "architecture and tradeoffs",
+      agent: "pi-fusion.fusion-panelist",
+      output: "Choose A.",
+      artifactPath: "/tmp/architect.md",
+      sessionPath: "/tmp/architect-session",
+    },
+    {
+      index: 2,
+      id: "generalist",
+      label: "Generalist",
+      agent: "pi-fusion.fusion-panelist-lite",
+      output: "Choose B.",
+    },
+  ];
+  const failedPanelists: FailedPanelSummary[] = [
+    {
+      index: 1,
+      id: "tester",
+      label: "Tester",
+      agent: "pi-fusion.fusion-panelist",
+      summary: "Timed out",
+      artifactPath: "/tmp/tester.md",
+    },
+  ];
+
+  const { task } = buildJudgeSpawnParams({
+    profile: { ...PROFILE, blindPanelLabels: true },
+    prompt: "Compare two API designs",
+    panelOutputs: outputs,
+    failedPanelists,
+    runId: "run-blind",
+  });
+
+  for (const leak of [
+    "Architect",
+    "Generalist",
+    "Tester",
+    "architect",
+    "generalist",
+    "tester",
+    "fusion-panelist-lite",
+    "/tmp/",
+  ]) {
+    assert.equal(
+      task.includes(leak),
+      false,
+      `judge task leaked "${leak}" under blindPanelLabels`,
+    );
+  }
+
+  assert.match(task, /Candidate A/);
+  assert.match(task, /Candidate B/);
+  assert.match(task, /Candidate C/);
+  assert.match(task, /Choose A\./);
+  assert.match(task, /Timed out/);
+});
+
+test("blindPanelLabels off keeps today's labels and metadata", () => {
+  const outputs: PanelOutput[] = [
+    {
+      index: 0,
+      id: "architect",
+      label: "Architect",
+      agent: "pi-fusion.fusion-panelist",
+      output: "Choose A.",
+      artifactPath: "/tmp/architect.md",
+    },
+  ];
+
+  const { task } = buildJudgeSpawnParams({
+    profile: PROFILE,
+    prompt: "Compare two API designs",
+    panelOutputs: outputs,
+    failedPanelists: [],
+    runId: "run-plain",
+  });
+
+  assert.match(task, /## Architect/);
+  assert.match(task, /Agent: pi-fusion\.fusion-panelist/);
+  assert.match(task, /\/tmp\/architect\.md/);
+  assert.doesNotMatch(task, /Candidate A/);
+});
