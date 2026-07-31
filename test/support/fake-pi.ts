@@ -10,6 +10,23 @@ import {
   subagentsRpcReplyChannel,
 } from "../../src/subagents-rpc.js";
 
+/** The parts of a registered tool that tests assert on. */
+export interface RegisteredTool {
+  name: string;
+  description: string;
+  parameters: {
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: undefined,
+    onUpdate: undefined,
+    ctx: FakeCommandContext,
+  ): Promise<unknown>;
+}
+
 export interface RegisteredCommand {
   description?: string;
   handler(args: string, ctx: FakeCommandContext): unknown;
@@ -54,13 +71,15 @@ export class FakePi {
     return this as unknown as ExtensionAPI;
   }
 
+  readonly tools = new Map<string, RegisteredTool>();
+
   registerCommand(name: string, command: RegisteredCommand): void {
     this.commands.set(name, command);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  registerTool(_definition: any): void {
-    // no-op in tests; tool registration is an integration concern
+  registerTool(definition: unknown): void {
+    assert.ok(isRecord(definition) && typeof definition.name === "string");
+    this.tools.set(definition.name, definition as unknown as RegisteredTool);
   }
 
   on(
@@ -165,6 +184,8 @@ export class FakeEventBus {
     });
   }
 
+  readonly spawns: Record<string, unknown>[] = [];
+
   private rpcData(method: string, params: unknown): unknown {
     if (method === "ping") return { ok: true };
     if (method === "spawn") return this.spawnData(params);
@@ -175,6 +196,7 @@ export class FakeEventBus {
 
   private spawnData(params: unknown): unknown {
     assert.ok(isRecord(params));
+    this.spawns.push(params);
     if (Array.isArray(params.chain)) {
       return { details: { runId: "chain-1" } };
     }

@@ -188,3 +188,56 @@ function onceEvent(pi: FakePi, event: string): Promise<unknown> {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+test("start_fusion_review exposes the parameters a skill can drive", () => {
+  const pi = new FakePi();
+
+  fusionExtension(pi.asExtensionApi());
+
+  const tool = pi.tools.get("start_fusion_review");
+  assert.ok(tool, "start_fusion_review must be registered");
+  assert.deepEqual(
+    Object.keys(tool.parameters.properties).sort(),
+    ["panel", "profile", "prompt"],
+  );
+  assert.deepEqual(tool.parameters.required, ["prompt"]);
+  // The description is what routes the model to the tool at all, so it must
+  // cover both report shapes the skill advertises.
+  assert.match(tool.description, /audit|breadth/i);
+});
+
+test("start_fusion_review forwards an inline panel and omits it when absent", async (t) => {
+  const pi = new FakePi();
+  const ctx = pi.createContext(await createProjectDir(t));
+  fusionExtension(pi.asExtensionApi());
+  const tool = pi.tools.get("start_fusion_review");
+  assert.ok(tool);
+
+  await tool.execute(
+    "call-1",
+    { prompt: "compare", panel: ["opus", "gpt"] },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const withPanel = pi.events.spawns.at(-1) as { tasks: { model?: string }[] };
+  assert.deepEqual(
+    withPanel.tasks.map((entry) => entry.model),
+    ["opus", "gpt"],
+  );
+
+  // A second run needs the first to finish; the tool rejects a concurrent one.
+  pi.events.statusResults.set("panel-1", {
+    runId: "panel-1",
+    state: "complete",
+    results: [
+      { agent: "pi-fusion.fusion-panelist", success: true, output: "A." },
+    ],
+  });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  await nextTick();
+
+  await tool.execute("call-2", { prompt: "compare" }, undefined, undefined, ctx);
+  const withoutPanel = pi.events.spawns.at(-1) as { tasks: unknown[] };
+  assert.equal(withoutPanel.tasks.length, 3, "falls back to the profile panel");
+});

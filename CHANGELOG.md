@@ -54,6 +54,8 @@
   and is unsafe at `concurrency > 1`; the default panel remains read-only.
 - Panel member and judge `agent` values are now validated for shape at config
   load, rejecting embedded whitespace, empty segments, and stray dots.
+- The `start_fusion_review` tool accepts `panel`, so a skill or another agent can
+  name the models for one run. Previously only the `/fusion` slash command could.
 - `/fusion --panel <entries> <prompt>` builds a one-off panel without editing
   config. Entries are `<model>` or `<agent>:<model>`; the resolved profile still
   supplies the judge and every other setting.
