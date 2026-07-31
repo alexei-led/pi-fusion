@@ -9,6 +9,7 @@ import {
   type PanelMemberConfig,
   type PanelOutput,
   type ThinkingLevel,
+  type ToolBudget,
 } from "./types.js";
 
 export const FUSION_ACCEPTANCE_DISABLED = {
@@ -90,6 +91,8 @@ export interface JudgeSpawnParams {
   acceptance: FusionAcceptanceDisabled;
   model?: string;
   timeoutMs?: number;
+  /** Per-task cap on judge tool calls; see `FusionProfile.judgeToolBudget`. */
+  toolBudget?: ToolBudget;
 }
 
 export type { FailedPanelSummary, PanelOutput } from "./types.js";
@@ -122,11 +125,20 @@ const JUDGE_OUTPUT_CONTRACT = [
   "## Agent Status",
   "## Consensus",
   "## Disagreements",
+  "## Contested Claims",
   "## Unique Insights",
   "## Blind Spots",
   "## Recommendation",
   "## Risks",
   "## Next Step",
+] as const;
+
+const CONTESTED_CLAIMS_INSTRUCTIONS = [
+  "Contested claims:",
+  "- Where panelists state conflicting facts about this codebase, do not pick the more confident wording.",
+  "- Check the claim yourself with your read tools and cite file:line.",
+  "- Report each contested claim as: the claim, what you found, and which panelist was right.",
+  "- If you could not verify a claim, say so explicitly rather than choosing.",
 ] as const;
 
 export function appendThinkingSuffix(
@@ -223,6 +235,9 @@ export function buildJudgeSpawnParams(
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
+    ...(input.profile.judgeToolBudget
+      ? { toolBudget: input.profile.judgeToolBudget }
+      : {}),
     ...(input.profile.timeoutMs !== undefined
       ? { timeoutMs: input.profile.timeoutMs }
       : {}),
@@ -331,6 +346,8 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     "",
     "Failed panelists:",
     ...formatFailedPanelists(sortedFailures, blindLabels),
+    "",
+    ...CONTESTED_CLAIMS_INSTRUCTIONS,
     "",
     "Output contract:",
     ...JUDGE_OUTPUT_CONTRACT,

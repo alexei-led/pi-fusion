@@ -365,9 +365,11 @@ test("buildJudgeSpawnParams matches the pre-change baseline once answer order is
     runId: "run-baseline",
   });
 
-  // Ordering of the answer blocks is the one intended difference from master.
+  // Two intended differences from master, and nothing else: answer-block order
+  // is now seeded, and the judge is asked to verify contested claims. Stripping
+  // both must reproduce the master task byte for byte.
   assert.equal(
-    normaliseAnswerBlocks(task),
+    normaliseAnswerBlocks(stripContestedClaims(task)),
     normaliseAnswerBlocks(baseline.judge.task),
   );
 });
@@ -383,6 +385,12 @@ test("buildFusionChainSpawnParams is unchanged; the legacy chain path is restore
     "chain judge task must keep profile order",
   );
 });
+
+function stripContestedClaims(task: string): string {
+  return task
+    .replace(/Contested claims:\n(?:- .*\n)+\n/, "")
+    .replace("## Contested Claims\n", "");
+}
 
 function normaliseAnswerBlocks(task: string): string {
   const marker = "Successful panel outputs:";
@@ -494,4 +502,52 @@ test("blindPanelLabels off keeps today's labels and metadata", () => {
   assert.match(task, /Agent: pi-fusion\.fusion-panelist/);
   assert.match(task, /\/tmp\/architect\.md/);
   assert.doesNotMatch(task, /Candidate A/);
+});
+
+test("buildJudgeSpawnParams instructs the judge to verify contested claims", () => {
+  const { task } = buildJudgeSpawnParams({
+    profile: PROFILE,
+    prompt: "Compare two API designs",
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Choose A.",
+      },
+    ],
+    failedPanelists: [],
+    runId: "run-contested",
+  });
+
+  assert.match(task, /Contested claims:/);
+  assert.match(task, /cite file:line/);
+  assert.match(task, /## Contested Claims/);
+});
+
+test("buildJudgeSpawnParams passes judgeToolBudget through and omits it when absent", () => {
+  const base = {
+    prompt: "Compare two API designs",
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Choose A.",
+      },
+    ],
+    failedPanelists: [],
+    runId: "run-budget",
+  };
+
+  const withBudget = buildJudgeSpawnParams({
+    ...base,
+    profile: { ...PROFILE, judgeToolBudget: { soft: 4, hard: 10 } },
+  });
+  assert.deepEqual(withBudget.toolBudget, { soft: 4, hard: 10 });
+
+  const withoutBudget = buildJudgeSpawnParams({ ...base, profile: PROFILE });
+  assert.equal("toolBudget" in withoutBudget, false);
 });

@@ -38,6 +38,16 @@ export interface FusionProfile {
    * content is compared. The report always restores the real labels.
    */
   blindPanelLabels?: boolean;
+  /**
+   * Caps the tool calls the judge may spend verifying contested claims.
+   * `soft` nudges, `hard` blocks further tool use so the judge still finalises.
+   */
+  judgeToolBudget?: ToolBudget;
+}
+
+export interface ToolBudget {
+  soft?: number;
+  hard?: number;
 }
 
 export type PanelConfidence = "low" | "medium" | "high";
