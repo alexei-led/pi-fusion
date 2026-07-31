@@ -2,6 +2,7 @@ import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
+import { COMPOSER_AGENT, JUDGE_AGENT } from "./config.js";
 import {
   THINKING_LEVELS,
   type FailedPanelSummary,
@@ -133,6 +134,27 @@ const JUDGE_OUTPUT_CONTRACT = [
   "## Next Step",
 ] as const;
 
+const COMPOSER_OUTPUT_CONTRACT = [
+  "# Fusion Report",
+  "## Summary",
+  "## Coverage Map",
+  "## Combined Answer",
+  "## Gaps",
+  "## Conflicts At Seams",
+  "## Agent Status",
+  "## Risks",
+  "## Next Step",
+] as const;
+
+const COMPOSER_INSTRUCTIONS = [
+  "You are the fusion composer.",
+  "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
+  "The panelists answered DIFFERENT facets of one task. Merge their answers; do not pick a winner.",
+  "- Do not rank panelists. They were not competing.",
+  "- Report a conflict only where facets genuinely overlap and disagree. Different subject matter is not disagreement.",
+  "- Name facets nobody covered, or covered only in passing.",
+] as const;
+
 const CONTESTED_CLAIMS_INSTRUCTIONS = [
   "Contested claims:",
   "- Where panelists state conflicting facts about this codebase, do not pick the more confident wording.",
@@ -225,7 +247,7 @@ export function buildJudgeSpawnParams(
     input.profile.judge.thinking,
   );
   return {
-    agent: input.profile.judge.agent,
+    agent: resolveSynthesisAgent(input.profile),
     task: buildJudgeTask(input),
     async: true,
     clarify: false,
@@ -292,8 +314,7 @@ function buildPanelTask(
     `Panel member: ${member.label} (${member.id})`,
     `Role: ${role}`,
     "",
-    "Original task:",
-    prompt.trim(),
+    ...formatMemberTask(member, prompt),
     "",
     "Instructions:",
     "- Work independently from the other panelists.",
@@ -321,6 +342,46 @@ function buildPanelTask(
   ].join("\n");
 }
 
+/**
+ * Merge mode swaps the synthesis agent, not the run slot. It still spawns into
+ * `judgeRunId`/`judgeAsyncDir` under phase `judge`, so `fusion:rpc:v1` consumers
+ * see no new phase value.
+ *
+ * An explicitly configured judge agent still wins: a user who names their own
+ * synthesis agent means it.
+ */
+function resolveSynthesisAgent(profile: FusionProfile): string {
+  if (profile.synthesis !== "merge") return profile.judge.agent;
+  return profile.judge.agent === JUDGE_AGENT
+    ? COMPOSER_AGENT
+    : profile.judge.agent;
+}
+
+const TASK_PLACEHOLDER = "{task}";
+
+/**
+ * A member with a `question` answers that facet instead of the whole prompt.
+ * If the template omits `{task}` the original prompt is still appended: dropping
+ * it would silently strip the context the panelist needs.
+ */
+function formatMemberTask(member: PanelMemberConfig, prompt: string): string[] {
+  const question = member.question?.trim();
+  const task = prompt.trim();
+  if (!question) return ["Original task:", task];
+
+  const facet = question.replaceAll(TASK_PLACEHOLDER, task);
+  if (question.includes(TASK_PLACEHOLDER)) {
+    return ["Your assigned facet of the task:", facet];
+  }
+  return [
+    "Your assigned facet of the task:",
+    facet,
+    "",
+    "Original task:",
+    task,
+  ];
+}
+
 function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const sortedOutputs = [...input.panelOutputs].sort(comparePanelItems);
   const sortedFailures = [...input.failedPanelists].sort(comparePanelItems);
@@ -330,10 +391,15 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const blindLabels = input.profile.blindPanelLabels
     ? buildBlindLabelMap([...sortedOutputs, ...sortedFailures])
     : undefined;
+  const merging = input.profile.synthesis === "merge";
   return [
-    "You are the fusion judge.",
-    "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
-    "Synthesize the panel results. Preserve disagreement instead of forcing consensus.",
+    ...(merging
+      ? COMPOSER_INSTRUCTIONS
+      : [
+          "You are the fusion judge.",
+          "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
+          "Synthesize the panel results. Preserve disagreement instead of forcing consensus.",
+        ]),
     "",
     "Original task:",
     input.prompt.trim(),
@@ -341,6 +407,13 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     "Panel status:",
     ...formatPanelStatus(sortedOutputs, sortedFailures, blindLabels),
     "",
+    ...(merging
+      ? [
+          "Facet assignments:",
+          ...formatFacetAssignments(input.profile, blindLabels),
+          "",
+        ]
+      : []),
     "Successful panel outputs:",
     ...formatPanelOutputs(presentedOutputs, blindLabels),
     "",
@@ -350,8 +423,23 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     ...CONTESTED_CLAIMS_INSTRUCTIONS,
     "",
     "Output contract:",
-    ...JUDGE_OUTPUT_CONTRACT,
+    ...(merging ? COMPOSER_OUTPUT_CONTRACT : JUDGE_OUTPUT_CONTRACT),
   ].join("\n");
+}
+
+/**
+ * Lists what each member was asked to cover, so the composer can name gaps
+ * without reverse-engineering them from the answers it did receive.
+ */
+function formatFacetAssignments(
+  profile: FusionProfile,
+  blindLabels?: ReadonlyMap<number, string>,
+): string[] {
+  return profile.panel.map((member, index) => {
+    const facet =
+      member.question?.trim() ?? member.role?.trim() ?? "the whole task";
+    return `- ${blindLabels?.get(index) ?? member.label}: ${facet}`;
+  });
 }
 
 function buildChainJudgeTask(panel: readonly PanelMemberConfig[]): string {

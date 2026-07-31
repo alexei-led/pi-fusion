@@ -430,12 +430,12 @@ doing nothing.
 - Modify: `test/unit/config.test.ts`
 - Modify: `test/unit/run-builder.test.ts`
 
-- [ ] add `question?: string` to `PanelMemberConfig` and validate it in `isPanelMemberConfig` (string; reject empty/whitespace-only when the key is present)
-- [ ] in `buildPanelTask`, when `member.question` is set, substitute `{task}` with the prompt and send that instead of the raw prompt; keep the role line, instructions, and output contract unchanged
-- [ ] handle a `question` with no `{task}` placeholder by appending the original task under an `Original task:` heading rather than silently dropping context
-- [ ] write config tests: valid question, empty string rejected, non-string rejected, absent field unchanged behaviour
-- [ ] write `buildPanelTask` tests: substitution occurs, multiple `{task}` occurrences all replaced, missing-placeholder fallback, no `question` produces today's exact output
-- [ ] run tests - must pass before task 8
+- [x] add `question?: string` to `PanelMemberConfig` and validate it in `isPanelMemberConfig` (string; reject empty/whitespace-only when the key is present)
+- [x] in `buildPanelTask`, when `member.question` is set, substitute `{task}` with the prompt and send that instead of the raw prompt; keep the role line, instructions, and output contract unchanged
+- [x] handle a `question` with no `{task}` placeholder by appending the original task under an `Original task:` heading rather than silently dropping context
+- [x] write config tests: valid question, empty string rejected, non-string rejected, absent field unchanged behaviour
+- [x] write `buildPanelTask` tests: substitution occurs, multiple `{task}` occurrences all replaced, missing-placeholder fallback, no `question` produces today's exact output
+- [x] run tests - must pass before task 8
 
 ### Task 8: `synthesis` mode and the `fusion-composer` agent
 
@@ -449,15 +449,15 @@ doing nothing.
 - Modify: `test/unit/run-builder.test.ts`
 - Modify: `test/e2e/package-smoke.test.ts`
 
-- [ ] create `agents/fusion-composer.md` with contract `# Fusion Report` / `## Summary` / `## Coverage Map` / `## Combined Answer` / `## Gaps` / `## Conflicts At Seams` / `## Agent Status` / `## Risks` / `## Next Step`
-- [ ] add `FusionSynthesisMode` and `synthesis?: FusionSynthesisMode` on `FusionProfile`, defaulting to `"select"`, validated in `isFusionProfile`
-- [ ] add `COMPOSER_OUTPUT_CONTRACT` and `buildComposerTask` in `src/run-builder.ts`, instructing the composer to merge rather than select and to name which facet each member covered
-- [ ] select agent + contract by `synthesis` inside `buildJudgeSpawnParams`, keeping `judgeRunId`/`judgeAsyncDir`/`FusionPhase` untouched
-- [ ] add `pi-fusion.fusion-composer` to the exported agent-name constants alongside `PANEL_AGENT`/`JUDGE_AGENT`
-- [ ] write config tests: `"select"`, `"merge"`, invalid string rejected, absent defaults to `"select"`
-- [ ] write tests asserting merge mode spawns the composer with the composer contract, and select mode is byte-identical to today
-- [ ] extend the packaging test to require `agents/fusion-composer.md`
-- [ ] run tests - must pass before task 9
+- [x] create `agents/fusion-composer.md` with contract `# Fusion Report` / `## Summary` / `## Coverage Map` / `## Combined Answer` / `## Gaps` / `## Conflicts At Seams` / `## Agent Status` / `## Risks` / `## Next Step`
+- [x] add `FusionSynthesisMode` and `synthesis?: FusionSynthesisMode` on `FusionProfile`, defaulting to `"select"`, validated in `isFusionProfile`
+- [x] add `COMPOSER_OUTPUT_CONTRACT` and `buildComposerTask` in `src/run-builder.ts`, instructing the composer to merge rather than select and to name which facet each member covered
+- [x] select agent + contract by `synthesis` inside `buildJudgeSpawnParams`, keeping `judgeRunId`/`judgeAsyncDir`/`FusionPhase` untouched
+- [x] add `pi-fusion.fusion-composer` to the exported agent-name constants alongside `PANEL_AGENT`/`JUDGE_AGENT`
+- [x] write config tests: `"select"`, `"merge"`, invalid string rejected, absent defaults to `"select"`
+- [x] write tests asserting merge mode spawns the composer with the composer contract, and select mode is byte-identical to today
+- [x] extend the packaging test to require `agents/fusion-composer.md`
+- [x] run tests - must pass before task 9
 
 ### Task 9: Merge-mode completion guard
 
@@ -475,14 +475,35 @@ markdown — verify that during implementation. If it is section-agnostic, reuse
 unchanged and say so in the commit; if it hardcodes judge section names, add a
 `renderComposerReport` sharing the metadata helpers.
 
-- [ ] make the `panelOutputs.length === 1` short-circuit in `decidePanelCompletion` conditional on `synthesis !== "merge"` — under merge the lone survivor answered one facet, so returning it as the answer is wrong, not thin
-- [ ] under merge with a single output, still run the composer so the report states which facets are missing
-- [ ] confirm whether `renderJudgeReport` is section-agnostic; reuse it for merge if so, otherwise add `renderComposerReport` reusing the metadata helpers
-- [ ] add a merge-aware variant of `renderPanelFailureReport` naming the facets that were not covered when all panelists fail
-- [ ] write tests for `decidePanelCompletion`: select + 1 output returns `complete` (unchanged), merge + 1 output returns `judge`, merge + 0 outputs returns `fail`, select + 0 outputs unchanged
-- [ ] write tests for merge success rendering: composer sections preserved, run metadata still appended
-- [ ] write tests for merge failure rendering listing uncovered facets
-- [ ] run tests - must pass before task 10
+- [x] make the `panelOutputs.length === 1` short-circuit in `decidePanelCompletion` conditional on `synthesis !== "merge"` — under merge the lone survivor answered one facet, so returning it as the answer is wrong, not thin
+- [x] under merge with a single output, still run the composer so the report states which facets are missing
+- [x] confirm whether `renderJudgeReport` is section-agnostic; reuse it for merge if so, otherwise add `renderComposerReport` reusing the metadata helpers
+- [x] add a merge-aware variant of `renderPanelFailureReport` naming the facets that were not covered when all panelists fail
+- [x] write tests for `decidePanelCompletion`: select + 1 output returns `complete` (unchanged), merge + 1 output returns `judge`, merge + 0 outputs returns `fail`, select + 0 outputs unchanged
+- [x] write tests for merge success rendering: composer sections preserved, run metadata still appended
+- [x] write tests for merge failure rendering listing uncovered facets
+- [x] run tests - must pass before task 10
+
+➕ **`renderJudgeReport` was not section-agnostic**, contrary to the Task 9 note's
+optimistic branch: it hardcodes the judge's section list. Rather than adding a
+second renderer, the section list is now chosen by `synthesis` and everything
+around it — agent status, run metadata, run details, blind-label restoration —
+stays shared.
+
+➕ **Merge mode swaps the agent, not the run slot.** `resolveSynthesisAgent`
+returns the composer only when the judge agent is still the bundled default, so a
+user who configured their own synthesis agent keeps it. The spawn still uses
+`judgeRunId`/`judgeAsyncDir` under phase `judge`, so `fusion:rpc:v1` is untouched.
+
+➕ **Facet assignments are sent to the composer**, listing what each member was
+asked to cover. Without them the composer would have to infer gaps from the
+answers it did receive — which is exactly the information a gap lacks. These are
+blinded too when `blindPanelLabels` is on.
+
+⚠️ Adding `## Contested Claims` to the judge report (Task 6) broke two existing
+`report.test.ts` expectations. Updated in place; the other renderers
+(`renderSinglePanelReport`, `renderPanelFailureReport`, `renderFailureReport`,
+`renderCancelledReport`) do not carry the section and were left alone.
 
 ### Task 10: Merge-mode orchestration integration test
 

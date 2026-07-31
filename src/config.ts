@@ -26,6 +26,7 @@ export const PANEL_AGENT = "pi-fusion.fusion-panelist";
 export const PANEL_AGENT_LITE = "pi-fusion.fusion-panelist-lite";
 export const PANEL_AGENT_FULL = "pi-fusion.fusion-panelist-full";
 export const JUDGE_AGENT = "pi-fusion.fusion-judge";
+export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
 
 /**
  * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
@@ -326,6 +327,13 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   ) {
     return false;
   }
+  if (
+    value.synthesis !== undefined &&
+    value.synthesis !== "select" &&
+    value.synthesis !== "merge"
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -357,6 +365,9 @@ function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking))
     return false;
   if (value.role !== undefined && typeof value.role !== "string") return false;
+  if (value.question !== undefined && !isNonEmptyString(value.question)) {
+    return false;
+  }
   return true;
 }
 

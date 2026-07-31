@@ -108,6 +108,9 @@ test("renderJudgeReport renders deterministic success sections", () => {
       "## Disagreements",
       "None.",
       "",
+      "## Contested Claims",
+      "Not specified by the judge.",
+      "",
       "## Unique Insights",
       "Tester noted rollout safety.",
       "",
@@ -261,6 +264,9 @@ test("renderJudgeReport shows partial success and timed-out panelists", () => {
       "Not specified by the judge.",
       "",
       "## Disagreements",
+      "Not specified by the judge.",
+      "",
+      "## Contested Claims",
       "Not specified by the judge.",
       "",
       "## Unique Insights",
@@ -605,4 +611,63 @@ test("renderJudgeReport leaves judge prose untouched when blinding is off", () =
   });
 
   assert.match(report, /Candidate A wins\./);
+});
+
+test("renderJudgeReport renders composer sections under merge synthesis", () => {
+  const report = renderJudgeReport({
+    run: { id: "run-1", prompt: "Review release", profileName: "quality" },
+    judgeOutput: [
+      "# Fusion Report",
+      "## Summary",
+      "Two facets covered.",
+      "## Coverage Map",
+      "Security: Architect. Performance: Tester.",
+      "## Combined Answer",
+      "Ship it behind a flag.",
+      "## Gaps",
+      "Nobody covered migrations.",
+      "## Conflicts At Seams",
+      "None.",
+    ].join("\n"),
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Security facet.",
+      },
+    ],
+    failures: [],
+    synthesis: "merge",
+  });
+
+  assert.match(report, /## Coverage Map/);
+  assert.match(report, /## Combined Answer/);
+  assert.match(report, /## Gaps\nNobody covered migrations\./);
+  assert.match(report, /## Conflicts At Seams/);
+  assert.doesNotMatch(report, /## Consensus/);
+  assert.doesNotMatch(report, /## Disagreements/);
+  assert.doesNotMatch(report, /## Blind Spots/);
+});
+
+test("renderJudgeReport marks missing composer sections instead of dropping them", () => {
+  const report = renderJudgeReport({
+    run: { id: "run-1", prompt: "Review release", profileName: "quality" },
+    judgeOutput: "# Fusion Report\n## Summary\nOnly a summary.",
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Security facet.",
+      },
+    ],
+    failures: [],
+    synthesis: "merge",
+  });
+
+  assert.match(report, /## Gaps\nNot specified by the composer\./);
+  assert.match(report, /## Coverage Map\nNot specified by the composer\./);
 });

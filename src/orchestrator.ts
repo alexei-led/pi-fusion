@@ -598,6 +598,7 @@ export class FusionOrchestrator {
         ...withJudgeModel(configuredJudgeModel(profile)),
         judgeObservation,
         ...(profile.blindPanelLabels ? { blindPanelLabels: true } : {}),
+        ...(profile.synthesis ? { synthesis: profile.synthesis } : {}),
       });
       return this.completeActiveRun(report);
     }
@@ -861,6 +862,9 @@ export class FusionOrchestrator {
       judgeObservation,
       ...(this.activeProfile?.blindPanelLabels
         ? { blindPanelLabels: true }
+        : {}),
+      ...(this.activeProfile?.synthesis
+        ? { synthesis: this.activeProfile.synthesis }
         : {}),
     });
     return this.completeActiveRun(report);

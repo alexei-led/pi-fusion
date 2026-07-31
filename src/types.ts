@@ -10,6 +10,13 @@ export const THINKING_LEVELS = [
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type FusionContextMode = "fresh" | "fork";
 
+/**
+ * How panel answers become one report.
+ * `select` — panelists answered the same question; the judge picks or reconciles.
+ * `merge`  — panelists answered different facets; the composer unions them.
+ */
+export type FusionSynthesisMode = "select" | "merge";
+
 export interface PanelMemberConfig {
   id: string;
   label: string;
@@ -17,6 +24,11 @@ export interface PanelMemberConfig {
   model?: string;
   thinking?: ThinkingLevel;
   role?: string;
+  /**
+   * Facet prompt sent instead of the raw task. `{task}` is substituted with the
+   * original prompt. Turns a redundant panel into one that divides the work.
+   */
+  question?: string;
 }
 
 export interface JudgeConfig {
@@ -43,6 +55,12 @@ export interface FusionProfile {
    * `soft` nudges, `hard` blocks further tool use so the judge still finalises.
    */
   judgeToolBudget?: ToolBudget;
+  /**
+   * Defaults to `select`. Under `merge` the synthesis spawn uses the composer
+   * agent and contract instead of the judge's. It reuses the judge run slot, so
+   * no new `FusionPhase` is introduced and `fusion:rpc:v1` stays compatible.
+   */
+  synthesis?: FusionSynthesisMode;
 }
 
 export interface ToolBudget {

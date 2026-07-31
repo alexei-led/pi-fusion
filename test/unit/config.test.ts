@@ -618,3 +618,88 @@ test("parseFusionConfig rejects malformed judge tool budgets", () => {
     );
   }
 });
+
+test("parseFusionConfig accepts a panel member question", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [{ ...PANEL_MEMBER, question: "Cover security of {task}" }],
+          judge: JUDGE,
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.equal(
+    config.profiles.quality?.panel[0]?.question,
+    "Cover security of {task}",
+  );
+});
+
+test("parseFusionConfig rejects an empty or non-string question", () => {
+  for (const question of ["", "   ", 42, null]) {
+    assert.throws(
+      () =>
+        parseFusionConfig(
+          JSON.stringify({
+            defaultProfile: "quality",
+            profiles: {
+              quality: {
+                panel: [{ ...PANEL_MEMBER, question }],
+                judge: JUDGE,
+              },
+            },
+          }),
+          "test",
+        ),
+      /Invalid fusion config/,
+      `expected ${JSON.stringify(question)} rejected`,
+    );
+  }
+});
+
+test("parseFusionConfig accepts both synthesis modes and defaults to absent", () => {
+  for (const synthesis of ["select", "merge"]) {
+    const config = parseFusionConfig(
+      JSON.stringify({
+        defaultProfile: "quality",
+        profiles: {
+          quality: { panel: [PANEL_MEMBER], judge: JUDGE, synthesis },
+        },
+      }),
+      "test",
+    );
+    assert.equal(config.profiles.quality?.synthesis, synthesis);
+  }
+
+  const bare = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: { quality: { panel: [PANEL_MEMBER], judge: JUDGE } },
+    }),
+    "test",
+  );
+  assert.equal(bare.profiles.quality?.synthesis, undefined);
+});
+
+test("parseFusionConfig rejects an unknown synthesis mode", () => {
+  for (const synthesis of ["combine", "", 1, null]) {
+    assert.throws(
+      () =>
+        parseFusionConfig(
+          JSON.stringify({
+            defaultProfile: "quality",
+            profiles: {
+              quality: { panel: [PANEL_MEMBER], judge: JUDGE, synthesis },
+            },
+          }),
+          "test",
+        ),
+      /Invalid fusion config/,
+      `expected ${JSON.stringify(synthesis)} rejected`,
+    );
+  }
+});
