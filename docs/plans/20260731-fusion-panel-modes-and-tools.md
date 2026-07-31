@@ -324,13 +324,28 @@ Task 12 are already in `test/unit/run-builder.test.ts`.
 - Modify: `test/unit/run-builder.test.ts`
 - Modify: `test/unit/report.test.ts`
 
-- [ ] add `blindPanelLabels?: boolean` to `FusionProfile` (default `false`) and validate it in `isFusionProfile`
-- [ ] when enabled, render panel outputs to the judge as `Candidate A`, `Candidate B`, … and return the label mapping from `buildJudgeSpawnParams`
-- [ ] restore real labels in `src/report.ts` so the user-facing report always names the actual member
-- [ ] write config validation tests: valid `true`/`false`, rejected non-boolean, absent field defaults to `false`
-- [ ] write test asserting judge task contains no real labels or role text when enabled
-- [ ] write test asserting the report still shows real labels when enabled
-- [ ] run tests - must pass before task 5
+- [x] add `blindPanelLabels?: boolean` to `FusionProfile` (default `false`) and validate it in `isFusionProfile`
+- [x] when enabled, render panel outputs to the judge as `Candidate A`, `Candidate B`, …
+- [x] restore real labels in `src/report.ts` so the user-facing report always names the actual member
+- [x] write config validation tests: valid `true`/`false`, rejected non-boolean, absent field defaults to `false`
+- [x] write test asserting judge task contains no real labels or role text when enabled
+- [x] write test asserting the report still shows real labels when enabled
+- [x] run tests - must pass before task 5
+
+➕ **Blinding had to cover more than the heading.** Labels alone were not enough:
+`Agent: pi-fusion.fusion-panelist-lite` reveals which variant a member uses, and
+artifact/session paths embed the member id (`/tmp/generalist.md`). Under blinding
+those lines are withheld entirely — they are reader aids, not judging inputs. The
+test asserts none of the id, label, role, agent, or path strings survive.
+
+➕ **No new run state.** Rather than returning a mapping from
+`buildJudgeSpawnParams` and persisting it, `buildBlindLabelMap` is exported and
+recomputed in `report.ts`. It is a pure function of the panel indices, so both
+sides derive the same mapping. `restoreBlindLabels` replaces longest label first
+so `Candidate AA` is not corrupted by the `Candidate A` rule.
+
+➕ Blind names are assigned **by index**, while presentation order stays
+shuffled — so the judge cannot recover the mapping from position either.
 
 ### Task 5: `--panel` inline override
 

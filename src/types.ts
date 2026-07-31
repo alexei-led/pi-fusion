@@ -32,6 +32,12 @@ export interface FusionProfile {
   timeoutMs?: number;
   context?: FusionContextMode;
   stopWhenPanelAgrees?: boolean;
+  /**
+   * Present panel answers to the judge as "Candidate A/B/C" instead of the
+   * configured labels. Role names read as authority cues before a word of
+   * content is compared. The report always restores the real labels.
+   */
+  blindPanelLabels?: boolean;
 }
 
 export type PanelConfidence = "low" | "medium" | "high";

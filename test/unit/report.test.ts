@@ -538,3 +538,71 @@ test("renderCancelledReport renders cancellation details", () => {
     ].join("\n"),
   );
 });
+
+test("renderJudgeReport restores real member names when the judge was blinded", () => {
+  const report = renderJudgeReport({
+    run: {
+      id: "run-1",
+      prompt: "Compare designs",
+      profileName: "quality",
+    },
+    judgeOutput: [
+      "# Fusion Report",
+      "## Summary",
+      "Candidate A and Candidate C agree; Candidate B timed out.",
+      "## Recommendation",
+      "Follow Candidate A.",
+    ].join("\n"),
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Choose A.",
+      },
+      {
+        index: 2,
+        id: "generalist",
+        label: "Generalist",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Choose B.",
+      },
+    ],
+    failures: [
+      {
+        index: 1,
+        id: "tester",
+        label: "Tester",
+        agent: "pi-fusion.fusion-panelist",
+        summary: "Timed out",
+      },
+    ],
+    blindPanelLabels: true,
+  });
+
+  assert.match(report, /Architect and Generalist agree; Tester timed out\./);
+  assert.match(report, /Follow Architect\./);
+  assert.doesNotMatch(report, /Candidate [ABC]/);
+});
+
+test("renderJudgeReport leaves judge prose untouched when blinding is off", () => {
+  const report = renderJudgeReport({
+    run: { id: "run-1", prompt: "Compare designs", profileName: "quality" },
+    judgeOutput: ["# Fusion Report", "## Summary", "Candidate A wins."].join(
+      "\n",
+    ),
+    panelOutputs: [
+      {
+        index: 0,
+        id: "architect",
+        label: "Architect",
+        agent: "pi-fusion.fusion-panelist",
+        output: "Choose A.",
+      },
+    ],
+    failures: [],
+  });
+
+  assert.match(report, /Candidate A wins\./);
+});

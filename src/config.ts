@@ -241,13 +241,17 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   ) {
     return false;
   }
+  if (
+    value.blindPanelLabels !== undefined &&
+    typeof value.blindPanelLabels !== "boolean"
+  ) {
+    return false;
+  }
   return true;
 }
 
 export function isAgentReference(value: unknown): value is string {
-  return (
-    isNonEmptyString(value) && AGENT_REFERENCE_PATTERN.test(value.trim())
-  );
+  return isNonEmptyString(value) && AGENT_REFERENCE_PATTERN.test(value.trim());
 }
 
 function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {

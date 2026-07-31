@@ -576,6 +576,7 @@ export class FusionOrchestrator {
         failures: storedPanelFailures(observed),
         ...withJudgeModel(configuredJudgeModel(profile)),
         judgeObservation,
+        ...(profile.blindPanelLabels ? { blindPanelLabels: true } : {}),
       });
       return this.completeActiveRun(report);
     }
@@ -837,6 +838,9 @@ export class FusionOrchestrator {
       failures: storedPanelFailures(observed),
       ...withJudgeModel(judgeModel),
       judgeObservation,
+      ...(this.activeProfile?.blindPanelLabels
+        ? { blindPanelLabels: true }
+        : {}),
     });
     return this.completeActiveRun(report);
   }
