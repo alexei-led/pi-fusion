@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runFusionInit } from "../../src/commands.js";
 import {
+  buildInlinePanelProfile,
   createDefaultFusionConfig,
   getGlobalFusionConfigPath,
   getProjectFusionConfigPath,
@@ -13,6 +14,7 @@ import {
   loadFusionConfig,
   parseFusionConfig,
   resolveProfile,
+  splitInlinePanelEntry,
 } from "../../src/config.js";
 import type { FusionConfig } from "../../src/types.js";
 
@@ -474,5 +476,76 @@ test("parseFusionConfig rejects a non-boolean blindPanelLabels", () => {
         "test",
       ),
     /Invalid fusion config/,
+  );
+});
+
+test("splitInlinePanelEntry defaults to the bundled panelist agent", () => {
+  assert.deepEqual(splitInlinePanelEntry("opus"), {
+    agent: "pi-fusion.fusion-panelist",
+    model: "opus",
+  });
+  assert.deepEqual(splitInlinePanelEntry("openai/gpt-5.5"), {
+    agent: "pi-fusion.fusion-panelist",
+    model: "openai/gpt-5.5",
+  });
+});
+
+test("splitInlinePanelEntry does not mistake a thinking suffix for an agent", () => {
+  assert.deepEqual(splitInlinePanelEntry("opus:high"), {
+    agent: "pi-fusion.fusion-panelist",
+    model: "opus:high",
+  });
+  assert.deepEqual(splitInlinePanelEntry("openai/gpt-5.5:xhigh"), {
+    agent: "pi-fusion.fusion-panelist",
+    model: "openai/gpt-5.5:xhigh",
+  });
+});
+
+test("splitInlinePanelEntry reads an agent-qualified entry", () => {
+  assert.deepEqual(
+    splitInlinePanelEntry("pi-fusion.fusion-panelist-lite:openai/gpt-5.5"),
+    { agent: "pi-fusion.fusion-panelist-lite", model: "openai/gpt-5.5" },
+  );
+  assert.deepEqual(
+    splitInlinePanelEntry("pi-fusion.fusion-panelist-full:opus:high"),
+    { agent: "pi-fusion.fusion-panelist-full", model: "opus:high" },
+  );
+});
+
+test("buildInlinePanelProfile replaces the panel and keeps the judge", () => {
+  const base = createDefaultFusionConfig().profiles.quality;
+  assert.ok(base);
+
+  const profile = buildInlinePanelProfile(base, [
+    "opus",
+    "pi-fusion.fusion-panelist-lite:openai/gpt-5.5",
+  ]);
+
+  assert.equal(profile.panel.length, 2);
+  assert.equal(profile.panel[0]?.agent, "pi-fusion.fusion-panelist");
+  assert.equal(profile.panel[0]?.model, "opus");
+  assert.equal(profile.panel[1]?.agent, "pi-fusion.fusion-panelist-lite");
+  assert.equal(profile.panel[1]?.model, "openai/gpt-5.5");
+  assert.deepEqual(profile.judge, base.judge);
+  assert.equal(profile.timeoutMs, base.timeoutMs);
+});
+
+test("buildInlinePanelProfile generates unique ids for repeated models", () => {
+  const base = createDefaultFusionConfig().profiles.quality;
+  assert.ok(base);
+
+  const profile = buildInlinePanelProfile(base, ["opus", "opus", "opus"]);
+  const ids = profile.panel.map((member) => member.id);
+
+  assert.equal(new Set(ids).size, 3, `expected unique ids, got ${ids.join(",")}`);
+});
+
+test("buildInlinePanelProfile rejects a malformed agent reference", () => {
+  const base = createDefaultFusionConfig().profiles.quality;
+  assert.ok(base);
+
+  assert.throws(
+    () => buildInlinePanelProfile(base, ["bad..agent:opus"]),
+    /malformed agent reference/,
   );
 });

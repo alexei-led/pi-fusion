@@ -2,7 +2,7 @@ import { FusionArgsError } from "./errors.js";
 import type { ParsedFusionArgs } from "./types.js";
 
 const FUSION_USAGE =
-  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion status | /fusion stop | /fusion init.";
+  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> | /fusion status | /fusion stop | /fusion init.";
 
 export type FusionInlineCommand = "init" | "status" | "stop";
 
@@ -27,11 +27,30 @@ export function parseFusionArgs(
   if (tokens[0] === "/fusion" || tokens[0] === "fusion") tokens.shift();
 
   let profile: string | undefined;
+  let panel: string[] | undefined;
   const promptTokens: string[] = [];
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (!token) continue;
+
+    if (promptTokens.length === 0 && token === "--panel") {
+      const value = tokens[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new FusionArgsError(`Missing value for --panel. ${FUSION_USAGE}`);
+      }
+      if (panel) throw new FusionArgsError("Panel can only be provided once.");
+      panel = parsePanelEntries(value);
+      index++;
+      continue;
+    }
+
+    if (promptTokens.length === 0 && token.startsWith("--panel=")) {
+      const value = token.slice("--panel=".length);
+      if (panel) throw new FusionArgsError("Panel can only be provided once.");
+      panel = parsePanelEntries(value);
+      continue;
+    }
 
     if (
       promptTokens.length === 0 &&
@@ -72,7 +91,22 @@ export function parseFusionArgs(
 
   const prompt = promptTokens.join(" ").trim();
   if (!prompt) throw new FusionArgsError(FUSION_USAGE);
-  return profile ? { prompt, profile } : { prompt };
+  return {
+    prompt,
+    ...(profile ? { profile } : {}),
+    ...(panel ? { panel } : {}),
+  };
+}
+
+function parsePanelEntries(value: string): string[] {
+  const entries = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length === 0) {
+    throw new FusionArgsError(`Missing value for --panel. ${FUSION_USAGE}`);
+  }
+  return entries;
 }
 
 export function tokenizeCommandArgs(input: string): string[] {

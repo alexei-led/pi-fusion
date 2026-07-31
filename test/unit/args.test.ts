@@ -76,3 +76,68 @@ test("tokenizeCommandArgs handles whitespace, quotes, escapes, and unclosed quot
   ]);
   assert.throws(() => tokenizeCommandArgs("'open"), /Unclosed ' quote/);
 });
+
+test("parseFusionArgs reads --panel in both syntaxes", () => {
+  assert.deepEqual(parseFusionArgs("/fusion --panel opus,gpt-5.5 Compare").panel, [
+    "opus",
+    "gpt-5.5",
+  ]);
+  assert.deepEqual(
+    parseFusionArgs("/fusion --panel=opus,gpt-5.5 Compare").panel,
+    ["opus", "gpt-5.5"],
+  );
+});
+
+test("parseFusionArgs trims whitespace around panel entries", () => {
+  assert.deepEqual(
+    parseFusionArgs('/fusion --panel " opus , gpt-5.5 " Compare').panel,
+    ["opus", "gpt-5.5"],
+  );
+});
+
+test("parseFusionArgs rejects an empty or duplicated --panel", () => {
+  assert.throws(
+    () => parseFusionArgs("/fusion --panel"),
+    /Missing value for --panel/,
+  );
+  assert.throws(
+    () => parseFusionArgs("/fusion --panel --profile fast Compare"),
+    /Missing value for --panel/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --panel="," Compare'),
+    /Missing value for --panel/,
+  );
+  assert.throws(
+    () => parseFusionArgs("/fusion --panel opus --panel gpt Compare"),
+    /Panel can only be provided once/,
+  );
+});
+
+test("parseFusionArgs takes the next token as the panel list, mirroring --profile", () => {
+  // "--panel Compare things" is not an error: Compare is a one-entry panel and
+  // "things" is the prompt, exactly as "--profile Compare things" behaves.
+  const args = parseFusionArgs("/fusion --panel Compare things");
+
+  assert.deepEqual(args.panel, ["Compare"]);
+  assert.equal(args.prompt, "things");
+});
+
+test("parseFusionArgs combines --panel with --profile", () => {
+  const args = parseFusionArgs("/fusion --profile fast --panel opus,gpt Compare");
+
+  assert.equal(args.profile, "fast");
+  assert.deepEqual(args.panel, ["opus", "gpt"]);
+  assert.equal(args.prompt, "Compare");
+});
+
+test("parseFusionArgs treats --panel after the prompt as prompt text", () => {
+  const args = parseFusionArgs("/fusion Compare --panel opus");
+
+  assert.equal(args.panel, undefined);
+  assert.equal(args.prompt, "Compare --panel opus");
+});
+
+test("parseFusionArgs omits panel when --panel is absent", () => {
+  assert.equal(parseFusionArgs("/fusion Compare designs").panel, undefined);
+});
