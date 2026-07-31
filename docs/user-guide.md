@@ -25,6 +25,7 @@ Preferred command shape:
 /fusion <prompt>
 /fusion --profile <name> <prompt>
 /fusion -p <name> <prompt>
+/fusion --panel <entries> <prompt>
 /fusion status
 /fusion stop
 /fusion init
@@ -37,6 +38,30 @@ Notes:
 - `/fusion stop` stops the active panel, legacy chain, or judge run.
 - `/fusion init` writes `.pi/fusion.json` for the current trusted project.
 - Exact one-word prompts `init`, `status`, and `stop` are reserved as `/fusion` subcommands.
+
+### `--panel`
+
+Builds a one-off panel without editing config, for trying a composition before
+committing to it. The resolved profile still supplies the judge and every other
+setting; only the panel is replaced.
+
+```text
+/fusion --panel opus,openai/gpt-5.5 Which design should we pick?
+/fusion --panel=opus,openai/gpt-5.5 Which design should we pick?
+/fusion --profile audit --panel opus,gemini-pro What did we miss?
+```
+
+Each comma-separated entry is `<model>` or `<agent>:<model>`:
+
+```text
+--panel opus,gpt-5.5                                     # both use the default panelist
+--panel pi-fusion.fusion-panelist-lite:gpt-5.5,opus      # first member is local-only
+```
+
+An entry counts as agent-qualified only when the part before the first `:`
+contains a `.`, which package-qualified agent names always do. That keeps
+`opus:high` a model with a thinking suffix rather than an agent reference.
+Claude alias shorthand works inline: `--panel claude-work/opus-4.8`.
 
 ## Configuration files
 
@@ -106,16 +131,125 @@ Profile:
 - `timeoutMs`: async subagent timeout in milliseconds
 - `context`: `fresh` or `fork`
 - `stopWhenPanelAgrees`: optional boolean, default `false`. When enabled, Fusion may stop unfinished panelists only when at least two completed panelists have the same normalized recommendation, every successful panelist reports `high` confidence, none requests more evidence, and work remains. The judge still runs over the collected answers. The policy is intentionally fixed; there are no agreement threshold knobs.
+- `synthesis`: optional `select` (default) or `merge`. See [Synthesis modes](#synthesis-modes).
+- `blindPanelLabels`: optional boolean, default `false`. Presents panel answers to the judge as `Candidate A`, `Candidate B`, … instead of the configured labels, and withholds agent names and artifact paths, which contain the member id. Role labels read as authority cues before any content is compared. Your report always shows the real names.
+- `judgeToolBudget`: optional `{ "soft": n, "hard": n }`. Caps the tool calls the judge may spend verifying contested claims. `soft` nudges; after `hard`, tool use is blocked so the judge still produces a report. Both must be positive integers and `soft` must not exceed `hard`.
 
 Panel member:
 
 - `id`: stable machine name
 - `label`: human-readable report label
-- `agent`: subagent name
+- `agent`: subagent name. This is where a member's tool access comes from — see [Panel agents and tools](#panel-agents-and-tools).
 - `model`: optional model override; often the main source of panel diversity. Supports normal Pi model ids, and if `pi-claude-alias` is configured, Claude alias shorthand like `claude-work/opus-4.8`
 - Claude alias handles must be unique across global and project alias files; duplicate handles are rejected.
 - `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
 - `role`: optional perspective hint layered on top of the model
+- `question`: optional facet prompt sent **instead of** the raw task. `{task}` is substituted with the original prompt. Use with `synthesis: "merge"` to divide the work rather than duplicate it. If the template omits `{task}`, the original task is still appended so the panelist keeps its context.
+
+## Panel agents and tools
+
+A panel member's tools come from its **agent definition**, not from `fusion.json`.
+`pi-subagents` has no per-task tool override, so `agent` is the knob.
+
+Fusion ships four:
+
+| Agent                            | Tools                                                        | Use for                                                        |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
+| `pi-fusion.fusion-panelist`      | `read, grep, find, ls, web_search, web_contents, web_answer` | Default. Local inspection plus web evidence.                   |
+| `pi-fusion.fusion-panelist-lite` | `read, grep, find, ls`                                       | Local only. No prompt content reaches a web provider.          |
+| `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research`                 | Opt-in. **See the warning below.**                             |
+| `pi-fusion.fusion-judge`         | `read, grep, find, ls, web_search, web_contents, web_answer` | Judge; the read tools are what let it verify contested claims. |
+| `pi-fusion.fusion-composer`      | same as the judge                                            | Synthesis under `synthesis: "merge"`.                          |
+
+Mix them per member:
+
+```json
+{
+  "panel": [
+    {
+      "id": "arch",
+      "label": "Architect",
+      "agent": "pi-fusion.fusion-panelist"
+    },
+    {
+      "id": "local",
+      "label": "Local",
+      "agent": "pi-fusion.fusion-panelist-lite"
+    },
+    { "id": "mine", "label": "Custom", "agent": "my-package.my-panelist" }
+  ]
+}
+```
+
+For any other combination, write your own agent markdown file with the `tools:`
+frontmatter you want and point `agent` at it. Valid tool names are the Pi core
+tools `read, bash, edit, write, grep, find, ls` and, when `pi-web-providers` is
+installed, `web_search, web_contents, web_answer, web_research`. A name outside
+that set resolves to nothing and the run fails with a missing-tool error.
+
+`web_research` is excluded from the default panelist on purpose: it routes to a
+deep-research model that takes minutes, and a panel would fire it concurrently
+for every member.
+
+> **`fusion-panelist-full` voids the read-only guarantee.** It grants `edit`,
+> `write`, and `bash`. Fusion runs panelists **in parallel in the same working
+> directory**, so at `concurrency > 1` two members can mutate the same files or
+> git state at once. The prompt asks them not to; nothing enforces it. Use it
+> with `"concurrency": 1`, or not at all.
+
+## Synthesis modes
+
+`select` (default) — every panelist answers the whole question and
+`fusion-judge` compares them, reporting consensus, disagreements, contested
+claims, unique insights, and blind spots. Use it for decision questions, where
+the failure mode is one model's bad reasoning path and redundancy is the fix.
+
+`merge` — panelists answer **different facets** and `fusion-composer` unions
+them, reporting a coverage map, the combined answer, gaps, and conflicts only
+where facets genuinely overlap. Use it for breadth questions — audits, "what did
+we miss", release sweeps — where the failure mode is incomplete coverage and
+redundant panelists all miss the same things.
+
+Merge mode swaps the synthesis agent, not the run lifecycle: it reuses the judge
+run slot, so `fusion:rpc:v1` consumers see no new phase. If you set a custom
+`judge.agent`, that agent is used in both modes.
+
+```json
+{
+  "defaultProfile": "audit",
+  "profiles": {
+    "audit": {
+      "synthesis": "merge",
+      "panel": [
+        {
+          "id": "security",
+          "label": "Security",
+          "agent": "pi-fusion.fusion-panelist",
+          "question": "Cover ONLY the security and data-exposure surface of: {task}"
+        },
+        {
+          "id": "perf",
+          "label": "Performance",
+          "agent": "pi-fusion.fusion-panelist",
+          "question": "Cover ONLY throughput, latency, and resource use of: {task}"
+        },
+        {
+          "id": "ops",
+          "label": "Operations",
+          "agent": "pi-fusion.fusion-panelist",
+          "question": "Cover ONLY rollout, rollback, and observability of: {task}"
+        }
+      ],
+      "judge": { "agent": "pi-fusion.fusion-judge", "thinking": "high" },
+      "concurrency": 3
+    }
+  }
+}
+```
+
+Under `merge`, a run where only one panelist survives still goes to the composer
+rather than returning that answer directly — one facet is not the answer, and the
+report needs to name what is missing.
 
 Judge:
 
@@ -224,7 +358,14 @@ Fusion uses model providers the same way normal Pi work does. The difference is 
 - local file snippets read by a panelist go to that panelist's model;
 - the judge receives the original prompt plus successful panel answers and failure summaries.
 
-This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. Bundled Fusion agents are read-only, but providers still receive the context needed to answer.
+**Panelists can reach the web.** The default panelist and judge declare
+`web_search`, `web_contents`, and `web_answer`. When a panelist searches, your
+prompt and whatever query it derives from your code go to the provider
+configured in `~/.pi/agent/web-providers.json` — a third party separate from
+your model provider. Use `pi-fusion.fusion-panelist-lite` for every member to
+keep a run entirely off the web.
+
+This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. The default and `-lite` Fusion agents are read-only, but providers still receive the context needed to answer. `fusion-panelist-full` is not read-only; see [Panel agents and tools](#panel-agents-and-tools).
 
 Fusion does not currently inspect or rewrite the final provider payload. Configure provider privacy and local-model routing in Pi.
 

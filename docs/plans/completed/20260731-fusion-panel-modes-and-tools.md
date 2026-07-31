@@ -544,13 +544,13 @@ documented exception: judge output _ordering_ changes because the Task 3 shuffle
 is unconditional. Normalise by sorting the output blocks before comparing, so the
 test still catches any other drift in wording, headings, or contract text.
 
-- [ ] verify all requirements from Overview are implemented
-- [ ] write byte-equality test: `buildPanelTask` for the default profile matches the `master` fixture exactly
-- [ ] write byte-equality test: `buildJudgeTask` for the default profile matches the `master` fixture after normalising output-block order
-- [ ] verify edge cases are handled: single panelist, all panelists fail, merge without any `question`, `--panel` with one model
-- [ ] run full test suite: `npm run test:all`
-- [ ] verify `npm run lint` and `npm run check` are clean
-- [ ] manually run `/fusion` once in select mode and once in merge mode against this repo and confirm reports render
+- [x] verify all requirements from Overview are implemented
+- [x] write byte-equality test: `buildPanelTask` for the default profile matches the `master` fixture exactly
+- [x] write byte-equality test: `buildJudgeTask` for the default profile matches the `master` fixture after normalising output-block order
+- [x] verify edge cases are handled: single panelist, all panelists fail, merge without any `question`, `--panel` with one model
+- [x] run full test suite: `npm run test:all`
+- [x] verify `npm run lint` and `npm run check` are clean
+- [x] manually run `/fusion` once in select mode and once in merge mode against this repo and confirm reports render
 
 ### Task 13: [Final] Update documentation
 
@@ -561,14 +561,16 @@ test still catches any other drift in wording, headings, or contract text.
 - Modify: `docs/ideas/orchestration-modes.md`
 - Modify: `CHANGELOG.md`
 
-- [ ] document the shipped agent variants and their tool sets in `docs/user-guide.md`, including how to point `agent:` at a custom agent and the correct web tool vocabulary (`web_search`, `web_contents`, `web_answer`, `web_research`)
-- [ ] document `synthesis`, `question`, `blindPanelLabels`, `judgeToolBudget`, and `--panel` with a worked merge-mode profile example
-- [ ] state plainly in `docs/user-guide.md` that `fusion-panelist-full` grants `edit`/`write`/`bash`, voids the read-only guarantee, and is unsafe at `concurrency > 1`
-- [ ] audit the "Bundled Fusion agents are read-only" claim in `README.md` and `docs/user-guide.md` — it stays true for defaults, so scope it explicitly to the default and lite agents
-- [ ] update the "Data sharing and provider use" section: panelists can now reach the web, so prompts and inspected snippets may leave the machine via the configured web provider
-- [ ] mark the implemented items in `docs/ideas/orchestration-modes.md` §7 as shipped
-- [ ] update `CLAUDE.md` if new patterns discovered (none expected — no such file exists today)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] document the shipped agent variants and their tool sets in `docs/user-guide.md`, including how to point `agent:` at a custom agent and the correct web tool vocabulary (`web_search`, `web_contents`, `web_answer`, `web_research`)
+- [x] document `synthesis`, `question`, `blindPanelLabels`, `judgeToolBudget`, and `--panel` with a worked merge-mode profile example
+- [x] state plainly in `docs/user-guide.md` that `fusion-panelist-full` grants `edit`/`write`/`bash`, voids the read-only guarantee, and is unsafe at `concurrency > 1`
+- [x] audit the "Bundled Fusion agents are read-only" claim in `README.md` and `docs/user-guide.md` — it stays true for defaults, so scope it explicitly to the default and lite agents
+- [x] update the "Data sharing and provider use" section: panelists can now reach the web, so prompts and inspected snippets may leave the machine via the configured web provider
+- [x] mark the implemented items in `docs/ideas/orchestration-modes.md` §7 as shipped
+- [x] update `CLAUDE.md` if new patterns discovered (none expected — no such file exists today)
+- [x] move this plan to `docs/plans/completed/`
+
+**Completed 2026-07-31.** Full gate green: lint, typecheck, 157 unit, 37 integration, 1 e2e, `npm pack --dry-run`.
 
 ## Post-Completion
 

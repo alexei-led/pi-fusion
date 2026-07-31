@@ -538,7 +538,11 @@ test("buildInlinePanelProfile generates unique ids for repeated models", () => {
   const profile = buildInlinePanelProfile(base, ["opus", "opus", "opus"]);
   const ids = profile.panel.map((member) => member.id);
 
-  assert.equal(new Set(ids).size, 3, `expected unique ids, got ${ids.join(",")}`);
+  assert.equal(
+    new Set(ids).size,
+    3,
+    `expected unique ids, got ${ids.join(",")}`,
+  );
 });
 
 test("buildInlinePanelProfile rejects a malformed agent reference", () => {
@@ -758,4 +762,15 @@ test("the /fusion init template parses under the current validators", () => {
   const parsed = parseFusionConfig(template, "template");
 
   assert.ok(parsed.profiles[parsed.defaultProfile]);
+});
+
+test("buildInlinePanelProfile accepts a single-model panel", () => {
+  const base = createDefaultFusionConfig().profiles.quality;
+  assert.ok(base);
+
+  const profile = buildInlinePanelProfile(base, ["opus"]);
+
+  assert.equal(profile.panel.length, 1);
+  assert.equal(profile.panel[0]?.model, "opus");
+  assert.deepEqual(profile.judge, base.judge);
 });

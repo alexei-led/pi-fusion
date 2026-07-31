@@ -582,6 +582,12 @@ keeps an old run reproducible when someone re-reads it.
 
 ## 7. Suggested order
 
+> **Status:** items 1, 2 (static facets), 3, 4, 5b, and the tools work shipped on
+> 2026-07-31 — see `docs/plans/completed/20260731-fusion-panel-modes-and-tools.md`.
+> Item 6 (model registry) and everything gated on it were dropped: cost is not a
+> constraint for this project. The rebuttal round remains unbuilt, as argued in §4c.
+
+
 | #   | Item                                                                   | Effort | Value                        |
 | --- | ---------------------------------------------------------------------- | ------ | ---------------------------- |
 | 1   | Shuffle + optional blind labels for judge input (§6)                   | XS     | correctness                  |

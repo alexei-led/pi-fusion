@@ -136,6 +136,7 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion
 /fusion <prompt>
 /fusion --profile <name> <prompt>
+/fusion --panel <models> <prompt>
 /fusion -p <name> <prompt>
 /fusion status
 /fusion stop
@@ -203,6 +204,11 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown; `$0.0000` remains a known zero-cost value.
 - `Model` is lifecycle metadata. `Configured model` is the profile request; both appear when execution differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
+- Panel answers are presented to the judge in an order seeded from the run id, not in configuration order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
+- Panelists and the judge can search the web. That sends prompt-derived queries to the provider in `~/.pi/agent/web-providers.json`. Use the `fusion-panelist-lite` agent for every member to keep a run off the web.
+- `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
+- `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
+- `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in, it voids the read-only property the other agents have, and it is unsafe at `concurrency > 1` because panelists share one working directory.
 
 ## Read more
 
