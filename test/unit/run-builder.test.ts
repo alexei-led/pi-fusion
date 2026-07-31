@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import {
   appendThinkingSuffix,
   buildFusionChainSpawnParams,
   buildJudgeSpawnParams,
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
+  shufflePanelItems,
   type PanelOutput,
   type FailedPanelSummary,
 } from "../../src/run-builder.js";
+import { createDefaultFusionConfig } from "../../src/config.js";
 import type { FusionProfile } from "../../src/types.js";
 
 const PROFILE: FusionProfile = {
@@ -191,6 +194,7 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
     prompt: "Compare two API designs",
     panelOutputs: outputs,
     failedPanelists,
+    runId: "run-fixed-seed",
   });
 
   assert.equal(params.async, true);
@@ -217,3 +221,172 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
   assert.match(params.task, /# Fusion Report/);
   assert.match(params.task, /## Disagreements/);
 });
+
+test("shufflePanelItems is stable for the same seed", () => {
+  const items = ["a", "b", "c", "d", "e", "f"];
+
+  const first = shufflePanelItems(items, "run-42");
+  const second = shufflePanelItems(items, "run-42");
+
+  assert.deepEqual(first, second);
+});
+
+test("shufflePanelItems is a permutation and leaves the input untouched", () => {
+  const items = ["a", "b", "c", "d", "e", "f"];
+
+  const shuffled = shufflePanelItems(items, "run-42");
+
+  assert.deepEqual([...shuffled].sort(), [...items].sort());
+  assert.deepEqual(items, ["a", "b", "c", "d", "e", "f"]);
+});
+
+test("shufflePanelItems varies across seeds", () => {
+  const items = ["a", "b", "c", "d", "e", "f"];
+
+  const orders = new Set(
+    Array.from({ length: 25 }, (_, index) =>
+      shufflePanelItems(items, `run-${index}`).join(""),
+    ),
+  );
+
+  assert.ok(orders.size > 1, "expected different seeds to produce different orders");
+});
+
+test("shufflePanelItems handles empty and single-item panels", () => {
+  assert.deepEqual(shufflePanelItems([], "run-1"), []);
+  assert.deepEqual(shufflePanelItems(["only"], "run-1"), ["only"]);
+});
+
+test("buildJudgeSpawnParams presents the same output order for the same run id", () => {
+  const outputs: PanelOutput[] = PROFILE.panel.map((member, index) => ({
+    index,
+    id: member.id,
+    label: member.label,
+    agent: member.agent,
+    output: `Answer from ${member.label}.`,
+  }));
+  const input = {
+    profile: PROFILE,
+    prompt: "Compare two API designs",
+    panelOutputs: outputs,
+    failedPanelists: [],
+    runId: "run-stable",
+  };
+
+  assert.equal(
+    buildJudgeSpawnParams(input).task,
+    buildJudgeSpawnParams(input).task,
+  );
+});
+
+test("buildJudgeSpawnParams keeps panel status in configuration order while shuffling answers", () => {
+  const outputs: PanelOutput[] = PROFILE.panel.map((member, index) => ({
+    index,
+    id: member.id,
+    label: member.label,
+    agent: member.agent,
+    output: `Answer from ${member.label}.`,
+  }));
+
+  const seeds = ["run-a", "run-b", "run-c", "run-d", "run-e", "run-f"];
+  const answerOrders = new Set<string>();
+
+  for (const runId of seeds) {
+    const { task } = buildJudgeSpawnParams({
+      profile: PROFILE,
+      prompt: "Compare two API designs",
+      panelOutputs: outputs,
+      failedPanelists: [],
+      runId,
+    });
+
+    // Status block always lists members in profile order.
+    const status = task.slice(
+      task.indexOf("Panel status:"),
+      task.indexOf("Successful panel outputs:"),
+    );
+    assert.ok(
+      status.indexOf("Architect") <
+        status.indexOf("Tester") &&
+        status.indexOf("Tester") < status.indexOf("Generalist"),
+      `status block lost configuration order for ${runId}`,
+    );
+
+    const answers = task.slice(task.indexOf("Successful panel outputs:"));
+    answerOrders.add(
+      ["Architect", "Tester", "Generalist"]
+        .map((label) => [label, answers.indexOf(`## ${label}`)] as const)
+        .sort((left, right) => left[1] - right[1])
+        .map(([label]) => label)
+        .join(","),
+    );
+  }
+
+  assert.ok(
+    answerOrders.size > 1,
+    "answer order should differ across run ids; position bias would otherwise be deterministic",
+  );
+});
+
+test("buildPanelSpawnParams matches the pre-change baseline for the default profile", async () => {
+  const baseline = JSON.parse(
+    await readFile("test/fixtures/baseline-tasks.json", "utf8"),
+  ) as { prompt: string; panel: unknown };
+  const profile = createDefaultFusionConfig().profiles.quality;
+  assert.ok(profile);
+
+  assert.deepEqual(
+    buildPanelSpawnParams(profile, baseline.prompt),
+    baseline.panel,
+  );
+});
+
+test("buildJudgeSpawnParams matches the pre-change baseline once answer order is normalised", async () => {
+  const baseline = JSON.parse(
+    await readFile("test/fixtures/baseline-tasks.json", "utf8"),
+  ) as { prompt: string; judge: { task: string } };
+  const profile = createDefaultFusionConfig().profiles.quality;
+  assert.ok(profile);
+
+  const outputs: PanelOutput[] = profile.panel.map((member, index) => ({
+    index,
+    agent: member.agent,
+    output: `Answer from ${member.label}.`,
+    id: member.id,
+    label: member.label,
+    ...(member.role !== undefined ? { role: member.role } : {}),
+  }));
+  const { task } = buildJudgeSpawnParams({
+    profile,
+    prompt: baseline.prompt,
+    panelOutputs: outputs,
+    failedPanelists: [],
+    runId: "run-baseline",
+  });
+
+  // Ordering of the answer blocks is the one intended difference from master.
+  assert.equal(
+    normaliseAnswerBlocks(task),
+    normaliseAnswerBlocks(baseline.judge.task),
+  );
+});
+
+test("buildFusionChainSpawnParams is unchanged; the legacy chain path is restore-only", () => {
+  const params = buildFusionChainSpawnParams(PROFILE, "Compare two API designs");
+  const judgeStep = params.chain[1];
+
+  assert.match(judgeStep.task, /## Architect \(architect\)/);
+  assert.ok(
+    judgeStep.task.indexOf("## Architect") <
+      judgeStep.task.indexOf("## Tester"),
+    "chain judge task must keep profile order",
+  );
+});
+
+function normaliseAnswerBlocks(task: string): string {
+  const marker = "Successful panel outputs:";
+  const head = task.slice(0, task.indexOf(marker));
+  const answers = task.slice(task.indexOf(marker));
+  const blocks = answers.split(/(?=^## )/m).sort();
+  return `${head}${blocks.join("")}`;
+}

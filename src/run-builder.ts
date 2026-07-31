@@ -99,6 +99,12 @@ export interface BuildJudgeSpawnParamsInput {
   prompt: string;
   panelOutputs: readonly PanelOutput[];
   failedPanelists: readonly FailedPanelSummary[];
+  /**
+   * Seeds the order panel answers are presented to the judge. Required rather
+   * than optional: a missing seed would silently restore the fixed index order
+   * and its position bias.
+   */
+  runId: string;
 }
 
 const PANEL_OUTPUT_CONTRACT = [
@@ -303,6 +309,9 @@ function buildPanelTask(
 function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const sortedOutputs = [...input.panelOutputs].sort(comparePanelItems);
   const sortedFailures = [...input.failedPanelists].sort(comparePanelItems);
+  // Status and failure lists stay in configuration order so the reader can map
+  // them to the profile. Only the answers the judge weighs are shuffled.
+  const presentedOutputs = shufflePanelItems(sortedOutputs, input.runId);
   return [
     "You are the fusion judge.",
     "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
@@ -315,7 +324,7 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     ...formatPanelStatus(sortedOutputs, sortedFailures),
     "",
     "Successful panel outputs:",
-    ...formatPanelOutputs(sortedOutputs),
+    ...formatPanelOutputs(presentedOutputs),
     "",
     "Failed panelists:",
     ...formatFailedPanelists(sortedFailures),
@@ -403,6 +412,42 @@ function comparePanelItems(
   right: Pick<PanelOutput, "index">,
 ): number {
   return left.index - right.index;
+}
+
+/**
+ * LLM judges favour whichever candidate is presented first or last. A fixed
+ * order therefore advantages the same panel member on every run. Shuffling
+ * removes the bias; seeding it from the run id keeps a persisted run rendering
+ * identically when it is replayed through `fusion:rpc:v1` adopt.
+ */
+export function shufflePanelItems<T>(
+  items: readonly T[],
+  seed: string,
+): T[] {
+  const shuffled = [...items];
+  const nextRandom = createSeededRandom(seed);
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swap = Math.floor(nextRandom() * (index + 1));
+    [shuffled[index], shuffled[swap]] = [shuffled[swap]!, shuffled[index]!];
+  }
+  return shuffled;
+}
+
+function createSeededRandom(seed: string): () => number {
+  // FNV-1a over the seed, then mulberry32. Small, dependency-free, and stable
+  // across Node versions - the reproducibility guarantee depends on that.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < seed.length; index++) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  let state = hash >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let drawn = Math.imul(state ^ (state >>> 15), 1 | state);
+    drawn = (drawn + Math.imul(drawn ^ (drawn >>> 7), 61 | drawn)) ^ drawn;
+    return ((drawn ^ (drawn >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 function firstLine(value: string): string {

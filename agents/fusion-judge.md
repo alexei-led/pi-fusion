@@ -2,7 +2,7 @@
 name: fusion-judge
 package: pi-fusion
 description: Judge and synthesizer for pi-fusion panel outputs.
-tools: read, grep, find, ls
+tools: read, grep, find, ls, web_search, web_contents, web_answer
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

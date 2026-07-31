@@ -8,6 +8,8 @@ import {
   createDefaultFusionConfig,
   getGlobalFusionConfigPath,
   getProjectFusionConfigPath,
+  isAgentReference,
+  KNOWN_TOOL_NAMES,
   loadFusionConfig,
   parseFusionConfig,
   resolveProfile,
@@ -77,6 +79,97 @@ test("parseFusionConfig rejects a non-boolean panel agreement setting", () => {
       ),
     /Invalid fusion config/,
   );
+});
+
+test("isAgentReference accepts the shapes agents actually use", () => {
+  const accepted = [
+    "pi-fusion.fusion-panelist",
+    "pi-fusion.fusion-panelist-lite",
+    "researcher",
+    "my-org.tools.reviewer",
+    "  pi-fusion.fusion-judge  ",
+  ];
+
+  for (const value of accepted) {
+    assert.equal(isAgentReference(value), true, `expected ${value} accepted`);
+  }
+});
+
+test("isAgentReference rejects real typo classes", () => {
+  const rejected = [
+    "pi-fusion fusion-panelist",
+    ".fusion-panelist",
+    "pi-fusion.",
+    "pi-fusion..panelist",
+    "",
+    "   ",
+    42,
+    null,
+    undefined,
+    ["pi-fusion.fusion-panelist"],
+  ];
+
+  for (const value of rejected) {
+    assert.equal(
+      isAgentReference(value),
+      false,
+      `expected ${JSON.stringify(value)} rejected`,
+    );
+  }
+});
+
+test("parseFusionConfig rejects a panel member with a malformed agent", () => {
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles: {
+            quality: {
+              panel: [{ ...PANEL_MEMBER, agent: "pi-fusion fusion-panelist" }],
+              judge: JUDGE,
+            },
+          },
+        }),
+        "test",
+      ),
+    /Invalid fusion config/,
+  );
+});
+
+test("parseFusionConfig rejects a judge with a malformed agent", () => {
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles: {
+            quality: {
+              panel: [PANEL_MEMBER],
+              judge: { agent: "pi-fusion." },
+            },
+          },
+        }),
+        "test",
+      ),
+    /Invalid fusion config/,
+  );
+});
+
+test("KNOWN_TOOL_NAMES matches the verified pi tool vocabulary", () => {
+  assert.deepEqual([...KNOWN_TOOL_NAMES].sort(), [
+    "bash",
+    "edit",
+    "find",
+    "grep",
+    "ls",
+    "read",
+    "web_answer",
+    "web_contents",
+    "web_research",
+    "web_search",
+    "write",
+  ]);
 });
 
 test("loadFusionConfig prefers trusted project config over global config", async (t) => {

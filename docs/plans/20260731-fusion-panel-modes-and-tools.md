@@ -208,14 +208,26 @@ export interface PanelOutput {
 - Create: `agents/fusion-panelist-lite.md`
 - Create: `agents/fusion-panelist-full.md`
 - Modify: `test/e2e/package-smoke.test.ts`
+- Create: `test/unit/agents.test.ts`
 
-- [ ] set `tools: read, grep, find, ls, web_search, web_contents, web_answer` in `agents/fusion-panelist.md` and `agents/fusion-judge.md`
-- [ ] create `agents/fusion-panelist-lite.md` as a read-only variant (`read, grep, find, ls`), body identical to the default panelist
-- [ ] create `agents/fusion-panelist-full.md` adding `bash, edit, write, web_research`, with a frontmatter `description` and a body warning that it is unsafe at `concurrency > 1` and voids the read-only guarantee
-- [ ] confirm `package.json` `files` glob `agents/*.md` picks up the new files (no change expected — verify, do not assume)
-- [ ] write test in `test/e2e/package-smoke.test.ts` asserting all four panelist/judge agent files are present in `npm pack --dry-run` output
-- [ ] write test asserting each shipped agent's frontmatter declares a non-empty `tools:` list and uses only names from the verified vocabulary
-- [ ] run tests - must pass before task 2
+- [x] set `tools: read, grep, find, ls, web_search, web_contents, web_answer` in `agents/fusion-panelist.md` and `agents/fusion-judge.md`
+- [x] create `agents/fusion-panelist-lite.md` as a read-only variant (`read, grep, find, ls`), body identical to the default panelist
+- [x] create `agents/fusion-panelist-full.md` adding `bash, edit, write, web_research`, with a frontmatter `description` and a body warning that it is unsafe at `concurrency > 1` and voids the read-only guarantee
+- [x] confirm `package.json` `files` glob `agents/*.md` picks up the new files (verified via `npm pack --dry-run --json`; all four present, no manifest change needed)
+- [x] write test in `test/e2e/package-smoke.test.ts` asserting all four panelist/judge agent files are present in `npm pack --dry-run` output
+- [x] write test asserting each shipped agent's frontmatter declares a non-empty `tools:` list and uses only names from the verified vocabulary
+- [x] run tests - must pass before task 2
+
+➕ Added `test/unit/agents.test.ts` (not in the original Files list) with six
+guards beyond the two required: only `fusion-panelist-full` may hold write tools,
+default panelist and judge must reach the web, `web_research` stays off outside
+the full variant, and `fusion-panelist-lite` is pinned to the exact read-only set.
+These lock in the safety properties the docs will assert in Task 13.
+
+⚠ `npm pack` and therefore `npm run test:e2e` / `test:all` need the sandbox
+disabled: npm writes to `~/.npm/_cacache`, which is outside the sandbox write
+allowlist and fails with EPERM. Not a code problem; adjust via `/sandbox` if it
+becomes noisy.
 
 ### Task 2: Validate agent tool names at config load
 
@@ -234,12 +246,32 @@ required tool into a run error — which Fusion **already** captures today in
 `FailedPanelSummary.summary`. Runtime detection therefore needs no work; what is
 missing is catching bad tool names before a run is spent.
 
-- [ ] add a `KNOWN_TOOL_NAMES` constant in `src/config.ts` covering Pi core (`read, bash, edit, write, grep, find, ls`) and `pi-web-providers` (`web_search, web_contents, web_answer, web_research`)
-- [ ] add `validateShippedAgentTools()` parsing the frontmatter `tools:` line of each bundled agent, reporting names outside `KNOWN_TOOL_NAMES` — this guards against the stale `fetch_content` / `get_search_content` class of bug found during planning
-- [ ] treat `mcp:`-prefixed entries as always valid; they resolve at runtime, not statically
-- [ ] write tests: every shipped agent passes, a fixture with an unknown tool name fails, an `mcp:foo` entry passes, an empty `tools:` line fails
-- [ ] write test asserting `KNOWN_TOOL_NAMES` matches the verified vocabulary table in this plan
-- [ ] run tests - must pass before task 3
+⚠ **Scope corrected a second time during implementation.** `validateShippedAgentTools()`
+was dropped. It would read the bundled agents' markdown at runtime to check
+something a CI test already guarantees — dead code by the repo's own "no unused
+abstractions" rule, and it cannot check *user* agents because Fusion has no
+access to the pi-subagents registry (`subagents-rpc.ts` exposes only
+ping/spawn/status/stop/interrupt — no list). Replaced with the two pieces that
+carry real weight: one shared vocabulary, and validation of the one agent-related
+thing a user actually types.
+
+- [x] add exported `KNOWN_TOOL_NAMES` to `src/config.ts` covering Pi core (`read, bash, edit, write, grep, find, ls`) and `pi-web-providers` (`web_search, web_contents, web_answer, web_research`); `test/unit/agents.test.ts` imports it instead of keeping a second copy
+- [x] add exported `isAgentReference()` and apply it in `isPanelMemberConfig` and `isJudgeConfig`, replacing the bare `isNonEmptyString(value.agent)` check
+- [x] ~~treat `mcp:`-prefixed entries as always valid~~ — retained in `test/unit/agents.test.ts` where tool names are actually checked
+- [x] write tests: accepted agent shapes, rejected typo classes, malformed panel agent rejected by `parseFusionConfig`, malformed judge agent rejected
+- [x] write test asserting `KNOWN_TOOL_NAMES` matches the verified vocabulary table in this plan
+- [x] run tests - must pass before task 3
+
+**Validation deliberately kept narrow.** `isAgentReference` does *not* enforce
+pi-subagents' lowercase `IDENTIFIER_PATTERN` (`agents/identity.ts:3`): that
+pattern governs package names and never covers the frontmatter `name`, so
+enforcing it could reject a config that would actually run. It rejects embedded
+whitespace, empty segments, and leading/trailing dots — the classes that are
+unambiguously typos.
+
+➕ Also exported `PANEL_AGENT_LITE` and `PANEL_AGENT_FULL` alongside the existing
+`PANEL_AGENT`, so Task 5's inline parser and Task 13's docs reference constants
+rather than repeating string literals.
 
 ### Task 3: Deterministic seeded ordering of panel outputs for the judge
 
@@ -261,15 +293,24 @@ missing is catching bad tool names before a run is spent.
   render time and never sees `PanelOutput`, so it has no run-time ordering to
   shuffle.
 
-- [ ] add a small seeded PRNG helper and a `shufflePanelItems(items, seed)` function in `src/run-builder.ts`
-- [ ] thread `runId` into `BuildJudgeSpawnParamsInput` and use it as the shuffle seed, replacing the `comparePanelItems` index sort in `buildJudgeTask`
-- [ ] keep `formatPanelStatus` and `formatFailedPanelists` in stable index order — only the outputs block is shuffled
-- [ ] add a `CHANGELOG.md` entry recording the ordering change
-- [ ] write test asserting the same `runId` produces the same order across calls (reproducibility for `adopt`/replay)
-- [ ] write test asserting different `runId`s produce different orders over a sample, and that the output set is unchanged (permutation, no loss)
-- [ ] write test asserting a single-output panel and an empty panel are handled without error
-- [ ] write test asserting `buildChainJudgeTask` output is unchanged from `master`
-- [ ] run tests - must pass before task 4
+- [x] add a small seeded PRNG helper and a `shufflePanelItems(items, seed)` function in `src/run-builder.ts` (FNV-1a + mulberry32, dependency-free and stable across Node versions — the reproducibility guarantee depends on that)
+- [x] thread `runId` into `BuildJudgeSpawnParamsInput` and use it as the shuffle seed, replacing the `comparePanelItems` index sort in `buildJudgeTask`
+- [x] keep `formatPanelStatus` and `formatFailedPanelists` in stable index order — only the outputs block is shuffled
+- [x] add a `CHANGELOG.md` entry recording the ordering change
+- [x] write test asserting the same `runId` produces the same order across calls (reproducibility for `adopt`/replay)
+- [x] write test asserting different `runId`s produce different orders over a sample, and that the output set is unchanged (permutation, no loss)
+- [x] write test asserting a single-output panel and an empty panel are handled without error
+- [x] write test asserting `buildChainJudgeTask` output is unchanged from `master`
+- [x] run tests - must pass before task 4
+
+➕ `runId` was made **required** on `BuildJudgeSpawnParamsInput` rather than
+optional. An optional seed with an index-order fallback would silently restore
+the bias at any call site that forgot it; a required field makes the compiler
+catch that.
+
+➕ Baseline fixture captured before any `run-builder.ts` change and committed as
+`test/fixtures/baseline-tasks.json`; the two byte-equality tests promised for
+Task 12 are already in `test/unit/run-builder.test.ts`.
 
 ### Task 4: Optional blind candidate labels
 
