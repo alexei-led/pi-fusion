@@ -8,8 +8,8 @@
 > Parallel models. One judge. Better answers.
 
 `pi-fusion` is a Pi extension for hard technical questions.
-It uses `pi-subagents` to send the same prompt through a small parallel model panel,
-then asks a judge agent to compare the outputs and return the best realistic answer.
+It sends one prompt to a small panel of models that run in parallel.
+A judge agent then compares the answers and returns the best realistic one.
 
 CI covers lint, typecheck, unit tests, integration tests, package smoke tests,
 and `npm pack --dry-run`.
@@ -122,7 +122,7 @@ synthesize the best realistic answer.
 
 Use it for questions like:
 
-- Which design should we choose?
+- Which design do we choose?
 - What will break if I change this?
 - Is this PR or release flow safe?
 - What did I miss?
@@ -156,11 +156,11 @@ Other Pi extensions can control Fusion through the versioned event-bus contract
 Methods:
 
 - `ping` — return the RPC version and supported methods
-- `start` — requires `prompt` and a non-empty `operationId`; accepts optional `profile`. Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
+- `start` — requires `prompt` and a non-empty `operationId`. It accepts an optional `profile`. Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
 - `status` — return structured run state by `operationId`, `runId`, or the current/last run
-- `result` — return a terminal run and report; active runs return `not_ready`
+- `result` — return a terminal run and report. An active run returns `not_ready`
 - `cancel` — cancel the selected active run, or report that the selected terminal run was not cancelled
-- `adopt` — confirm and return a run from restored session history by `runId`
+- `adopt` — verify and return a run from restored session history by `runId`
 
 `start` returns `{ operationId, replayed, run }`. `status` and `result`
 return `{ run }`. `cancel` returns `{ cancelled, run? }`. `adopt` returns
@@ -207,11 +207,11 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
 - Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events.
 - `pi-fusion` does not own the footer.
-- Prompts and inspected snippets may be sent to every configured panel provider and to the judge through `pi-subagents`.
-- Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown; `$0.0000` remains a known zero-cost value.
-- `Model` is lifecycle metadata. `Configured model` is the profile request; both appear when execution differs from the request.
+- Fusion sends your prompt and any inspected snippets to every panel model, and to the judge, through `pi-subagents`.
+- Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown. `$0.0000` is a known zero cost.
+- `Model` is lifecycle metadata. `Configured model` is the profile request. Both appear when the run differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
-- Panel answers are presented to the judge in an order seeded from the run id, not in configuration order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
+- Panel answers reach the judge in an order seeded from the run id, not in config order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
 - Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
 - `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
