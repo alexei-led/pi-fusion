@@ -87,7 +87,7 @@ test("parseFusionConfig rejects a non-boolean panel agreement setting", () => {
 test("isAgentReference accepts the shapes agents actually use", () => {
   const accepted = [
     "pi-fusion.fusion-panelist",
-    "pi-fusion.fusion-panelist-lite",
+    "pi-fusion.fusion-panelist-web",
     "researcher",
     "my-org.tools.reviewer",
     "  pi-fusion.fusion-judge  ",
@@ -504,8 +504,8 @@ test("splitInlinePanelEntry does not mistake a thinking suffix for an agent", ()
 
 test("splitInlinePanelEntry reads an agent-qualified entry", () => {
   assert.deepEqual(
-    splitInlinePanelEntry("pi-fusion.fusion-panelist-lite:openai/gpt-5.5"),
-    { agent: "pi-fusion.fusion-panelist-lite", model: "openai/gpt-5.5" },
+    splitInlinePanelEntry("pi-fusion.fusion-panelist-web:openai/gpt-5.5"),
+    { agent: "pi-fusion.fusion-panelist-web", model: "openai/gpt-5.5" },
   );
   assert.deepEqual(
     splitInlinePanelEntry("pi-fusion.fusion-panelist-full:opus:high"),
@@ -519,13 +519,13 @@ test("buildInlinePanelProfile replaces the panel and keeps the judge", () => {
 
   const profile = buildInlinePanelProfile(base, [
     "opus",
-    "pi-fusion.fusion-panelist-lite:openai/gpt-5.5",
+    "pi-fusion.fusion-panelist-web:openai/gpt-5.5",
   ]);
 
   assert.equal(profile.panel.length, 2);
   assert.equal(profile.panel[0]?.agent, "pi-fusion.fusion-panelist");
   assert.equal(profile.panel[0]?.model, "opus");
-  assert.equal(profile.panel[1]?.agent, "pi-fusion.fusion-panelist-lite");
+  assert.equal(profile.panel[1]?.agent, "pi-fusion.fusion-panelist-web");
   assert.equal(profile.panel[1]?.model, "openai/gpt-5.5");
   assert.deepEqual(profile.judge, base.judge);
   assert.equal(profile.timeoutMs, base.timeoutMs);

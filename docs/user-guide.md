@@ -55,7 +55,7 @@ Each comma-separated entry is `<model>` or `<agent>:<model>`:
 
 ```text
 --panel opus,gpt-5.5                                     # both use the default panelist
---panel pi-fusion.fusion-panelist-lite:gpt-5.5,opus      # first member is local-only
+--panel pi-fusion.fusion-panelist-web:gpt-5.5,opus       # first member gets web access
 ```
 
 An entry counts as agent-qualified only when the part before the first `:`
@@ -151,15 +151,26 @@ Panel member:
 A panel member's tools come from its **agent definition**, not from `fusion.json`.
 `pi-subagents` has no per-task tool override, so `agent` is the knob.
 
-Fusion ships four:
+Fusion ships five:
 
 | Agent                            | Tools                                                        | Use for                                                        |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
-| `pi-fusion.fusion-panelist`      | `read, grep, find, ls, web_search, web_contents, web_answer` | Default. Local inspection plus web evidence.                   |
-| `pi-fusion.fusion-panelist-lite` | `read, grep, find, ls`                                       | Local only. No prompt content reaches a web provider.          |
-| `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research`                 | Opt-in. **See the warning below.**                             |
-| `pi-fusion.fusion-judge`         | `read, grep, find, ls, web_search, web_contents, web_answer` | Judge; the read tools are what let it verify contested claims. |
-| `pi-fusion.fusion-composer`      | same as the judge                                            | Synthesis under `synthesis: "merge"`.                          |
+| `pi-fusion.fusion-panelist` | `read, grep, find, ls` | Default. Local inspection only; works with no extra extensions. |
+| `pi-fusion.fusion-panelist-web` | above plus `web_search, web_contents, web_answer` | Opt-in. **Requires `pi-web-providers`.** |
+| `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research` | Opt-in. Requires `pi-web-providers`. **See the warning below.** |
+| `pi-fusion.fusion-judge` | `read, grep, find, ls` | Judge; the read tools are what let it verify contested claims. |
+| `pi-fusion.fusion-composer` | `read, grep, find, ls` | Synthesis under `synthesis: "merge"`. |
+
+> **Tool names are a strict allowlist, not a loader.** If an agent declares a tool
+> whose provider extension is not installed, every task using that agent fails
+> with `requested unavailable child tools`. That is why the default agents stay on
+> Pi core tools: `pi-web-providers` is optional, so depending on it by default
+> would break every run for anyone without it. Install it before using the `-web`
+> or `-full` variants:
+>
+> ```bash
+> pi install npm:pi-web-providers
+> ```
 
 Mix them per member:
 
@@ -174,7 +185,7 @@ Mix them per member:
     {
       "id": "local",
       "label": "Local",
-      "agent": "pi-fusion.fusion-panelist-lite"
+      "agent": "pi-fusion.fusion-panelist-web"
     },
     { "id": "mine", "label": "Custom", "agent": "my-package.my-panelist" }
   ]
@@ -366,14 +377,14 @@ Fusion uses model providers the same way normal Pi work does. The difference is 
 - local file snippets read by a panelist go to that panelist's model;
 - the judge receives the original prompt plus successful panel answers and failure summaries.
 
-**Panelists can reach the web.** The default panelist and judge declare
-`web_search`, `web_contents`, and `web_answer`. When a panelist searches, your
-prompt and whatever query it derives from your code go to the provider
-configured in `~/.pi/agent/web-providers.json` — a third party separate from
-your model provider. Use `pi-fusion.fusion-panelist-lite` for every member to
-keep a run entirely off the web.
+**Panelists can reach the web, but only if you opt in.** The default panelist,
+judge, and composer are local-only. A member using `fusion-panelist-web` or
+`fusion-panelist-full` can search: your prompt and whatever query it derives from
+your code then go to the provider configured in `~/.pi/agent/web-providers.json`
+— a third party separate from your model provider. Keeping every member on the
+default agent keeps a run entirely off the web.
 
-This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. The default and `-lite` Fusion agents are read-only, but providers still receive the context needed to answer. `fusion-panelist-full` is not read-only; see [Panel agents and tools](#panel-agents-and-tools).
+This is not an extra privacy guarantee. A mixed-provider panel can send copies of the work to several providers. An all-local panel can keep those model calls local, depending on your Pi model configuration. Every bundled Fusion agent except `fusion-panelist-full` is read-only, but providers still receive the context needed to answer. `fusion-panelist-full` is not read-only; see [Panel agents and tools](#panel-agents-and-tools).
 
 Fusion does not currently inspect or rewrite the final provider payload. Configure provider privacy and local-model routing in Pi.
 

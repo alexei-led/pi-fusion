@@ -436,7 +436,7 @@ test("blindPanelLabels hides labels, roles, agents, and artifact paths from the 
       index: 2,
       id: "generalist",
       label: "Generalist",
-      agent: "pi-fusion.fusion-panelist-lite",
+      agent: "pi-fusion.fusion-panelist-web",
       output: "Choose B.",
     },
   ];
@@ -466,7 +466,7 @@ test("blindPanelLabels hides labels, roles, agents, and artifact paths from the 
     "architect",
     "generalist",
     "tester",
-    "fusion-panelist-lite",
+    "fusion-panelist-web",
     "/tmp/",
   ]) {
     assert.equal(
