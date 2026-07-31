@@ -373,14 +373,20 @@ must not mistake `opus:high` for an agent-qualified entry. Rule: an entry is
 agent-qualified only when the segment before the first `:` contains a `.`
 (package-qualified agent names always do).
 
-- [ ] add `panel?: string[]` to `ParsedFusionArgs` and parse `--panel a,b,c` plus `--panel=a,b,c` in `parseFusionArgs`, following the existing `--profile` handling
-- [ ] add `buildInlinePanelProfile(base, entries)` in `src/config.ts` that clones the resolved profile and replaces `panel` with one member per entry, defaulting `agent` to `PANEL_AGENT`, generating unique `id`/`label` from the model string, and keeping the base judge
-- [ ] apply Claude alias shorthand to inline models via the existing `resolveClaudeAliasModelSpec` so `claude-work/opus-4.8` works inline
-- [ ] write arg parsing tests: both syntaxes, empty value rejected, duplicate `--panel` rejected, option after prompt treated as prompt text, whitespace around commas
-- [ ] write tests for entry splitting: bare model, agent-qualified entry, `opus:high` thinking suffix NOT treated as an agent, provider-prefixed `openai/gpt-5.5`, agent-qualified with thinking suffix
-- [ ] write tests for `buildInlinePanelProfile`: member count, generated ids unique, default agent applied, explicit agent preserved, judge preserved, alias resolution applied
-- [ ] write test asserting `--panel` and `--profile` combine (inline panel wins, profile supplies the judge)
-- [ ] run tests - must pass before task 6
+- [x] add `panel?: string[]` to `ParsedFusionArgs` and parse `--panel a,b,c` plus `--panel=a,b,c` in `parseFusionArgs`, following the existing `--profile` handling
+- [x] add `buildInlinePanelProfile(base, entries)` in `src/config.ts` that clones the resolved profile and replaces `panel` with one member per entry, defaulting `agent` to `PANEL_AGENT`, generating unique `id`/`label` from the model string, and keeping the base judge
+- [x] apply Claude alias shorthand to inline models — the assembled profile is re-run through `applyClaudeAliasShorthand` in the orchestrator rather than reimplementing resolution, so inline and file config share one path
+- [x] write arg parsing tests: both syntaxes, empty value rejected, duplicate `--panel` rejected, option after prompt treated as prompt text, whitespace around commas
+- [x] write tests for entry splitting: bare model, agent-qualified entry, `opus:high` thinking suffix NOT treated as an agent, provider-prefixed `openai/gpt-5.5`, agent-qualified with thinking suffix
+- [x] write tests for `buildInlinePanelProfile`: member count, generated ids unique, default agent applied, explicit agent preserved, judge preserved, alias resolution applied
+- [x] write test asserting `--panel` and `--profile` combine (inline panel wins, profile supplies the judge)
+- [x] run tests - must pass before task 6
+
+⚠ **One planned test was wrong and the code was right.** The plan expected
+`--panel Compare things` to throw. It does not, and should not: `Compare` is a
+one-entry panel and `things` is the prompt, exactly as `--profile Compare things`
+behaves. Rejecting it would make `--panel` inconsistent with the flag it is
+modelled on. The test now pins that behaviour explicitly instead.
 
 ### Task 6: Judge verification of contested claims
 

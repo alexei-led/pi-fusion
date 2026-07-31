@@ -170,6 +170,78 @@ export function resolveProfile(
   return { name, profile };
 }
 
+/**
+ * Splits an inline `--panel` entry into agent and model.
+ *
+ * Model strings already use `:` for the thinking suffix (`opus:high`) and `/`
+ * for the provider, so a bare `:` cannot mean "agent-qualified". An entry is
+ * only treated as agent-qualified when the segment before the first `:`
+ * contains a `.` — package-qualified agent names always do.
+ */
+export function splitInlinePanelEntry(entry: string): {
+  agent: string;
+  model: string;
+} {
+  const trimmed = entry.trim();
+  const separator = trimmed.indexOf(":");
+  if (separator > 0) {
+    const prefix = trimmed.slice(0, separator);
+    const rest = trimmed.slice(separator + 1).trim();
+    if (prefix.includes(".") && !prefix.includes("/") && rest) {
+      return { agent: prefix, model: rest };
+    }
+  }
+  return { agent: PANEL_AGENT, model: trimmed };
+}
+
+/**
+ * Builds an ephemeral profile from `--panel`. The resolved profile still
+ * supplies the judge and every other setting; only the panel is replaced.
+ */
+export function buildInlinePanelProfile(
+  base: FusionProfile,
+  entries: readonly string[],
+): FusionProfile {
+  const usedIds = new Set<string>();
+  const panel = entries.map((entry, index) => {
+    const { agent, model } = splitInlinePanelEntry(entry);
+    if (!model) {
+      throw new FusionConfigError(
+        `Inline panel entry "${entry}" has no model.`,
+      );
+    }
+    if (!isAgentReference(agent)) {
+      throw new FusionConfigError(
+        `Inline panel entry "${entry}" has a malformed agent reference.`,
+      );
+    }
+    return {
+      id: uniqueInlineId(model, index, usedIds),
+      label: model,
+      agent,
+      model,
+    };
+  });
+  return { ...base, panel };
+}
+
+function uniqueInlineId(
+  model: string,
+  index: number,
+  used: Set<string>,
+): string {
+  const base =
+    model
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toLowerCase() || `panel_${index + 1}`;
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate)) candidate = `${base}_${suffix++}`;
+  used.add(candidate);
+  return candidate;
+}
+
 export async function writeProjectFusionConfigTemplate(
   cwd: string,
   deps: FileWriteDeps = {},

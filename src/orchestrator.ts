@@ -1,4 +1,6 @@
+import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import {
+  buildInlinePanelProfile,
   loadFusionConfig,
   resolveProfile as resolveFusionProfile,
   type ResolvedFusionProfile,
@@ -153,6 +155,25 @@ export class FusionOrchestrator {
     try {
       const config = await this.loadConfig(ctx);
       resolved = this.resolveProfile(config, args.profile);
+      if (args.panel?.length) {
+        // The named profile still supplies the judge and every other setting;
+        // only the panel is replaced. Inline models skip the alias pass that
+        // runs at config load, so re-run it over the assembled profile.
+        const inlineName = `${resolved.name} (inline panel)`;
+        const aliased = await applyClaudeAliasShorthand(
+          {
+            defaultProfile: inlineName,
+            profiles: {
+              [inlineName]: buildInlinePanelProfile(
+                resolved.profile,
+                args.panel,
+              ),
+            },
+          },
+          ctx,
+        );
+        resolved = this.resolveProfile(aliased, inlineName);
+      }
       this.configWarning = undefined;
     } catch (error: unknown) {
       const message = errorMessage(error);

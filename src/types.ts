@@ -85,6 +85,8 @@ export interface ParsedFusionArgs {
   prompt: string;
   profile?: string;
   operationId?: string;
+  /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
+  panel?: string[];
 }
 
 export interface PanelOutput {
