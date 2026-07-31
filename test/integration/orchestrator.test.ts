@@ -34,6 +34,26 @@ const CONFIG: FusionConfig = {
       concurrency: 2,
       context: "fresh",
     },
+    merge: {
+      panel: [
+        {
+          id: "security",
+          label: "Security",
+          agent: "panel-agent",
+          question: "Cover ONLY the security surface of: {task}",
+        },
+        {
+          id: "perf",
+          label: "Perf",
+          agent: "panel-agent",
+          question: "Cover ONLY throughput and latency of: {task}",
+        },
+      ],
+      judge: { agent: "pi-fusion.fusion-judge" },
+      concurrency: 2,
+      context: "fresh",
+      synthesis: "merge",
+    },
     agreement: {
       panel: [
         { id: "architect", label: "Architect", agent: "panel-agent" },
@@ -871,3 +891,119 @@ class FakeUi {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+test("merge run reaches done through the composer and emits no new phase", async () => {
+  const fixture = makeFixture();
+  const phases: string[] = [];
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+
+  await fixture.orchestrator.startRun(
+    { prompt: "review the release", profile: "merge" },
+    fixture.ctx,
+  );
+  phases.push(fixture.orchestrator.getActiveRun()?.phase ?? "none");
+
+  const panelSpawn = fixture.rpc.spawns[0] as { tasks?: { task: string }[] };
+  assert.match(
+    panelSpawn.tasks?.[0]?.task ?? "",
+    /Cover ONLY the security surface of: review the release/,
+  );
+
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-agent", success: true, output: "Security facet." },
+      { agent: "panel-agent", success: true, output: "Perf facet." },
+    ],
+  });
+  const panelResult = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  assert.equal(panelResult.status, "started");
+  phases.push(fixture.orchestrator.getActiveRun()?.phase ?? "none");
+
+  const synthesisSpawn = fixture.rpc.spawns[1] as {
+    agent?: string;
+    task?: string;
+  };
+  assert.equal(synthesisSpawn.agent, "pi-fusion.fusion-composer");
+  assert.match(synthesisSpawn.task ?? "", /You are the fusion composer\./);
+  assert.match(synthesisSpawn.task ?? "", /Facet assignments:/);
+
+  fixture.rpc.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "complete",
+    results: [
+      {
+        agent: "pi-fusion.fusion-composer",
+        success: true,
+        output:
+          "# Fusion Report\n\n## Combined Answer\nShip it.\n\n## Gaps\nMigrations uncovered.",
+      },
+    ],
+  });
+  const done = await fixture.orchestrator.handleSubagentComplete({
+    runId: "judge-1",
+  });
+
+  assert.equal(done.status, "done");
+  assert.match(fixture.messages.at(-1)?.content ?? "", /## Combined Answer/);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Migrations uncovered/);
+
+  // No FusionPhase beyond the existing vocabulary: fusion:rpc:v1 consumers with
+  // strict enum validators must keep working.
+  for (const phase of phases) {
+    assert.ok(
+      ["panel", "chain", "judge", "done", "failed", "cancelled"].includes(phase),
+      `unexpected phase ${phase}`,
+    );
+  }
+});
+
+test("merge run with one failed panelist still composes and reports the gap", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+
+  await fixture.orchestrator.startRun(
+    { prompt: "review the release", profile: "merge" },
+    fixture.ctx,
+  );
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-agent", success: true, output: "Security facet." },
+      { agent: "panel-agent", success: false, error: "timed out" },
+    ],
+  });
+
+  const panelResult = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  // Under select this would short-circuit to "done" with the lone answer.
+  assert.equal(panelResult.status, "started");
+  assert.equal(fixture.rpc.spawns.length, 2);
+  assert.equal(
+    (fixture.rpc.spawns[1] as { agent?: string }).agent,
+    "pi-fusion.fusion-composer",
+  );
+});
+
+test("select run is unchanged end to end", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+
+  const synthesisSpawn = fixture.rpc.spawns[1] as {
+    agent?: string;
+    task?: string;
+  };
+  assert.equal(synthesisSpawn.agent, "judge-agent");
+  assert.match(synthesisSpawn.task ?? "", /You are the fusion judge\./);
+  assert.doesNotMatch(synthesisSpawn.task ?? "", /Facet assignments:/);
+});

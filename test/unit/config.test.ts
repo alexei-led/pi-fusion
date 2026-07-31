@@ -8,6 +8,7 @@ import {
   buildInlinePanelProfile,
   createDefaultFusionConfig,
   getGlobalFusionConfigPath,
+  getFusionConfigTemplate,
   getProjectFusionConfigPath,
   isAgentReference,
   KNOWN_TOOL_NAMES,
@@ -702,4 +703,59 @@ test("parseFusionConfig rejects an unknown synthesis mode", () => {
       `expected ${JSON.stringify(synthesis)} rejected`,
     );
   }
+});
+
+test("Claude alias rewriting preserves every new profile and member field", async (t) => {
+  const root = await makeTempDir(t);
+  const cwd = join(root, "project");
+  const agentDir = join(root, "agent");
+
+  await writeJson(join(agentDir, "claude-alias.json"), {
+    aliases: [{ slug: "work", handle: "claude-work", label: "Work" }],
+  });
+  await writeJson(getProjectFusionConfigPath(cwd), {
+    defaultProfile: "quality",
+    profiles: {
+      quality: {
+        panel: [
+          {
+            ...PANEL_MEMBER,
+            model: "claude-work/opus-4.8",
+            question: "Cover security of {task}",
+            role: "security",
+            thinking: "high",
+          },
+        ],
+        judge: { ...JUDGE, model: "claude-work/haiku-4.5" },
+        synthesis: "merge",
+        blindPanelLabels: true,
+        judgeToolBudget: { soft: 3, hard: 9 },
+        stopWhenPanelAgrees: true,
+      },
+    },
+  });
+
+  const config = await loadFusionConfig(
+    { cwd, isProjectTrusted: () => true },
+    { agentDir },
+  );
+  const profile = config.profiles.quality;
+  assert.ok(profile);
+
+  // The alias pass rebuilds member objects; new fields must survive it.
+  assert.equal(profile.panel[0]?.model, "anthropic-work/claude-opus-4-8");
+  assert.equal(profile.panel[0]?.question, "Cover security of {task}");
+  assert.equal(profile.panel[0]?.role, "security");
+  assert.equal(profile.panel[0]?.thinking, "high");
+  assert.equal(profile.synthesis, "merge");
+  assert.equal(profile.blindPanelLabels, true);
+  assert.deepEqual(profile.judgeToolBudget, { soft: 3, hard: 9 });
+  assert.equal(profile.stopWhenPanelAgrees, true);
+});
+
+test("the /fusion init template parses under the current validators", () => {
+  const template = getFusionConfigTemplate();
+  const parsed = parseFusionConfig(template, "template");
+
+  assert.ok(parsed.profiles[parsed.defaultProfile]);
 });
