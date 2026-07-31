@@ -5,10 +5,12 @@ import {
   type JudgeSpawnParams,
 } from "./run-builder.js";
 import type {
-  FailedPanelSummary,
   FusionProfile,
   FusionRun,
-  PanelOutput,
+  PanelOutput} from "./types.js";
+import {
+  resolveSynthesisMode,
+  type FailedPanelSummary
 } from "./types.js";
 
 export type PanelCompletionDecision =
@@ -51,7 +53,10 @@ export function decidePanelCompletion(
   // survivor is a complete if thin answer. Under `merge` it answered ONE facet:
   // returning it as the answer would be wrong, not thin. Run the composer so
   // the report names the facets nobody covered.
-  if (input.panelOutputs.length === 1 && input.profile.synthesis !== "merge") {
+  if (
+    input.panelOutputs.length === 1 &&
+    resolveSynthesisMode(input.profile) !== "merge"
+  ) {
     const report = renderSinglePanelReport({
       run: input.run,
       output: input.panelOutputs[0]!,

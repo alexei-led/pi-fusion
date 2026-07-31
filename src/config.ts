@@ -374,7 +374,7 @@ export function isAgentReference(value: unknown): value is string {
 function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.id)) return false;
-  if (!isNonEmptyString(value.label)) return false;
+  if (value.label !== undefined && !isNonEmptyString(value.label)) return false;
   if (!isAgentReference(value.agent)) return false;
   if (value.model !== undefined && !isNonEmptyString(value.model)) return false;
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking))

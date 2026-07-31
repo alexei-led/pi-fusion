@@ -25,7 +25,8 @@ export type FusionSynthesisMode = "select" | "merge";
 
 export interface PanelMemberConfig {
   id: string;
-  label: string;
+  /** Report label. Defaults to `id` — set it only when they should differ. */
+  label?: string;
   agent: string;
   model?: string;
   thinking?: ThinkingLevel;
@@ -62,11 +63,36 @@ export interface FusionProfile {
    */
   judgeToolBudget?: ToolBudget;
   /**
-   * Defaults to `select`. Under `merge` the synthesis spawn uses the composer
-   * agent and contract instead of the judge's. It reuses the judge run slot, so
-   * no new `FusionPhase` is introduced and `fusion:rpc:v1` stays compatible.
+   * Usually omit this. It is inferred: a panel where any member has a
+   * `question` is answering facets, so it merges; otherwise it selects.
+   * Set it only to override that — most often `"select"` on a faceted panel
+   * when you deliberately want the judge to pick rather than union.
+   *
+   * Under `merge` the synthesis spawn uses the composer agent and contract
+   * instead of the judge's. It reuses the judge run slot, so no new
+   * `FusionPhase` is introduced and `fusion:rpc:v1` stays compatible.
    */
   synthesis?: FusionSynthesisMode;
+}
+
+/**
+ * Facets are the thing that actually decides how answers combine, so the mode
+ * follows them by default. Requiring `synthesis` and `question` to agree made
+ * two ways to get a silently wrong report: facets judged for consensus they
+ * cannot have, or a composer told to merge facets that do not exist.
+ */
+/** Report label for a member; `label` is optional and falls back to `id`. */
+export function memberLabel(member: Pick<PanelMemberConfig, "id" | "label">): string {
+  return member.label?.trim() || member.id;
+}
+
+export function resolveSynthesisMode(
+  profile: Pick<FusionProfile, "panel" | "synthesis">,
+): FusionSynthesisMode {
+  if (profile.synthesis) return profile.synthesis;
+  return profile.panel.some((member) => member.question?.trim())
+    ? "merge"
+    : "select";
 }
 
 export interface ToolBudget {

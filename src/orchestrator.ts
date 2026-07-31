@@ -33,11 +33,14 @@ import {
   readSubagentStatusArtifact,
 } from "./subagent-artifacts.js";
 import type {
-  FailedPanelSummary,
   FusionProfile,
   FusionRun,
   PanelOutput,
-  ParsedFusionArgs,
+  ParsedFusionArgs} from "./types.js";
+import {
+  memberLabel,
+  resolveSynthesisMode,
+  type FailedPanelSummary
 } from "./types.js";
 import {
   extractRunObservation,
@@ -598,7 +601,7 @@ export class FusionOrchestrator {
         ...withJudgeModel(configuredJudgeModel(profile)),
         judgeObservation,
         ...(profile.blindPanelLabels ? { blindPanelLabels: true } : {}),
-        ...(profile.synthesis ? { synthesis: profile.synthesis } : {}),
+        synthesis: resolveSynthesisMode(profile),
       });
       return this.completeActiveRun(report);
     }
@@ -863,8 +866,8 @@ export class FusionOrchestrator {
       ...(this.activeProfile?.blindPanelLabels
         ? { blindPanelLabels: true }
         : {}),
-      ...(this.activeProfile?.synthesis
-        ? { synthesis: this.activeProfile.synthesis }
+      ...(this.activeProfile
+        ? { synthesis: resolveSynthesisMode(this.activeProfile) }
         : {}),
     });
     return this.completeActiveRun(report);
@@ -1298,7 +1301,7 @@ function buildFusionStatusDetails(
     const activity = describeStepActivity(step);
     const metrics = describeStepMetrics(step);
     return {
-      label: member.label,
+      label: memberLabel(member),
       ...(member.role ? { role: member.role } : {}),
       ...(model ? { model } : {}),
       status: describePanelStatus(step),
@@ -1363,7 +1366,7 @@ function buildCompletedPanelStatusLines(
     );
     if (output) {
       return {
-        label: member.label,
+        label: memberLabel(member),
         ...(member.role ? { role: member.role } : {}),
         ...(model ? { model } : {}),
         status: "completed",
@@ -1373,7 +1376,7 @@ function buildCompletedPanelStatusLines(
       (item) => item.id === member.id || item.index === index,
     );
     return {
-      label: member.label,
+      label: memberLabel(member),
       ...(member.role ? { role: member.role } : {}),
       ...(model ? { model } : {}),
       status: failure ? "failed" : "unknown",

@@ -7,12 +7,29 @@ README covers the why. This guide covers commands, config, and troubleshooting.
 `pi-fusion` turns one hard question into a small parallel panel:
 
 ```text
-prompt → parallel panel → judge synthesis → final report
+prompt → parallel panel → judge picks the best answer → report
 ```
 
-Fusion keeps the command simple: one prompt starts the panel, then the judge turns the collected evidence into a human-readable Markdown report. Older runs created as a single `pi-subagents` chain remain supported when restored.
+Fusion keeps the command simple: one prompt starts the panel, then one synthesis
+step turns the collected evidence into a human-readable Markdown report.
 
-Panel diversity can come from different model choices, different perspective prompts, or both. In practice, mixing models is usually the main lever.
+There is a second shape. Give panel members a `question` and they answer
+*different facets* instead of the same question, and a composer merges their
+answers rather than picking between them:
+
+```text
+prompt → panel, one facet each → composer merges → report
+```
+
+You do not select between these. Facets decide: a panel with `question` fields
+merges, a panel without them selects.
+
+Panel diversity comes from different model choices, different perspective
+prompts, or both. **Mixing models is the main lever** — note that the config
+`/fusion init` writes sets no `model` at all, so out of the box you get one
+model wearing three hats. Add `model` per member to get the real benefit.
+
+Older runs created as a single `pi-subagents` chain remain supported when restored.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -131,14 +148,14 @@ Profile:
 - `timeoutMs`: async subagent timeout in milliseconds
 - `context`: `fresh` or `fork`
 - `stopWhenPanelAgrees`: optional boolean, default `false`. When enabled, Fusion may stop unfinished panelists only when at least two completed panelists have the same normalized recommendation, every successful panelist reports `high` confidence, none requests more evidence, and work remains. The judge still runs over the collected answers. The policy is intentionally fixed; there are no agreement threshold knobs.
-- `synthesis`: optional `select` (default) or `merge`. See [Synthesis modes](#synthesis-modes).
+- `synthesis`: rarely needed. Inferred from the panel — any member with a `question` means `merge`, otherwise `select`. Set it only to override that. See [Synthesis modes](#synthesis-modes).
 - `blindPanelLabels`: optional boolean, default `false`. Presents panel answers to the judge as `Candidate A`, `Candidate B`, … instead of the configured labels, and withholds agent names and artifact paths, which contain the member id. Role labels read as authority cues before any content is compared. Your report always shows the real names.
 - `judgeToolBudget`: optional `{ "soft": n, "hard": n }`. Caps the tool calls the judge may spend verifying contested claims. `soft` nudges; after `hard`, tool use is blocked so the judge still produces a report. Both must be positive integers and `soft` must not exceed `hard`.
 
 Panel member:
 
 - `id`: stable machine name
-- `label`: human-readable report label
+- `label`: optional report label; defaults to `id`
 - `agent`: subagent name. This is where a member's tool access comes from — see [Panel agents and tools](#panel-agents-and-tools).
 - `model`: optional model override; often the main source of panel diversity. Supports normal Pi model ids, and if `pi-claude-alias` is configured, Claude alias shorthand like `claude-work/opus-4.8`
 - Claude alias handles must be unique across global and project alias files; duplicate handles are rejected.
@@ -217,7 +234,8 @@ the failure mode is one model's bad reasoning path and redundancy is the fix.
 
 `merge` — panelists answer **different facets** and `fusion-composer` unions
 them, reporting a coverage map, the combined answer, gaps, and conflicts only
-where facets genuinely overlap. Use it for breadth questions — audits, "what did
+where facets genuinely overlap. **You get this by giving members a `question`;
+you do not also have to set `synthesis`.** Use it for breadth questions — audits, "what did
 we miss", release sweeps — where the failure mode is incomplete coverage and
 redundant panelists all miss the same things.
 
@@ -238,23 +256,19 @@ an empty report, not an error.
   "defaultProfile": "audit",
   "profiles": {
     "audit": {
-      "synthesis": "merge",
       "panel": [
         {
           "id": "security",
-          "label": "Security",
           "agent": "pi-fusion.fusion-panelist",
           "question": "Cover ONLY the security and data-exposure surface of: {task}"
         },
         {
           "id": "perf",
-          "label": "Performance",
           "agent": "pi-fusion.fusion-panelist",
           "question": "Cover ONLY throughput, latency, and resource use of: {task}"
         },
         {
           "id": "ops",
-          "label": "Operations",
           "agent": "pi-fusion.fusion-panelist",
           "question": "Cover ONLY rollout, rollback, and observability of: {task}"
         }

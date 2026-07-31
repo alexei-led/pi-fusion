@@ -16,6 +16,7 @@ const FUSION_HELP = [
   "Fusion commands",
   "/fusion <prompt>",
   "/fusion --profile <name> <prompt>",
+  "/fusion --panel <models> <prompt>",
   "/fusion status",
   "/fusion stop",
   "/fusion init",

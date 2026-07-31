@@ -265,7 +265,7 @@ test("buildJudgeSpawnParams presents the same output order for the same run id",
   const outputs: PanelOutput[] = PROFILE.panel.map((member, index) => ({
     index,
     id: member.id,
-    label: member.label,
+    label: member.label ?? member.id,
     agent: member.agent,
     output: `Answer from ${member.label}.`,
   }));
@@ -287,7 +287,7 @@ test("buildJudgeSpawnParams keeps panel status in configuration order while shuf
   const outputs: PanelOutput[] = PROFILE.panel.map((member, index) => ({
     index,
     id: member.id,
-    label: member.label,
+    label: member.label ?? member.id,
     agent: member.agent,
     output: `Answer from ${member.label}.`,
   }));
@@ -356,7 +356,7 @@ test("buildJudgeSpawnParams matches the pre-change baseline once answer order is
     agent: member.agent,
     output: `Answer from ${member.label}.`,
     id: member.id,
-    label: member.label,
+    label: member.label ?? member.id,
     ...(member.role !== undefined ? { role: member.role } : {}),
   }));
   const { task } = buildJudgeSpawnParams({
@@ -842,4 +842,51 @@ test("merge synthesis omits the judge-only contested claims block", () => {
   const selected = buildJudgeSpawnParams({ ...base, profile: PROFILE });
   assert.match(selected.task, /Contested claims:/);
   assert.match(selected.task, /## Contested Claims/);
+});
+
+test("synthesis is inferred from facets so the two settings cannot disagree", () => {
+  const faceted = [
+    { id: "sec", agent: "x", question: "Cover security of {task}" },
+    { id: "perf", agent: "x", question: "Cover perf of {task}" },
+  ];
+  const outs: PanelOutput[] = [
+    { index: 0, agent: "x", output: "A" },
+    { index: 1, agent: "x", output: "B" },
+  ];
+  const base = {
+    prompt: "ship it",
+    panelOutputs: outs,
+    failedPanelists: [],
+    runId: "r",
+  };
+
+  // question without an explicit synthesis used to send facet answers to a
+  // judge hunting for consensus they cannot have.
+  const inferred = buildJudgeSpawnParams({
+    ...base,
+    profile: { ...PROFILE, panel: faceted },
+  });
+  assert.equal(inferred.agent, "pi-fusion.fusion-composer");
+  assert.match(inferred.task, /## Coverage Map/);
+
+  // No facets anywhere: still select.
+  const plain = buildJudgeSpawnParams({ ...base, profile: PROFILE });
+  assert.equal(plain.agent, "pi-fusion.fusion-judge");
+  assert.match(plain.task, /## Consensus/);
+
+  // An explicit setting still wins over the inference.
+  const overridden = buildJudgeSpawnParams({
+    ...base,
+    profile: { ...PROFILE, panel: faceted, synthesis: "select" },
+  });
+  assert.equal(overridden.agent, "pi-fusion.fusion-judge");
+});
+
+test("label defaults to id", () => {
+  const params = buildPanelSpawnParams(
+    { ...PROFILE, panel: [{ id: "architect", agent: "x" }] },
+    "Compare designs",
+  );
+
+  assert.match(params.tasks[0]?.task ?? "", /Panel member: architect \(architect\)/);
 });
