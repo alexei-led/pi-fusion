@@ -549,3 +549,72 @@ test("buildInlinePanelProfile rejects a malformed agent reference", () => {
     /malformed agent reference/,
   );
 });
+
+test("parseFusionConfig accepts a judge tool budget", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [PANEL_MEMBER],
+          judge: JUDGE,
+          judgeToolBudget: { soft: 5, hard: 12 },
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.deepEqual(config.profiles.quality?.judgeToolBudget, {
+    soft: 5,
+    hard: 12,
+  });
+});
+
+test("parseFusionConfig accepts a partial judge tool budget", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [PANEL_MEMBER],
+          judge: JUDGE,
+          judgeToolBudget: { hard: 8 },
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.deepEqual(config.profiles.quality?.judgeToolBudget, { hard: 8 });
+});
+
+test("parseFusionConfig rejects malformed judge tool budgets", () => {
+  const rejected: unknown[] = [
+    { soft: 12, hard: 5 },
+    { soft: 0 },
+    { hard: -1 },
+    { soft: 1.5 },
+    {},
+    { soft: "5" },
+    5,
+    null,
+  ];
+
+  for (const judgeToolBudget of rejected) {
+    assert.throws(
+      () =>
+        parseFusionConfig(
+          JSON.stringify({
+            defaultProfile: "quality",
+            profiles: {
+              quality: { panel: [PANEL_MEMBER], judge: JUDGE, judgeToolBudget },
+            },
+          }),
+          "test",
+        ),
+      /Invalid fusion config/,
+      `expected ${JSON.stringify(judgeToolBudget)} rejected`,
+    );
+  }
+});

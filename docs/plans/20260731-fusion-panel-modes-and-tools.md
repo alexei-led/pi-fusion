@@ -399,12 +399,26 @@ modelled on. The test now pins that behaviour explicitly instead.
 - Modify: `test/unit/config.test.ts`
 - Modify: `test/unit/run-builder.test.ts`
 
-- [ ] add a `## Contested Claims` section to `JUDGE_OUTPUT_CONTRACT` and to `agents/fusion-judge.md`, instructing the judge to resolve conflicting factual claims by direct inspection, cite `file:line`, and explicitly mark anything it could not verify
-- [ ] add `judgeToolBudget?: { soft?: number; hard?: number }` to `FusionProfile` with validation in `isFusionProfile` (positive integers, `soft <= hard`)
-- [ ] pass `toolBudget` through to the judge spawn params in `buildJudgeSpawnParams` when configured
-- [ ] write config validation tests: valid budget, `soft > hard` rejected, zero/negative rejected, non-integer rejected, absent field omits `toolBudget` from spawn params
-- [ ] write test asserting the judge task and contract include the new section
-- [ ] run tests - must pass before task 7
+- [x] add a `## Contested Claims` section to `JUDGE_OUTPUT_CONTRACT` and to `agents/fusion-judge.md`, instructing the judge to resolve conflicting factual claims by direct inspection, cite `file:line`, and explicitly mark anything it could not verify
+- [x] add `judgeToolBudget?: { soft?: number; hard?: number }` to `FusionProfile` with validation in `isFusionProfile` (positive integers, `soft <= hard`)
+- [x] pass `toolBudget` through to the judge spawn params in `buildJudgeSpawnParams` when configured
+- [x] write config validation tests: valid budget, `soft > hard` rejected, zero/negative rejected, non-integer rejected, absent field omits `toolBudget` from spawn params
+- [x] write test asserting the judge task and contract include the new section
+- [x] run tests - must pass before task 7
+
+➕ `toolBudget` had to be declared on `JudgeSpawnParams` explicitly. A conditional
+spread carries excess properties past TypeScript's checks, so the field reached
+the runtime payload while the type claimed it did not — a silent hole rather than
+a compile error.
+
+➕ **The baseline gate fired, as designed.** Adding the contested-claims block
+broke the byte-equality test from Task 3. Rather than re-snapshotting the
+baseline — which would retire the guard — the test now strips the two *known*
+intentional differences (seeded answer order, contested-claims block) and still
+requires byte equality on everything else.
+
+➕ `judgeToolBudget` rejects `{}`: an empty budget reads as "configured" while
+doing nothing.
 
 ### Task 7: Per-member facet questions
 

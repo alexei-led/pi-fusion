@@ -11,6 +11,7 @@ import {
   type JudgeConfig,
   type PanelMemberConfig,
   type ThinkingLevel,
+  type ToolBudget,
 } from "./types.js";
 import {
   isNodeErrorCode,
@@ -316,6 +317,27 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   if (
     value.blindPanelLabels !== undefined &&
     typeof value.blindPanelLabels !== "boolean"
+  ) {
+    return false;
+  }
+  if (
+    value.judgeToolBudget !== undefined &&
+    !isToolBudget(value.judgeToolBudget)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isToolBudget(value: unknown): value is ToolBudget {
+  if (!isRecord(value)) return false;
+  if (value.soft !== undefined && !isPositiveInteger(value.soft)) return false;
+  if (value.hard !== undefined && !isPositiveInteger(value.hard)) return false;
+  if (value.soft === undefined && value.hard === undefined) return false;
+  if (
+    isPositiveInteger(value.soft) &&
+    isPositiveInteger(value.hard) &&
+    value.soft > value.hard
   ) {
     return false;
   }
