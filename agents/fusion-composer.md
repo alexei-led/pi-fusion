@@ -2,7 +2,7 @@
 name: fusion-composer
 package: pi-fusion
 description: Merges panel answers that covered different facets of one task.
-tools: read, grep, find, ls, web_search, web_contents, web_answer
+tools: read, grep, find, ls
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

@@ -184,6 +184,13 @@ pi install npm:pi-subagents
 pi install npm:@alexeiled/pi-fusion
 ```
 
+Optional. Only needed if a panel member uses the `fusion-panelist-web` or
+`fusion-panelist-full` agent:
+
+```bash
+pi install npm:pi-web-providers
+```
+
 Then reload Pi:
 
 ```text
@@ -205,7 +212,7 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - `Model` is lifecycle metadata. `Configured model` is the profile request; both appear when execution differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
 - Panel answers are presented to the judge in an order seeded from the run id, not in configuration order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
-- Panelists and the judge can search the web. That sends prompt-derived queries to the provider in `~/.pi/agent/web-providers.json`. Use the `fusion-panelist-lite` agent for every member to keep a run off the web.
+- Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
 - `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
 - `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in, it voids the read-only property the other agents have, and it is unsafe at `concurrency > 1` because panelists share one working directory.

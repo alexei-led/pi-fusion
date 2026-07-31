@@ -61,17 +61,36 @@ test("only fusion-panelist-full may write to the workspace", async () => {
   }
 });
 
-test("default panelist and judge can reach the web", async () => {
+test("default agents declare only Pi core tools", async () => {
+  // pi-web-providers is an optional extension. A default agent that declares its
+  // tools fails every run for users who do not have it installed - pi-subagents
+  // reports "requested unavailable child tools" and marks the task failed.
+  const CORE_ONLY = ["read", "grep", "find", "ls"];
   const agents = await loadShippedAgents();
   const byName = new Map(agents.map((agent) => [agent.name, agent]));
 
-  for (const name of ["fusion-panelist", "fusion-judge"]) {
+  for (const name of ["fusion-panelist", "fusion-judge", "fusion-composer"]) {
     const agent = byName.get(name);
     assert.ok(agent, `missing shipped agent ${name}`);
-    assert.ok(
-      agent.tools.includes("web_search"),
-      `${name} should declare web_search`,
+    assert.deepEqual(
+      agent.tools,
+      CORE_ONLY,
+      `${name} must not depend on an optional extension`,
     );
+  }
+});
+
+test("web tools appear only in explicitly opt-in agents", async () => {
+  const agents = await loadShippedAgents();
+  const WEB_TOOLS = ["web_search", "web_contents", "web_answer", "web_research"];
+
+  for (const agent of agents) {
+    const web = agent.tools.filter((tool) => WEB_TOOLS.includes(tool));
+    if (["fusion-panelist-web", "fusion-panelist-full"].includes(agent.name)) {
+      assert.ok(web.length > 0, `${agent.name} should declare web tools`);
+      continue;
+    }
+    assert.deepEqual(web, [], `${agent.file} must not require pi-web-providers`);
   }
 });
 
@@ -88,12 +107,20 @@ test("no shipped agent enables web_research by default", async () => {
   }
 });
 
-test("fusion-panelist-lite has no web access", async () => {
+test("fusion-panelist-web adds web access to the core set", async () => {
   const agents = await loadShippedAgents();
-  const lite = agents.find((agent) => agent.name === "fusion-panelist-lite");
+  const web = agents.find((agent) => agent.name === "fusion-panelist-web");
 
-  assert.ok(lite);
-  assert.deepEqual(lite.tools, ["read", "grep", "find", "ls"]);
+  assert.ok(web);
+  assert.deepEqual(web.tools, [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "web_search",
+    "web_contents",
+    "web_answer",
+  ]);
 });
 
 async function loadShippedAgents(): Promise<ShippedAgent[]> {
