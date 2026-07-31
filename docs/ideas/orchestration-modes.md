@@ -1,6 +1,8 @@
 # Fusion orchestration modes — competitive scan and idea backlog
 
-Status: brainstorm, not a plan. No code changed.
+Status: research and idea backlog. Parts of §1–§4 shipped on 2026-07-31; see the
+status note in §7 and `docs/plans/completed/20260731-fusion-panel-modes-and-tools.md`.
+The rest remains unbuilt, deliberately — §5 says which and why.
 
 Scope: what OpenRouter Fusion, Sakana AI, Anthropic's research system, and the
 LLM-jury literature do that `pi-fusion` does not, and which of it is worth
@@ -586,7 +588,6 @@ keeps an old run reproducible when someone re-reads it.
 > 2026-07-31 — see `docs/plans/completed/20260731-fusion-panel-modes-and-tools.md`.
 > Item 6 (model registry) and everything gated on it were dropped: cost is not a
 > constraint for this project. The rebuttal round remains unbuilt, as argued in §4c.
-
 
 | #   | Item                                                                   | Effort | Value                        |
 | --- | ---------------------------------------------------------------------- | ------ | ---------------------------- |

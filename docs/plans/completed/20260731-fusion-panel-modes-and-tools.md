@@ -249,7 +249,7 @@ missing is catching bad tool names before a run is spent.
 ⚠ **Scope corrected a second time during implementation.** `validateShippedAgentTools()`
 was dropped. It would read the bundled agents' markdown at runtime to check
 something a CI test already guarantees — dead code by the repo's own "no unused
-abstractions" rule, and it cannot check *user* agents because Fusion has no
+abstractions" rule, and it cannot check _user_ agents because Fusion has no
 access to the pi-subagents registry (`subagents-rpc.ts` exposes only
 ping/spawn/status/stop/interrupt — no list). Replaced with the two pieces that
 carry real weight: one shared vocabulary, and validation of the one agent-related
@@ -262,7 +262,7 @@ thing a user actually types.
 - [x] write test asserting `KNOWN_TOOL_NAMES` matches the verified vocabulary table in this plan
 - [x] run tests - must pass before task 3
 
-**Validation deliberately kept narrow.** `isAgentReference` does *not* enforce
+**Validation deliberately kept narrow.** `isAgentReference` does _not_ enforce
 pi-subagents' lowercase `IDENTIFIER_PATTERN` (`agents/identity.ts:3`): that
 pattern governs package names and never covers the frontmatter `name`, so
 enforcing it could reject a config that would actually run. It rejects embedded
@@ -413,7 +413,7 @@ a compile error.
 
 ➕ **The baseline gate fired, as designed.** Adding the contested-claims block
 broke the byte-equality test from Task 3. Rather than re-snapshotting the
-baseline — which would retire the guard — the test now strips the two *known*
+baseline — which would retire the guard — the test now strips the two _known_
 intentional differences (seeded answer order, contested-claims block) and still
 requires byte equality on everything else.
 
@@ -550,7 +550,14 @@ test still catches any other drift in wording, headings, or contract text.
 - [x] verify edge cases are handled: single panelist, all panelists fail, merge without any `question`, `--panel` with one model
 - [x] run full test suite: `npm run test:all`
 - [x] verify `npm run lint` and `npm run check` are clean
-- [x] manually run `/fusion` once in select mode and once in merge mode against this repo and confirm reports render
+- [ ] manually run `/fusion` once in select mode and once in merge mode against this repo and confirm reports render
+
+⚠️ **Outstanding — not done.** This requires the Pi runtime and live model calls;
+it was not performed in the implementation session and a bulk checkbox update
+briefly marked it complete in error. Everything asserted about web tools is a
+string comparison against the vocabulary read out of `pi-web-providers@3.5.1`,
+which is good evidence that the _names_ are right but does not prove a panelist
+can call `web_search` and get a result. Run both modes before releasing.
 
 ### Task 13: [Final] Update documentation
 
