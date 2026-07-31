@@ -512,12 +512,12 @@ blinded too when `blindPanelLabels` is on.
 - Modify: `test/integration/orchestrator.test.ts`
 - Modify: `test/support/fake-pi.ts`
 
-- [ ] extend `test/support/fake-pi.ts` as needed to script a merge-mode run with per-member facet questions
-- [ ] write integration test: full merge run reaches phase `done` and produces a composer report
-- [ ] write integration test: merge run with one panelist failing still runs the composer and reports the gap
-- [ ] write integration test: select-mode run is unchanged end to end (regression guard on backward compatibility)
-- [ ] write integration test asserting no new `FusionPhase` value is emitted during a merge run
-- [ ] run tests - must pass before task 11
+- [x] extend `test/support/fake-pi.ts` as needed to script a merge-mode run with per-member facet questions
+- [x] write integration test: full merge run reaches phase `done` and produces a composer report
+- [x] write integration test: merge run with one panelist failing still runs the composer and reports the gap
+- [x] write integration test: select-mode run is unchanged end to end (regression guard on backward compatibility)
+- [x] write integration test asserting no new `FusionPhase` value is emitted during a merge run
+- [x] run tests - must pass before task 11
 
 ### Task 11: pi extension integration checks
 
@@ -527,12 +527,12 @@ blinded too when `blindPanelLabels` is on.
 - Modify: `test/unit/fusion-rpc.test.ts`
 - Modify: `test/integration/extension.test.ts`
 
-- [ ] verify `applyClaudeAliasShorthand` preserves the new `question` field when rewriting panel members (it spreads `...member`, so this is a regression guard, not a change)
-- [ ] write test asserting a profile with `question`, `synthesis`, `blindPanelLabels`, and `judgeToolBudget` survives Claude alias rewriting intact
-- [ ] write test asserting `fusion:rpc:v1` `status`/`result` payloads for a merge run contain only the existing `FusionPhase` values, so strict enum validators in consumers keep working
-- [ ] write test asserting `FUSION_RPC_VERSION` is unchanged by this work
-- [ ] write test asserting `/fusion init` still emits a template that parses under the updated validators
-- [ ] run tests - must pass before task 12
+- [x] verify `applyClaudeAliasShorthand` preserves the new `question` field when rewriting panel members (it spreads `...member`, so this is a regression guard, not a change)
+- [x] write test asserting a profile with `question`, `synthesis`, `blindPanelLabels`, and `judgeToolBudget` survives Claude alias rewriting intact
+- [x] write test asserting `fusion:rpc:v1` `status`/`result` payloads for a merge run contain only the existing `FusionPhase` values, so strict enum validators in consumers keep working
+- [x] write test asserting `FUSION_RPC_VERSION` is unchanged by this work
+- [x] write test asserting `/fusion init` still emits a template that parses under the updated validators
+- [x] run tests - must pass before task 12
 
 ### Task 12: Verify acceptance criteria
 

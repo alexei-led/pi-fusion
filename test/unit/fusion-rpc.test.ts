@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   FUSION_RPC_METHODS,
+  FUSION_RPC_VERSION,
   FUSION_RPC_REPLY_EVENT_PREFIX,
   FUSION_RPC_REQUEST_EVENT,
   registerFusionRpc,
 } from "../../src/fusion-rpc.js";
 import type { FusionCommandResult } from "../../src/orchestrator.js";
 import { FUSION_RUN_ENTRY_TYPE, FusionRunStore } from "../../src/run-store.js";
-import type { FusionRun } from "../../src/types.js";
+import type { FusionPhase, FusionRun } from "../../src/types.js";
 
 const activeRun: FusionRun = {
   id: "fusion-1",
@@ -601,3 +602,23 @@ const fakeContext = {
     setStatus: () => undefined,
   },
 };
+
+test("fusion:rpc:v1 stays at version 1 and exposes no new phase values", () => {
+  // Merge synthesis deliberately reuses the judge run slot rather than adding a
+  // FusionPhase, so consumers with strict enum validators keep working.
+  const declaredPhases: FusionPhase[] = [
+    "panel",
+    "chain",
+    "judge",
+    "done",
+    "failed",
+    "cancelled",
+  ];
+
+  assert.equal(FUSION_RPC_VERSION, 1);
+  assert.equal(declaredPhases.length, 6);
+  assert.deepEqual(
+    [...FUSION_RPC_METHODS].sort(),
+    ["adopt", "cancel", "ping", "result", "start", "status"],
+  );
+});
