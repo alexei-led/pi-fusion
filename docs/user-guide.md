@@ -211,8 +211,16 @@ we miss", release sweeps — where the failure mode is incomplete coverage and
 redundant panelists all miss the same things.
 
 Merge mode swaps the synthesis agent, not the run lifecycle: it reuses the judge
-run slot, so `fusion:rpc:v1` consumers see no new phase. If you set a custom
-`judge.agent`, that agent is used in both modes.
+run slot, so `fusion:rpc:v1` consumers see no new phase.
+
+**If you set a custom `judge.agent`, it is used in both modes and the merge
+contract becomes your responsibility.** Fusion substitutes `fusion-composer` only
+when `judge.agent` is still the bundled `pi-fusion.fusion-judge` — explicit
+config wins. Under `synthesis: "merge"` your agent receives the composer
+instructions and is expected to emit `Coverage Map`, `Combined Answer`, `Gaps`,
+and `Conflicts At Seams`. Sections it does not produce are rendered as "Not
+specified by the composer" rather than failing the run, so a mismatch shows up as
+an empty report, not an error.
 
 ```json
 {
