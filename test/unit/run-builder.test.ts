@@ -250,7 +250,10 @@ test("shufflePanelItems varies across seeds", () => {
     ),
   );
 
-  assert.ok(orders.size > 1, "expected different seeds to produce different orders");
+  assert.ok(
+    orders.size > 1,
+    "expected different seeds to produce different orders",
+  );
 });
 
 test("shufflePanelItems handles empty and single-item panels", () => {
@@ -307,8 +310,7 @@ test("buildJudgeSpawnParams keeps panel status in configuration order while shuf
       task.indexOf("Successful panel outputs:"),
     );
     assert.ok(
-      status.indexOf("Architect") <
-        status.indexOf("Tester") &&
+      status.indexOf("Architect") < status.indexOf("Tester") &&
         status.indexOf("Tester") < status.indexOf("Generalist"),
       `status block lost configuration order for ${runId}`,
     );
@@ -375,7 +377,10 @@ test("buildJudgeSpawnParams matches the pre-change baseline once answer order is
 });
 
 test("buildFusionChainSpawnParams is unchanged; the legacy chain path is restore-only", () => {
-  const params = buildFusionChainSpawnParams(PROFILE, "Compare two API designs");
+  const params = buildFusionChainSpawnParams(
+    PROFILE,
+    "Compare two API designs",
+  );
   const judgeStep = params.chain[1];
 
   assert.match(judgeStep.task, /## Architect \(architect\)/);
@@ -565,7 +570,8 @@ test("buildPanelSpawnParams substitutes {task} into a member question", () => {
     ],
   };
 
-  const task = buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+  const task =
+    buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
 
   assert.match(task, /Your assigned facet of the task:/);
   assert.match(task, /Cover ONLY the security surface of: Ship the new API/);
@@ -585,7 +591,8 @@ test("buildPanelSpawnParams replaces every {task} occurrence", () => {
     ],
   };
 
-  const task = buildPanelSpawnParams(profile, "Ship the API").tasks[0]?.task ?? "";
+  const task =
+    buildPanelSpawnParams(profile, "Ship the API").tasks[0]?.task ?? "";
 
   assert.equal(task.includes("{task}"), false);
   assert.equal(task.split("Ship the API").length - 1, 2);
@@ -604,9 +611,13 @@ test("buildPanelSpawnParams appends the original task when the question omits th
     ],
   };
 
-  const task = buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+  const task =
+    buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
 
-  assert.match(task, /Your assigned facet of the task:\nCover only the security surface\./);
+  assert.match(
+    task,
+    /Your assigned facet of the task:\nCover only the security surface\./,
+  );
   assert.match(task, /Original task:\nShip the new API/);
 });
 
@@ -758,4 +769,20 @@ test("merge synthesis respects a custom judge agent", () => {
   });
 
   assert.equal(params.agent, "my-pkg.my-merger");
+});
+
+test("merge synthesis works when no member declares a question", () => {
+  // A profile can divide work by role alone; facet assignments fall back to it.
+  const { task } = buildJudgeSpawnParams({
+    profile: { ...PROFILE, synthesis: "merge" },
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-merge-noquestion",
+  });
+
+  assert.match(task, /Facet assignments:/);
+  assert.match(task, /- Architect: architecture and tradeoffs/);
+  assert.match(task, /- Generalist: the whole task/);
+  assert.match(task, /## Coverage Map/);
 });

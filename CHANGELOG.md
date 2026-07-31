@@ -22,6 +22,20 @@
   `concurrency > 1`; the default panel remains read-only.
 - Panel member and judge `agent` values are now validated for shape at config
   load, rejecting embedded whitespace, empty segments, and stray dots.
+- `/fusion --panel <entries> <prompt>` builds a one-off panel without editing
+  config. Entries are `<model>` or `<agent>:<model>`; the resolved profile still
+  supplies the judge and every other setting.
+- Profile `synthesis: "merge"` plus a per-member `question` field: panelists
+  answer different facets of one task and the new `fusion-composer` agent merges
+  them, reporting a coverage map, combined answer, gaps, and seam conflicts.
+  Reuses the judge run slot, so `fusion:rpc:v1` is unchanged.
+- Profile `blindPanelLabels`: presents panel answers to the judge as
+  `Candidate A/B/C` and withholds agents and artifact paths, so role labels stop
+  acting as authority cues. Reports still show real names.
+- Profile `judgeToolBudget`: caps tool calls the judge spends verifying claims.
+- The judge now gets an explicit instruction to settle conflicting factual
+  claims by inspecting the code and citing `file:line`, and reports them in a new
+  `Contested Claims` section.
 
 ## 0.5.1 - 2026-07-12
 
