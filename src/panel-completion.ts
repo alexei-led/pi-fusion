@@ -64,6 +64,7 @@ export function decidePanelCompletion(
       prompt: input.run.prompt,
       panelOutputs: input.panelOutputs,
       failedPanelists: input.panelFailures,
+      runId: input.run.id,
     }),
     missingRunIdError: input.fallbackJudge
       ? "pi-subagents spawn did not return a fallback judge run ID."

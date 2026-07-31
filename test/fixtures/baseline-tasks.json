@@ -1,0 +1,69 @@
+{
+  "prompt": "Baseline prompt for backward-compatibility comparison.",
+  "panel": {
+    "tasks": [
+      {
+        "agent": "pi-fusion.fusion-panelist",
+        "task": "Panel member: Architect (architect)\nRole: architecture, tradeoffs, and failure modes\n\nOriginal task:\nBaseline prompt for backward-compatibility comparison.\n\nInstructions:\n- Work independently from the other panelists.\n- Read-only: inspect only; leave files, git state, and the workspace untouched.\n- Do not ask other agents.\n- Do not run subagents.\n- Use local inspection only when code evidence is needed.\n- Be concise and cite evidence when you inspect files.\n\nOutput contract:\n## Summary\n## Recommendation\n## Evidence\n## Risks\n## Confidence\n## Open Questions",
+        "output": true,
+        "outputMode": "inline",
+        "progress": true,
+        "skill": false,
+        "acceptance": {
+          "level": "none",
+          "reason": "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance."
+        }
+      },
+      {
+        "agent": "pi-fusion.fusion-panelist",
+        "task": "Panel member: Implementer (implementer)\nRole: implementation details, API contracts, and edge cases\n\nOriginal task:\nBaseline prompt for backward-compatibility comparison.\n\nInstructions:\n- Work independently from the other panelists.\n- Read-only: inspect only; leave files, git state, and the workspace untouched.\n- Do not ask other agents.\n- Do not run subagents.\n- Use local inspection only when code evidence is needed.\n- Be concise and cite evidence when you inspect files.\n\nOutput contract:\n## Summary\n## Recommendation\n## Evidence\n## Risks\n## Confidence\n## Open Questions",
+        "output": true,
+        "outputMode": "inline",
+        "progress": true,
+        "skill": false,
+        "acceptance": {
+          "level": "none",
+          "reason": "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance."
+        }
+      },
+      {
+        "agent": "pi-fusion.fusion-panelist",
+        "task": "Panel member: Tester (tester)\nRole: test strategy, regressions, and verification\n\nOriginal task:\nBaseline prompt for backward-compatibility comparison.\n\nInstructions:\n- Work independently from the other panelists.\n- Read-only: inspect only; leave files, git state, and the workspace untouched.\n- Do not ask other agents.\n- Do not run subagents.\n- Use local inspection only when code evidence is needed.\n- Be concise and cite evidence when you inspect files.\n\nOutput contract:\n## Summary\n## Recommendation\n## Evidence\n## Risks\n## Confidence\n## Open Questions",
+        "output": true,
+        "outputMode": "inline",
+        "progress": true,
+        "skill": false,
+        "acceptance": {
+          "level": "none",
+          "reason": "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance."
+        }
+      }
+    ],
+    "async": true,
+    "clarify": false,
+    "concurrency": 3,
+    "context": "fresh",
+    "output": true,
+    "outputMode": "inline",
+    "acceptance": {
+      "level": "none",
+      "reason": "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance."
+    },
+    "timeoutMs": 300000
+  },
+  "judge": {
+    "agent": "pi-fusion.fusion-judge",
+    "task": "You are the fusion judge.\nRead-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.\nSynthesize the panel results. Preserve disagreement instead of forcing consensus.\n\nOriginal task:\nBaseline prompt for backward-compatibility comparison.\n\nPanel status:\n- Successful panelists: 3\n- Failed panelists: 0\n- Architect: succeeded\n- Implementer: succeeded\n- Tester: succeeded\n\nSuccessful panel outputs:\n## Architect\nAgent: pi-fusion.fusion-panelist\n\nAnswer from Architect.\n\n## Implementer\nAgent: pi-fusion.fusion-panelist\n\nAnswer from Implementer.\n\n## Tester\nAgent: pi-fusion.fusion-panelist\n\nAnswer from Tester.\n\n\nFailed panelists:\n(none)\n\nOutput contract:\n# Fusion Report\n## Summary\n## Agent Status\n## Consensus\n## Disagreements\n## Unique Insights\n## Blind Spots\n## Recommendation\n## Risks\n## Next Step",
+    "async": true,
+    "clarify": false,
+    "context": "fresh",
+    "output": true,
+    "outputMode": "inline",
+    "skill": false,
+    "acceptance": {
+      "level": "none",
+      "reason": "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance."
+    },
+    "timeoutMs": 300000
+  }
+}

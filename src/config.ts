@@ -22,7 +22,39 @@ import {
 export const FUSION_CONFIG_FILE = "fusion.json";
 export const DEFAULT_PROFILE_NAME = "quality";
 export const PANEL_AGENT = "pi-fusion.fusion-panelist";
+export const PANEL_AGENT_LITE = "pi-fusion.fusion-panelist-lite";
+export const PANEL_AGENT_FULL = "pi-fusion.fusion-panelist-full";
 export const JUDGE_AGENT = "pi-fusion.fusion-judge";
+
+/**
+ * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
+ * tools contributed by `pi-web-providers`. A name outside this set resolves to
+ * nothing at runtime, so a typo is only discovered after a panel run is spent.
+ * Single source of truth for `test/unit/agents.test.ts`.
+ */
+export const KNOWN_TOOL_NAMES: readonly string[] = [
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  "web_search",
+  "web_contents",
+  "web_answer",
+  "web_research",
+];
+
+/**
+ * Agent references are dot-separated (`<package>.<name>`, or a bare local name).
+ * This deliberately does not enforce the lowercase `IDENTIFIER_PATTERN` that
+ * pi-subagents applies to package names: that pattern does not cover the
+ * frontmatter `name`, and rejecting a config that would actually run is worse
+ * than accepting a malformed one. It catches the real typo classes only —
+ * embedded whitespace, empty segments, leading or trailing dots.
+ */
+const AGENT_REFERENCE_PATTERN = /^[^\s.]+(?:\.[^\s.]+)*$/;
 
 export interface FusionConfigLoadContext {
   cwd: string;
@@ -212,11 +244,17 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   return true;
 }
 
+export function isAgentReference(value: unknown): value is string {
+  return (
+    isNonEmptyString(value) && AGENT_REFERENCE_PATTERN.test(value.trim())
+  );
+}
+
 function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.id)) return false;
   if (!isNonEmptyString(value.label)) return false;
-  if (!isNonEmptyString(value.agent)) return false;
+  if (!isAgentReference(value.agent)) return false;
   if (value.model !== undefined && !isNonEmptyString(value.model)) return false;
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking))
     return false;
@@ -226,7 +264,7 @@ function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {
 
 function isJudgeConfig(value: unknown): value is JudgeConfig {
   if (!isRecord(value)) return false;
-  if (!isNonEmptyString(value.agent)) return false;
+  if (!isAgentReference(value.agent)) return false;
   if (value.model !== undefined && !isNonEmptyString(value.model)) return false;
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking))
     return false;
