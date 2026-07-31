@@ -3,6 +3,13 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { KNOWN_TOOL_NAMES } from "../../src/config.js";
+import {
+  COMPOSER_AGENT,
+  JUDGE_AGENT,
+  PANEL_AGENT,
+  PANEL_AGENT_FULL,
+  PANEL_AGENT_WEB,
+} from "../../src/types.js";
 
 const AGENTS_DIR = "agents";
 const KNOWN_TOOLS = new Set(KNOWN_TOOL_NAMES);
@@ -157,3 +164,22 @@ function parseToolList(value: string): string[] {
     .map((tool) => tool.trim())
     .filter(Boolean);
 }
+
+test("agent name constants match the shipped agent files", async () => {
+  // These constants are what config and run-builder reference; a rename that
+  // touches only the markdown would otherwise ship a dangling agent reference.
+  const shipped = new Set(
+    (await loadShippedAgents()).map((agent) => `pi-fusion.${agent.name}`),
+  );
+
+  for (const constant of [
+    PANEL_AGENT,
+    PANEL_AGENT_WEB,
+    PANEL_AGENT_FULL,
+    JUDGE_AGENT,
+    COMPOSER_AGENT,
+  ]) {
+    assert.ok(shipped.has(constant), `no shipped agent for ${constant}`);
+  }
+  assert.equal(shipped.size, 5);
+});

@@ -2,8 +2,9 @@ import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
-import { COMPOSER_AGENT, JUDGE_AGENT } from "./config.js";
 import {
+  COMPOSER_AGENT,
+  JUDGE_AGENT,
   THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
@@ -153,6 +154,7 @@ const COMPOSER_INSTRUCTIONS = [
   "- Do not rank panelists. They were not competing.",
   "- Report a conflict only where facets genuinely overlap and disagree. Different subject matter is not disagreement.",
   "- Name facets nobody covered, or covered only in passing.",
+  "- Where facets overlap and state conflicting facts about this codebase, check the claim with your read tools and cite file:line under Conflicts At Seams. Do not settle it by whose wording sounds more confident.",
 ] as const;
 
 const CONTESTED_CLAIMS_INSTRUCTIONS = [
@@ -410,7 +412,7 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     ...(merging
       ? [
           "Facet assignments:",
-          ...formatFacetAssignments(input.profile, blindLabels),
+          ...formatFacetAssignments(input.profile, input.prompt, blindLabels),
           "",
         ]
       : []),
@@ -420,8 +422,10 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     "Failed panelists:",
     ...formatFailedPanelists(sortedFailures, blindLabels),
     "",
-    ...CONTESTED_CLAIMS_INSTRUCTIONS,
-    "",
+    // Judge-only. The composer has no Contested Claims section, so this block
+    // produces content the report silently drops, and its "which panelist was
+    // right" wording contradicts the composer's "do not rank panelists".
+    ...(merging ? [] : [...CONTESTED_CLAIMS_INSTRUCTIONS, ""]),
     "Output contract:",
     ...(merging ? COMPOSER_OUTPUT_CONTRACT : JUDGE_OUTPUT_CONTRACT),
   ].join("\n");
@@ -433,12 +437,24 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
  */
 function formatFacetAssignments(
   profile: FusionProfile,
+  prompt: string,
   blindLabels?: ReadonlyMap<number, string>,
 ): string[] {
   return profile.panel.map((member, index) => {
-    const facet =
-      member.question?.trim() ?? member.role?.trim() ?? "the whole task";
-    return `- ${blindLabels?.get(index) ?? member.label}: ${facet}`;
+    // Substituted the same way the panelist saw it; the raw template would put
+    // a literal "{task}" in front of the composer.
+    const question = member.question?.trim();
+    const facet = question
+      ? question.replaceAll(TASK_PLACEHOLDER, prompt.trim())
+      : (member.role?.trim() ?? "the whole task");
+    // The blind map only covers members that produced an output or a failure.
+    // A member stopped early by `stopWhenPanelAgrees` is in neither, and
+    // falling back to `member.label` would leak the name into the very prompt
+    // that is meant to hide it.
+    const name = blindLabels
+      ? (blindLabels.get(index) ?? "Candidate (did not report)")
+      : member.label;
+    return `- ${name}: ${facet}`;
   });
 }
 

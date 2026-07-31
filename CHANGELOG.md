@@ -15,6 +15,23 @@
   from the optional `pi-web-providers` extension would fail every task for users
   who do not have it installed.
 
+### Fixed
+
+- `--panel` no longer misreads a dotted model name with a thinking suffix as an
+  agent reference. `gpt-4.1:high`, `claude-3.5-haiku:low`, and
+  `gemini-2.5-pro:medium` stay models; the suffix decides, not the dot.
+- `blindPanelLabels` no longer leaks a real member label into the composer's
+  facet list. A panelist stopped early by `stopWhenPanelAgrees` appears in
+  neither the outputs nor the failures, and previously fell back to its
+  configured name inside the prompt meant to hide it.
+- Facet assignments sent to the composer now substitute `{task}` instead of
+  passing the raw template through.
+- `--panel` over a `synthesis: "merge"` profile no longer runs the composer.
+  Inline members have no `question`, so there are no facets to merge.
+- The judge-only contested-claims instruction is no longer sent to the composer,
+  which has no matching report section and was told both to say "which panelist
+  was right" and "do not rank panelists".
+
 ### Added
 
 - `fusion-panelist-web` agent: panelist with `web_search`, `web_contents`, and

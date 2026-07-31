@@ -8,6 +8,12 @@ export const THINKING_LEVELS = [
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const PANEL_AGENT = "pi-fusion.fusion-panelist";
+export const PANEL_AGENT_WEB = "pi-fusion.fusion-panelist-web";
+export const PANEL_AGENT_FULL = "pi-fusion.fusion-panelist-full";
+export const JUDGE_AGENT = "pi-fusion.fusion-judge";
+export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
+
 export type FusionContextMode = "fresh" | "fork";
 
 /**

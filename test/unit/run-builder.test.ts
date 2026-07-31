@@ -701,8 +701,14 @@ test("merge synthesis lists facet assignments so gaps can be named", () => {
   });
 
   assert.match(task, /Facet assignments:/);
-  assert.match(task, /- Security: Cover the security surface of \{task\}/);
+  // The template is substituted, exactly as the panelist saw it. A raw "{task}"
+  // here would put a literal placeholder in front of the composer.
+  assert.match(
+    task,
+    /- Security: Cover the security surface of Review the release/,
+  );
   assert.match(task, /- Perf: throughput and latency/);
+  assert.equal(task.includes("{task}"), false);
 });
 
 test("merge synthesis blinds facet assignments too", () => {
@@ -785,4 +791,55 @@ test("merge synthesis works when no member declares a question", () => {
   assert.match(task, /- Architect: architecture and tradeoffs/);
   assert.match(task, /- Generalist: the whole task/);
   assert.match(task, /## Coverage Map/);
+});
+
+test("blindPanelLabels never falls back to a real label for a member that did not report", () => {
+  // stopWhenPanelAgrees stops a panelist mid-flight: it produces neither an
+  // output nor a failure, so it is absent from the blind label map.
+  const profile: FusionProfile = {
+    ...PROFILE,
+    synthesis: "merge",
+    blindPanelLabels: true,
+    panel: [
+      { id: "a", label: "AlphaSecret", agent: "x", question: "Cover security" },
+      { id: "b", label: "BetaSecret", agent: "x", question: "Cover perf" },
+      { id: "c", label: "GammaSecret", agent: "x", question: "Cover ops" },
+    ],
+  };
+
+  const { task } = buildJudgeSpawnParams({
+    profile,
+    prompt: "ship it",
+    panelOutputs: [{ index: 0, agent: "x", output: "sec" }],
+    failedPanelists: [{ index: 2, agent: "x", summary: "timeout" }],
+    runId: "run-gap",
+  });
+
+  for (const label of ["AlphaSecret", "BetaSecret", "GammaSecret"]) {
+    assert.equal(task.includes(label), false, `leaked ${label}`);
+  }
+  assert.match(task, /Candidate \(did not report\)/);
+});
+
+test("merge synthesis omits the judge-only contested claims block", () => {
+  const base = {
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-cc",
+  };
+
+  const merged = buildJudgeSpawnParams({
+    ...base,
+    profile: { ...PROFILE, synthesis: "merge" },
+  });
+  // The composer contract has no Contested Claims section, so the instruction
+  // would only produce content the report drops.
+  assert.equal(merged.task.includes("Contested claims:"), false);
+  assert.equal(merged.task.includes("## Contested Claims"), false);
+  assert.match(merged.task, /Conflicts At Seams/);
+
+  const selected = buildJudgeSpawnParams({ ...base, profile: PROFILE });
+  assert.match(selected.task, /Contested claims:/);
+  assert.match(selected.task, /## Contested Claims/);
 });
