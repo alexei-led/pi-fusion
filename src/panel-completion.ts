@@ -47,7 +47,11 @@ export function decidePanelCompletion(
     };
   }
 
-  if (input.panelOutputs.length === 1) {
+  // Under `select` every panelist answered the whole question, so a lone
+  // survivor is a complete if thin answer. Under `merge` it answered ONE facet:
+  // returning it as the answer would be wrong, not thin. Run the composer so
+  // the report names the facets nobody covered.
+  if (input.panelOutputs.length === 1 && input.profile.synthesis !== "merge") {
     const report = renderSinglePanelReport({
       run: input.run,
       output: input.panelOutputs[0]!,

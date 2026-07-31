@@ -4,7 +4,12 @@ import {
   type PanelOutput,
 } from "./run-builder.js";
 import { summarizeProviderFailures } from "./run-observations.js";
-import type { FusionRun, ProviderFailure, RunObservation } from "./types.js";
+import type {
+  FusionRun,
+  FusionSynthesisMode,
+  ProviderFailure,
+  RunObservation,
+} from "./types.js";
 
 type ReportRun = Pick<
   FusionRun,
@@ -44,6 +49,8 @@ export interface RenderJudgeReportInput {
    * shows real member names, so the judge's prose is rewritten before parsing.
    */
   blindPanelLabels?: boolean;
+  /** Selects which synthesis sections the report renders. Defaults to `select`. */
+  synthesis?: FusionSynthesisMode;
 }
 
 export interface RenderFailureReportInput {
@@ -68,8 +75,13 @@ type ReportSectionTitle =
   | "Agent Status"
   | "Consensus"
   | "Disagreements"
+  | "Contested Claims"
   | "Unique Insights"
   | "Blind Spots"
+  | "Coverage Map"
+  | "Combined Answer"
+  | "Gaps"
+  | "Conflicts At Seams"
   | "Recommendation"
   | "Risks"
   | "Next Step"
@@ -247,6 +259,58 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
       ? unsectionedOutput
       : "Judge completed without a recommendation.";
 
+  // Section titles differ by synthesis mode; everything around them - agent
+  // status, metadata, run details - is shared.
+  const merging = input.synthesis === "merge";
+  const synthesisSections: ReportSection[] = merging
+    ? [
+        {
+          title: "Coverage Map",
+          content:
+            sections.get("Coverage Map") ?? "Not specified by the composer.",
+        },
+        {
+          title: "Combined Answer",
+          content:
+            sections.get("Combined Answer") ?? "Not specified by the composer.",
+        },
+        {
+          title: "Gaps",
+          content: sections.get("Gaps") ?? "Not specified by the composer.",
+        },
+        {
+          title: "Conflicts At Seams",
+          content:
+            sections.get("Conflicts At Seams") ??
+            "Not specified by the composer.",
+        },
+      ]
+    : [
+        {
+          title: "Consensus",
+          content: sections.get("Consensus") ?? "Not specified by the judge.",
+        },
+        {
+          title: "Disagreements",
+          content:
+            sections.get("Disagreements") ?? "Not specified by the judge.",
+        },
+        {
+          title: "Contested Claims",
+          content:
+            sections.get("Contested Claims") ?? "Not specified by the judge.",
+        },
+        {
+          title: "Unique Insights",
+          content:
+            sections.get("Unique Insights") ?? "Not specified by the judge.",
+        },
+        {
+          title: "Blind Spots",
+          content: sections.get("Blind Spots") ?? "Not specified by the judge.",
+        },
+      ];
+
   const reportSections: ReportSection[] = [
     {
       title: "Summary",
@@ -261,22 +325,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
         ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
       }),
     },
-    {
-      title: "Consensus",
-      content: sections.get("Consensus") ?? "Not specified by the judge.",
-    },
-    {
-      title: "Disagreements",
-      content: sections.get("Disagreements") ?? "Not specified by the judge.",
-    },
-    {
-      title: "Unique Insights",
-      content: sections.get("Unique Insights") ?? "Not specified by the judge.",
-    },
-    {
-      title: "Blind Spots",
-      content: sections.get("Blind Spots") ?? "Not specified by the judge.",
-    },
+    ...synthesisSections,
     {
       title: "Recommendation",
       content: sections.get("Recommendation") ?? recommendationFallback,

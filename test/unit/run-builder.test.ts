@@ -551,3 +551,211 @@ test("buildJudgeSpawnParams passes judgeToolBudget through and omits it when abs
   const withoutBudget = buildJudgeSpawnParams({ ...base, profile: PROFILE });
   assert.equal("toolBudget" in withoutBudget, false);
 });
+
+test("buildPanelSpawnParams substitutes {task} into a member question", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    panel: [
+      {
+        id: "security",
+        label: "Security",
+        agent: "pi-fusion.fusion-panelist",
+        question: "Cover ONLY the security surface of: {task}",
+      },
+    ],
+  };
+
+  const task = buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+
+  assert.match(task, /Your assigned facet of the task:/);
+  assert.match(task, /Cover ONLY the security surface of: Ship the new API/);
+  assert.doesNotMatch(task, /Original task:/);
+});
+
+test("buildPanelSpawnParams replaces every {task} occurrence", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    panel: [
+      {
+        id: "security",
+        label: "Security",
+        agent: "pi-fusion.fusion-panelist",
+        question: "For {task}, list risks. Then re-read {task} and rank them.",
+      },
+    ],
+  };
+
+  const task = buildPanelSpawnParams(profile, "Ship the API").tasks[0]?.task ?? "";
+
+  assert.equal(task.includes("{task}"), false);
+  assert.equal(task.split("Ship the API").length - 1, 2);
+});
+
+test("buildPanelSpawnParams appends the original task when the question omits the placeholder", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    panel: [
+      {
+        id: "security",
+        label: "Security",
+        agent: "pi-fusion.fusion-panelist",
+        question: "Cover only the security surface.",
+      },
+    ],
+  };
+
+  const task = buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+
+  assert.match(task, /Your assigned facet of the task:\nCover only the security surface\./);
+  assert.match(task, /Original task:\nShip the new API/);
+});
+
+test("buildPanelSpawnParams without a question reproduces today's task exactly", async () => {
+  const baseline = JSON.parse(
+    await readFile("test/fixtures/baseline-tasks.json", "utf8"),
+  ) as { prompt: string; panel: { tasks: { task: string }[] } };
+  const profile = createDefaultFusionConfig().profiles.quality;
+  assert.ok(profile);
+
+  const tasks = buildPanelSpawnParams(profile, baseline.prompt).tasks;
+
+  assert.deepEqual(
+    tasks.map((entry) => entry.task),
+    baseline.panel.tasks.map((entry) => entry.task),
+  );
+});
+
+const MERGE_OUTPUTS: PanelOutput[] = [
+  {
+    index: 0,
+    id: "architect",
+    label: "Architect",
+    agent: "pi-fusion.fusion-panelist",
+    output: "Architecture facet.",
+  },
+  {
+    index: 1,
+    id: "tester",
+    label: "Tester",
+    agent: "pi-fusion.fusion-panelist",
+    output: "Test facet.",
+  },
+];
+
+test("merge synthesis swaps the agent and the output contract", () => {
+  const params = buildJudgeSpawnParams({
+    profile: { ...PROFILE, synthesis: "merge" },
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-merge",
+  });
+
+  assert.equal(params.agent, "pi-fusion.fusion-composer");
+  assert.match(params.task, /You are the fusion composer\./);
+  assert.match(params.task, /Merge their answers; do not pick a winner\./);
+  assert.match(params.task, /## Coverage Map/);
+  assert.match(params.task, /## Combined Answer/);
+  assert.match(params.task, /## Gaps/);
+  assert.doesNotMatch(params.task, /## Consensus/);
+  assert.doesNotMatch(params.task, /## Disagreements/);
+});
+
+test("merge synthesis lists facet assignments so gaps can be named", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    synthesis: "merge",
+    panel: [
+      {
+        id: "security",
+        label: "Security",
+        agent: "pi-fusion.fusion-panelist",
+        question: "Cover the security surface of {task}",
+      },
+      {
+        id: "perf",
+        label: "Perf",
+        agent: "pi-fusion.fusion-panelist",
+        role: "throughput and latency",
+      },
+    ],
+  };
+
+  const { task } = buildJudgeSpawnParams({
+    profile,
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-merge",
+  });
+
+  assert.match(task, /Facet assignments:/);
+  assert.match(task, /- Security: Cover the security surface of \{task\}/);
+  assert.match(task, /- Perf: throughput and latency/);
+});
+
+test("merge synthesis blinds facet assignments too", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    synthesis: "merge",
+    blindPanelLabels: true,
+    panel: [
+      {
+        id: "security",
+        label: "Security",
+        agent: "pi-fusion.fusion-panelist",
+        question: "Cover security",
+      },
+      {
+        id: "perf",
+        label: "Perf",
+        agent: "pi-fusion.fusion-panelist",
+        question: "Cover performance",
+      },
+    ],
+  };
+
+  const { task } = buildJudgeSpawnParams({
+    profile,
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-merge-blind",
+  });
+
+  assert.match(task, /- Candidate A: Cover security/);
+  assert.equal(task.includes("Security"), false);
+  assert.equal(task.includes("Perf"), false);
+});
+
+test("select synthesis keeps the configured judge agent and contract", () => {
+  const params = buildJudgeSpawnParams({
+    profile: { ...PROFILE, synthesis: "select" },
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-select",
+  });
+
+  assert.equal(params.agent, "pi-fusion.fusion-judge");
+  assert.match(params.task, /You are the fusion judge\./);
+  assert.match(params.task, /## Consensus/);
+  assert.doesNotMatch(params.task, /## Coverage Map/);
+  assert.doesNotMatch(params.task, /Facet assignments:/);
+});
+
+test("merge synthesis respects a custom judge agent", () => {
+  const params = buildJudgeSpawnParams({
+    profile: {
+      ...PROFILE,
+      synthesis: "merge",
+      judge: { agent: "my-pkg.my-merger" },
+    },
+    prompt: "Review the release",
+    panelOutputs: MERGE_OUTPUTS,
+    failedPanelists: [],
+    runId: "run-merge-custom",
+  });
+
+  assert.equal(params.agent, "my-pkg.my-merger");
+});

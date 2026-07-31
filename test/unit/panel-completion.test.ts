@@ -102,3 +102,54 @@ test("decidePanelCompletion labels fallback judge spawns explicitly", () => {
     "pi-subagents spawn did not return a fallback judge run ID.",
   );
 });
+
+test("merge synthesis never returns a lone panelist as the answer", () => {
+  const mergeProfile = { ...PROFILE, synthesis: "merge" as const };
+
+  const merged = decidePanelCompletion({
+    run: makeRun(),
+    profile: mergeProfile,
+    panelOutputs: [makeOutput(0, "security facet only")],
+    panelFailures: [makeFailure(1, "timed out")],
+  });
+
+  // Under merge the survivor answered ONE facet; returning it would be wrong,
+  // not thin. The composer must run so the report can name the missing facets.
+  assert.equal(merged.kind, "judge");
+});
+
+test("select synthesis still short-circuits on a lone panelist", () => {
+  const selected = decidePanelCompletion({
+    run: makeRun(),
+    profile: PROFILE,
+    panelOutputs: [makeOutput(0, "whole answer")],
+    panelFailures: [makeFailure(1, "timed out")],
+  });
+
+  assert.equal(selected.kind, "complete");
+});
+
+test("merge synthesis still fails when no panelist succeeds", () => {
+  const decision = decidePanelCompletion({
+    run: makeRun(),
+    profile: { ...PROFILE, synthesis: "merge" as const },
+    panelOutputs: [],
+    panelFailures: [makeFailure(0, "boom")],
+  });
+
+  assert.equal(decision.kind, "fail");
+});
+
+test("merge synthesis spawns the composer for a full panel", () => {
+  const decision = decidePanelCompletion({
+    run: makeRun(),
+    profile: { ...PROFILE, synthesis: "merge" as const },
+    panelOutputs: [makeOutput(0, "facet one"), makeOutput(1, "facet two")],
+    panelFailures: [],
+  });
+
+  assert.equal(decision.kind, "judge");
+  if (decision.kind !== "judge") return;
+  assert.match(decision.params.task, /You are the fusion composer\./);
+  assert.match(decision.params.task, /## Coverage Map/);
+});
