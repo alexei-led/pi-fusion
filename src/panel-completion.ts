@@ -4,13 +4,12 @@ import {
   buildJudgeSpawnParams,
   type JudgeSpawnParams,
 } from "./run-builder.js";
-import type {
-  FusionProfile,
-  FusionRun,
-  PanelOutput} from "./types.js";
 import {
   resolveSynthesisMode,
-  type FailedPanelSummary
+  type FailedPanelSummary,
+  type FusionProfile,
+  type FusionRun,
+  type PanelOutput,
 } from "./types.js";
 
 export type PanelCompletionDecision =

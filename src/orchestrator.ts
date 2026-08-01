@@ -32,15 +32,14 @@ import {
   readSubagentResultArtifact,
   readSubagentStatusArtifact,
 } from "./subagent-artifacts.js";
-import type {
-  FusionProfile,
-  FusionRun,
-  PanelOutput,
-  ParsedFusionArgs} from "./types.js";
 import {
   memberLabel,
   resolveSynthesisMode,
-  type FailedPanelSummary
+  type FailedPanelSummary,
+  type FusionProfile,
+  type FusionRun,
+  type PanelOutput,
+  type ParsedFusionArgs,
 } from "./types.js";
 import {
   extractRunObservation,

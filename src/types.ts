@@ -81,6 +81,16 @@ export interface FusionProfile {
  * two ways to get a silently wrong report: facets judged for consensus they
  * cannot have, or a composer told to merge facets that do not exist.
  */
+/**
+ * Report label for a panel item. `label` is optional; it falls back to `id`, and
+ * then to the position. One definition so report and prompt never disagree.
+ */
+export function panelItemLabel(
+  item: Pick<PanelOutput, "index" | "id" | "label">,
+): string {
+  return item.label?.trim() || item.id?.trim() || `Panelist ${item.index + 1}`;
+}
+
 /** Report label for a member; `label` is optional and falls back to `id`. */
 export function memberLabel(member: Pick<PanelMemberConfig, "id" | "label">): string {
   return member.label?.trim() || member.id;
