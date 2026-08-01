@@ -5,9 +5,11 @@ import {
 } from "./run-builder.js";
 import { summarizeProviderFailures } from "./run-observations.js";
 import {
+  memberLabel,
   panelItemLabel,
   type FusionRun,
   type FusionSynthesisMode,
+  type PanelMemberConfig,
   type ProviderFailure,
   type RunObservation,
 } from "./types.js";
@@ -29,6 +31,9 @@ export interface RenderPanelFailureReportInput {
   failures: readonly FailedPanelSummary[];
   error?: string;
   judgeModel?: string;
+  synthesis?: FusionSynthesisMode;
+  /** Configured members, so a merge failure can name the uncovered facets. */
+  panel?: readonly PanelMemberConfig[];
 }
 
 export interface RenderSinglePanelReportInput {
@@ -104,6 +109,18 @@ interface AgentStatusOptions {
   synthesis?: FusionSynthesisMode;
 }
 
+/** Lists the facets that no panelist covered, for a merge-mode failure. */
+function formatUncoveredFacets(
+  panel?: readonly PanelMemberConfig[],
+): string | string[] {
+  if (!panel?.length) return "Every configured facet is uncovered.";
+  return panel.map((member) => {
+    const facet =
+      member.question?.trim() ?? member.role?.trim() ?? "the whole task";
+    return `- ${memberLabel(member)}: ${facet} (uncovered)`;
+  });
+}
+
 /** What actually ran in the synthesis slot, for report labels. */
 function synthesisLabel(synthesis?: FusionSynthesisMode): string {
   return synthesis === "merge" ? "Composer" : "Judge";
@@ -112,6 +129,43 @@ function synthesisLabel(synthesis?: FusionSynthesisMode): string {
 export function renderPanelFailureReport(
   input: RenderPanelFailureReportInput,
 ): string {
+  const merging = input.synthesis === "merge";
+  const synthesisName = synthesisLabel(input.synthesis);
+  // Under merge the select sections are meaningless: nobody answered the same
+  // question, so there is no consensus to be absent. What the reader needs is
+  // which facets went uncovered.
+  const emptySections: ReportSection[] = merging
+    ? [
+        {
+          title: "Coverage Map",
+          content: "Nothing was covered. Every panelist failed.",
+        },
+        { title: "Combined Answer", content: "No answer is available." },
+        { title: "Gaps", content: formatUncoveredFacets(input.panel) },
+        {
+          title: "Conflicts At Seams",
+          content: "No answers were produced, so no seams could conflict.",
+        },
+      ]
+    : [
+        {
+          title: "Consensus",
+          content: "No consensus was available because all panelists failed.",
+        },
+        {
+          title: "Disagreements",
+          content: `No disagreements were synthesized because the ${synthesisName.toLowerCase()} did not run.`,
+        },
+        {
+          title: "Unique Insights",
+          content: "No panel output was available to summarize.",
+        },
+        {
+          title: "Blind Spots",
+          content:
+            "All panelists failed, so the report may be missing every intended review perspective.",
+        },
+      ];
   return renderReport([
     {
       title: "Summary",
@@ -125,26 +179,10 @@ export function renderPanelFailureReport(
         failures: input.failures,
         judgeStatus: "not run - no successful panelists",
         ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
+        ...(input.synthesis ? { synthesis: input.synthesis } : {}),
       }),
     },
-    {
-      title: "Consensus",
-      content: "No consensus was available because all panelists failed.",
-    },
-    {
-      title: "Disagreements",
-      content:
-        "No disagreements were synthesized because the judge did not run.",
-    },
-    {
-      title: "Unique Insights",
-      content: "No panel output was available to summarize.",
-    },
-    {
-      title: "Blind Spots",
-      content:
-        "All panelists failed, so the report may be missing every intended review perspective.",
-    },
+    ...emptySections,
     { title: "Recommendation", content: "No recommendation is available." },
     {
       title: "Risks",

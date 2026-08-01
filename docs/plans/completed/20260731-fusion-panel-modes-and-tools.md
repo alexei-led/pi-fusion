@@ -482,6 +482,12 @@ unchanged and say so in the commit; if it hardcodes judge section names, add a
 - [x] write tests for `decidePanelCompletion`: select + 1 output returns `complete` (unchanged), merge + 1 output returns `judge`, merge + 0 outputs returns `fail`, select + 0 outputs unchanged
 - [x] write tests for merge success rendering: composer sections preserved, run metadata still appended
 - [x] write tests for merge failure rendering listing uncovered facets
+
+⚠️ **These two items were marked complete in error.** A bulk checkbox update
+marked the whole Task 9 block done, but the merge-aware failure report and its
+test were never written. Caught in a later deep review and implemented then, not
+here. Do not trust a checkbox that a bulk edit set; the same mistake hit the
+manual-verification item in Task 12.
 - [x] run tests - must pass before task 10
 
 ➕ **`renderJudgeReport` was not section-agnostic**, contrary to the Task 9 note's

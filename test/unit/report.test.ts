@@ -717,3 +717,43 @@ test("blind restoration falls back when a label is blank", () => {
   assert.match(report, /architect and Panelist 2 agree\./);
   assert.doesNotMatch(report, /Candidate [AB]/);
 });
+
+test("merge failure report names the uncovered facets", () => {
+  const report = renderPanelFailureReport({
+    run: { id: "run-1", prompt: "Review", profileName: "audit" },
+    failures: [
+      { index: 0, id: "sec", label: "sec", agent: "a", summary: "timeout" },
+      { index: 1, id: "perf", label: "perf", agent: "a", summary: "timeout" },
+    ],
+    error: "all panelists failed",
+    synthesis: "merge",
+    panel: [
+      { id: "sec", agent: "a", question: "Cover security" },
+      { id: "perf", agent: "a", role: "throughput" },
+    ],
+  });
+
+  // Consensus is meaningless when nobody answered the same question.
+  assert.doesNotMatch(report, /## Consensus/);
+  assert.doesNotMatch(report, /## Disagreements/);
+  assert.match(report, /## Coverage Map/);
+  assert.match(report, /## Gaps/);
+  assert.match(report, /- sec: Cover security \(uncovered\)/);
+  assert.match(report, /- perf: throughput \(uncovered\)/);
+  assert.match(report, /- Composer: not run/);
+});
+
+test("select failure report is unchanged", () => {
+  const report = renderPanelFailureReport({
+    run: { id: "run-1", prompt: "Review", profileName: "quality" },
+    failures: [
+      { index: 0, id: "a", label: "a", agent: "x", summary: "boom" },
+    ],
+    error: "all panelists failed",
+  });
+
+  assert.match(report, /## Consensus/);
+  assert.match(report, /## Disagreements/);
+  assert.match(report, /- Judge: not run/);
+  assert.doesNotMatch(report, /## Coverage Map/);
+});
