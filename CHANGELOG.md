@@ -27,6 +27,14 @@
 
 ### Fixed
 
+- An inline `--panel` run no longer loses its work across a Pi restart. The run
+  stored a display profile name that no config defines, so restore could not
+  resolve it: a run in the panel phase failed outright, and a run in the judge
+  phase silently shipped a report with unrestored `Candidate A` labels and no
+  judge model. The inline entries are persisted and the profile is rebuilt.
+- The judge-completion path now fails loudly when the active profile is missing,
+  matching the panel and chain paths instead of degrading the report.
+
 - `/fusion` in-product help now lists `--panel`. It was documented in the README
   and user guide but missing from the only surface a user sees without opening
   docs.

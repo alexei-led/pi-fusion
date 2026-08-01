@@ -76,8 +76,13 @@ Each comma-separated entry is `<model>` or `<agent>:<model>`:
 ```
 
 An entry counts as agent-qualified only when the part before the first `:`
-contains a `.`, which package-qualified agent names always do. That keeps
-`opus:high` a model with a thinking suffix rather than an agent reference.
+contains a `.` and the part after it is not a thinking level. That keeps both
+`opus:high` and `gpt-4.1:high` models rather than agent references.
+
+The thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
+A word that is not one of them is read as a model, so `gpt-4.1:ultra` asks for
+the agent `gpt-4.1`, and the run fails with an unknown-agent error. Use a real
+level, or write the agent in full.
 Claude alias shorthand works inline: `--panel claude-work/opus-4.8`.
 
 ## Config files

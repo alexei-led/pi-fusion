@@ -60,6 +60,9 @@ export interface RenderJudgeReportInput {
 }
 
 export interface RenderFailureReportInput {
+  synthesis?: FusionSynthesisMode;
+  /** Configured members, so a merge failure can name the uncovered facets. */
+  panel?: readonly PanelMemberConfig[];
   run: ReportRun;
   error: string;
   panelOutputs?: readonly PanelOutput[];
@@ -68,6 +71,9 @@ export interface RenderFailureReportInput {
 }
 
 export interface RenderCancelledReportInput {
+  synthesis?: FusionSynthesisMode;
+  /** Configured members, so a merge failure can name the uncovered facets. */
+  panel?: readonly PanelMemberConfig[];
   run: ReportRun;
   method: "stop" | "interrupt" | "local";
   targetRunId?: string;
@@ -121,6 +127,46 @@ function formatUncoveredFacets(
   });
 }
 
+/**
+ * The synthesis-shaped sections for a report that has no synthesis output:
+ * failure, cancellation, or an all-failed panel. Select and merge need
+ * different section names, so every such renderer goes through here rather than
+ * hardcoding one shape.
+ */
+function emptySynthesisSections(input: {
+  synthesis?: FusionSynthesisMode;
+  reason: string;
+  /** Select-mode wording, passed verbatim so each caller keeps its own text. */
+  select: {
+    consensus: string;
+    disagreements: string;
+    uniqueInsights: string;
+    blindSpots: string;
+  };
+  panel?: readonly PanelMemberConfig[];
+}): ReportSection[] {
+  if (input.synthesis === "merge") {
+    return [
+      {
+        title: "Coverage Map",
+        content: `Nothing was covered because ${input.reason}.`,
+      },
+      { title: "Combined Answer", content: "No answer is available." },
+      { title: "Gaps", content: formatUncoveredFacets(input.panel) },
+      {
+        title: "Conflicts At Seams",
+        content: "No answers were produced, so no seams could conflict.",
+      },
+    ];
+  }
+  return [
+    { title: "Consensus", content: input.select.consensus },
+    { title: "Disagreements", content: input.select.disagreements },
+    { title: "Unique Insights", content: input.select.uniqueInsights },
+    { title: "Blind Spots", content: input.select.blindSpots },
+  ];
+}
+
 /** What actually ran in the synthesis slot, for report labels. */
 function synthesisLabel(synthesis?: FusionSynthesisMode): string {
   return synthesis === "merge" ? "Composer" : "Judge";
@@ -129,43 +175,22 @@ function synthesisLabel(synthesis?: FusionSynthesisMode): string {
 export function renderPanelFailureReport(
   input: RenderPanelFailureReportInput,
 ): string {
-  const merging = input.synthesis === "merge";
   const synthesisName = synthesisLabel(input.synthesis);
   // Under merge the select sections are meaningless: nobody answered the same
   // question, so there is no consensus to be absent. What the reader needs is
   // which facets went uncovered.
-  const emptySections: ReportSection[] = merging
-    ? [
-        {
-          title: "Coverage Map",
-          content: "Nothing was covered. Every panelist failed.",
-        },
-        { title: "Combined Answer", content: "No answer is available." },
-        { title: "Gaps", content: formatUncoveredFacets(input.panel) },
-        {
-          title: "Conflicts At Seams",
-          content: "No answers were produced, so no seams could conflict.",
-        },
-      ]
-    : [
-        {
-          title: "Consensus",
-          content: "No consensus was available because all panelists failed.",
-        },
-        {
-          title: "Disagreements",
-          content: `No disagreements were synthesized because the ${synthesisName.toLowerCase()} did not run.`,
-        },
-        {
-          title: "Unique Insights",
-          content: "No panel output was available to summarize.",
-        },
-        {
-          title: "Blind Spots",
-          content:
-            "All panelists failed, so the report may be missing every intended review perspective.",
-        },
-      ];
+  const emptySections = emptySynthesisSections({
+    ...(input.synthesis ? { synthesis: input.synthesis } : {}),
+    reason: "all panelists failed",
+    select: {
+      consensus: "No consensus was available because all panelists failed.",
+      disagreements: `No disagreements were synthesized because the ${synthesisName.toLowerCase()} did not run.`,
+      uniqueInsights: "No panel output was available to summarize.",
+      blindSpots:
+        "All panelists failed, so the report may be missing every intended review perspective.",
+    },
+    ...(input.panel ? { panel: input.panel } : {}),
+  });
   return renderReport([
     {
       title: "Summary",
@@ -418,23 +443,20 @@ export function renderFailureReport(input: RenderFailureReportInput): string {
         extra: [`- Phase: ${phase}`],
       }),
     },
-    {
-      title: "Consensus",
-      content: "No consensus was available because fusion failed.",
-    },
-    {
-      title: "Disagreements",
-      content: "No disagreements were synthesized because fusion failed.",
-    },
-    {
-      title: "Unique Insights",
-      content: "No unique insights were synthesized because fusion failed.",
-    },
-    {
-      title: "Blind Spots",
-      content:
-        "The failure may hide panel disagreements, missing evidence, or provider-specific errors.",
-    },
+    ...emptySynthesisSections({
+      ...(input.synthesis ? { synthesis: input.synthesis } : {}),
+      reason: "fusion failed",
+      select: {
+        consensus: "No consensus was available because fusion failed.",
+        disagreements:
+          "No disagreements were synthesized because fusion failed.",
+        uniqueInsights:
+          "No unique insights were synthesized because fusion failed.",
+        blindSpots:
+          "The failure may hide panel disagreements, missing evidence, or provider-specific errors.",
+      },
+      ...(input.panel ? { panel: input.panel } : {}),
+    }),
     { title: "Recommendation", content: "No recommendation is available." },
     {
       title: "Risks",
@@ -470,25 +492,21 @@ export function renderCancelledReport(
         ],
       }),
     },
-    {
-      title: "Consensus",
-      content: "No final consensus was available because fusion was cancelled.",
-    },
-    {
-      title: "Disagreements",
-      content:
-        "No final disagreements were synthesized because fusion was cancelled.",
-    },
-    {
-      title: "Unique Insights",
-      content:
-        "No final unique insights were synthesized because fusion was cancelled.",
-    },
-    {
-      title: "Blind Spots",
-      content:
-        "Cancellation may leave in-flight panel or judge output incomplete.",
-    },
+    ...emptySynthesisSections({
+      ...(input.synthesis ? { synthesis: input.synthesis } : {}),
+      reason: "fusion was cancelled",
+      select: {
+        consensus:
+          "No final consensus was available because fusion was cancelled.",
+        disagreements:
+          "No final disagreements were synthesized because fusion was cancelled.",
+        uniqueInsights:
+          "No final unique insights were synthesized because fusion was cancelled.",
+        blindSpots:
+          "Cancellation may leave in-flight panel or judge output incomplete.",
+      },
+      ...(input.panel ? { panel: input.panel } : {}),
+    }),
     { title: "Recommendation", content: "No recommendation is available." },
     {
       title: "Risks",

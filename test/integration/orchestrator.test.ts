@@ -779,7 +779,9 @@ function completedStatusWithoutResults(runId: string): unknown {
   };
 }
 
-function makeFixture(): {
+function makeFixture(seed?: {
+  entries: Array<{ type: "custom"; customType: string; data?: unknown }>;
+}): {
   orchestrator: FusionOrchestrator;
   runStore: FusionRunStore;
   entries: Array<{ type: "custom"; customType: string; data?: unknown }>;
@@ -791,7 +793,7 @@ function makeFixture(): {
   const rpc = new FakeRpc();
   const ui = new FakeUi();
   const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
-    [];
+    seed?.entries ?? [];
   const ctx: FusionCommandContext = {
     cwd: "/project",
     hasUI: true,
@@ -1006,4 +1008,38 @@ test("select run is unchanged end to end", async () => {
   assert.equal(synthesisSpawn.agent, "judge-agent");
   assert.match(synthesisSpawn.task ?? "", /You are the fusion judge\./);
   assert.doesNotMatch(synthesisSpawn.task ?? "", /Facet assignments:/);
+});
+
+test("an inline --panel run survives a restore", async () => {
+  const first = makeFixture();
+  await first.orchestrator.startRun(
+    { prompt: "compare", panel: ["opus", "gpt-5.5"] },
+    first.ctx,
+  );
+
+  const stored = first.orchestrator.getActiveRun();
+  assert.ok(stored);
+  // The display name is deliberately not a config profile name.
+  assert.equal(stored.profileName, "quality (inline panel)");
+  assert.deepEqual(stored.inlinePanel, ["opus", "gpt-5.5"]);
+  assert.equal(stored.baseProfileName, "quality");
+
+  // Restart: a fresh orchestrator over the same persisted session.
+  const second = makeFixture({ entries: first.entries });
+  await second.orchestrator.restore(second.ctx);
+
+  const restored = second.orchestrator.getActiveRun();
+  assert.ok(restored, "the inline run should still be active after restore");
+
+  // Completing the panel used to fail with "the active profile was not
+  // available", because resolving "quality (inline panel)" throws.
+  second.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  second.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  const result = await second.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.notEqual(result.status, "failed");
+  const judgeSpawn = second.rpc.spawns.at(-1) as { agent?: string };
+  assert.equal(judgeSpawn.agent, "judge-agent");
 });

@@ -92,7 +92,9 @@ export function panelItemLabel(
 }
 
 /** Report label for a member; `label` is optional and falls back to `id`. */
-export function memberLabel(member: Pick<PanelMemberConfig, "id" | "label">): string {
+export function memberLabel(
+  member: Pick<PanelMemberConfig, "id" | "label">,
+): string {
   return member.label?.trim() || member.id;
 }
 
@@ -199,6 +201,14 @@ export interface FusionRun {
   id: string;
   prompt: string;
   profileName: string;
+  /**
+   * Inline `--panel` entries, when the run used them. `profileName` then carries
+   * a display name that no config defines, so restore rebuilds the profile from
+   * `baseProfileName` plus these entries instead of looking the display name up.
+   */
+  inlinePanel?: string[];
+  /** Name of the config profile the inline panel was layered onto. */
+  baseProfileName?: string;
   operationId?: string;
   phase: FusionPhase;
   createdAt: number;
