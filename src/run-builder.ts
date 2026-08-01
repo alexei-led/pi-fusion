@@ -6,6 +6,7 @@ import {
   COMPOSER_AGENT,
   JUDGE_AGENT,
   memberLabel,
+  panelItemLabel,
   resolveSynthesisMode,
   THINKING_LEVELS,
   type FailedPanelSummary,
@@ -548,12 +549,7 @@ function formatPanelName(
   item: Pick<PanelOutput, "index" | "id" | "label">,
   blindLabels?: ReadonlyMap<number, string>,
 ): string {
-  return (
-    blindLabels?.get(item.index) ??
-    item.label ??
-    item.id ??
-    `Panelist ${item.index + 1}`
-  );
+  return blindLabels?.get(item.index) ?? panelItemLabel(item);
 }
 
 /**

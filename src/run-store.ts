@@ -40,6 +40,8 @@ export interface FusionRunStartInput {
   id?: string;
   prompt: string;
   profileName: string;
+  inlinePanel?: string[];
+  baseProfileName?: string;
   operationId?: string;
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
@@ -149,6 +151,14 @@ export class FusionRunStore {
       id: input.id ?? this.idFactory(),
       prompt: input.prompt,
       profileName: input.profileName,
+      ...(input.inlinePanel?.length
+        ? {
+            inlinePanel: input.inlinePanel,
+            ...(input.baseProfileName
+              ? { baseProfileName: input.baseProfileName }
+              : {}),
+          }
+        : {}),
       ...(input.operationId !== undefined
         ? { operationId: input.operationId }
         : {}),
@@ -385,6 +395,14 @@ function cloneRun(run: FusionRun): FusionRun {
     id: run.id,
     prompt: run.prompt,
     profileName: run.profileName,
+    // cloneRun is a strict field allowlist: a new FusionRun field is dropped on
+    // both write and read until it is listed here.
+    ...(run.inlinePanel !== undefined
+      ? { inlinePanel: [...run.inlinePanel] }
+      : {}),
+    ...(run.baseProfileName !== undefined
+      ? { baseProfileName: run.baseProfileName }
+      : {}),
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
     phase: run.phase,
     createdAt: run.createdAt,
@@ -442,6 +460,19 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
   if (value.operationId !== undefined && !isNonEmptyString(value.operationId)) {
+    return false;
+  }
+  if (
+    value.inlinePanel !== undefined &&
+    (!Array.isArray(value.inlinePanel) ||
+      !value.inlinePanel.every(isNonEmptyString))
+  ) {
+    return false;
+  }
+  if (
+    value.baseProfileName !== undefined &&
+    !isNonEmptyString(value.baseProfileName)
+  ) {
     return false;
   }
   if (!isFusionPhase(value.phase)) return false;

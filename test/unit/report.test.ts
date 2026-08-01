@@ -746,9 +746,7 @@ test("merge failure report names the uncovered facets", () => {
 test("select failure report is unchanged", () => {
   const report = renderPanelFailureReport({
     run: { id: "run-1", prompt: "Review", profileName: "quality" },
-    failures: [
-      { index: 0, id: "a", label: "a", agent: "x", summary: "boom" },
-    ],
+    failures: [{ index: 0, id: "a", label: "a", agent: "x", summary: "boom" }],
     error: "all panelists failed",
   });
 
@@ -756,4 +754,32 @@ test("select failure report is unchanged", () => {
   assert.match(report, /## Disagreements/);
   assert.match(report, /- Judge: not run/);
   assert.doesNotMatch(report, /## Coverage Map/);
+});
+
+test("merge shape carries into failure and cancellation reports", () => {
+  const panel = [
+    { id: "sec", agent: "a", question: "Cover security" },
+    { id: "perf", agent: "a", question: "Cover perf" },
+  ];
+  const run = { id: "run-1", prompt: "Review", profileName: "audit" };
+
+  const failed = renderFailureReport({
+    run,
+    error: "composer crashed",
+    synthesis: "merge",
+    panel,
+  });
+  assert.match(failed, /## Gaps/);
+  assert.match(failed, /- sec: Cover security \(uncovered\)/);
+  assert.doesNotMatch(failed, /## Consensus/);
+
+  const cancelled = renderCancelledReport({
+    run,
+    method: "stop",
+    synthesis: "merge",
+    panel,
+  });
+  assert.match(cancelled, /## Coverage Map/);
+  assert.match(cancelled, /- perf: Cover perf \(uncovered\)/);
+  assert.doesNotMatch(cancelled, /## Disagreements/);
 });

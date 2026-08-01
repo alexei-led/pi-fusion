@@ -154,9 +154,11 @@ export class FusionOrchestrator {
     }
 
     let resolved: ResolvedFusionProfile;
+    let baseProfileName: string | undefined;
     try {
       const config = await this.loadConfig(ctx);
       resolved = this.resolveProfile(config, args.profile);
+      baseProfileName = resolved.name;
       if (args.panel?.length) {
         // The named profile still supplies the judge and every other setting;
         // only the panel is replaced. Inline models skip the alias pass that
@@ -189,6 +191,9 @@ export class FusionOrchestrator {
       run = this.runStore.startRun({
         prompt: args.prompt,
         profileName: resolved.name,
+        ...(args.panel?.length
+          ? { inlinePanel: args.panel, baseProfileName: baseProfileName }
+          : {}),
         ...(args.operationId !== undefined
           ? { operationId: args.operationId }
           : {}),
@@ -373,6 +378,12 @@ export class FusionOrchestrator {
           ? configuredJudgeModel(this.activeProfile)
           : undefined,
       ),
+      ...(this.activeProfile
+        ? {
+            synthesis: resolveSynthesisMode(this.activeProfile),
+            panel: this.activeProfile.panel,
+          }
+        : {}),
     });
     const cancelled = this.runStore.cancelRun(active.id, {
       ...(active.chainRunId ? { chainRunId: active.chainRunId } : {}),
@@ -404,10 +415,19 @@ export class FusionOrchestrator {
 
     try {
       const config = await this.loadConfig(ctx);
-      this.activeProfile = this.resolveProfile(
+      // An inline run's profileName is a display name that no config defines,
+      // so rebuild it from the base profile plus the persisted entries. Looking
+      // the display name up throws, which used to leave activeProfile undefined
+      // and fail the run the moment its panel completed.
+      const base = this.resolveProfile(
         config,
-        active.profileName,
+        active.inlinePanel?.length
+          ? active.baseProfileName
+          : active.profileName,
       ).profile;
+      this.activeProfile = active.inlinePanel?.length
+        ? buildInlinePanelProfile(base, active.inlinePanel)
+        : base;
       this.configWarning = undefined;
     } catch (error: unknown) {
       const message = `Could not restore fusion profile "${active.profileName}": ${errorMessage(error)}`;
@@ -839,9 +859,17 @@ export class FusionOrchestrator {
     const output = extractJudgeOutput(lifecyclePayload);
     if (!output.ok) return this.failActiveRun(output.error);
 
-    const judgeModel = this.activeProfile
-      ? configuredJudgeModel(this.activeProfile)
-      : undefined;
+    // The panel and chain handlers already treat a missing profile as fatal.
+    // Without the same guard here the run "succeeds" with a degraded report:
+    // blind labels are never restored, and the judge model is dropped.
+    const profile = this.activeProfile;
+    if (!profile) {
+      return this.failActiveRun(
+        "Fusion judge completed, but the active profile was not available.",
+      );
+    }
+
+    const judgeModel = configuredJudgeModel(profile);
     const judgeObservation = mergeRunObservations(
       extractRunObservation(
         findStepsArray(snapshot.statusPayload)[0] ?? snapshot.statusPayload,
@@ -862,12 +890,8 @@ export class FusionOrchestrator {
       failures: storedPanelFailures(observed),
       ...withJudgeModel(judgeModel),
       judgeObservation,
-      ...(this.activeProfile?.blindPanelLabels
-        ? { blindPanelLabels: true }
-        : {}),
-      ...(this.activeProfile
-        ? { synthesis: resolveSynthesisMode(this.activeProfile) }
-        : {}),
+      ...(profile.blindPanelLabels ? { blindPanelLabels: true } : {}),
+      synthesis: resolveSynthesisMode(profile),
     });
     return this.completeActiveRun(report);
   }
@@ -1020,6 +1044,12 @@ export class FusionOrchestrator {
           ? configuredJudgeModel(this.activeProfile)
           : undefined,
       ),
+      ...(this.activeProfile
+        ? {
+            synthesis: resolveSynthesisMode(this.activeProfile),
+            panel: this.activeProfile.panel,
+          }
+        : {}),
     });
   }
 
