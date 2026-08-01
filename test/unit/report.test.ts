@@ -698,3 +698,22 @@ test("merge reports name the composer, not the judge", () => {
   assert.match(selected, /- Judge: succeeded/);
   assert.doesNotMatch(selected, /- Composer: succeeded/);
 });
+
+test("blind restoration falls back when a label is blank", () => {
+  // PanelOutput.label normally arrives resolved, but a restored run can carry a
+  // blank one. One rule for the fallback, shared with memberLabel().
+  const report = renderJudgeReport({
+    run: { id: "run-1", prompt: "Review", profileName: "quality" },
+    judgeOutput:
+      "# Fusion Report\n## Summary\nCandidate A and Candidate B agree.",
+    panelOutputs: [
+      { index: 0, label: "   ", id: "architect", agent: "a", output: "x" },
+      { index: 1, agent: "a", output: "y" },
+    ],
+    failures: [],
+    blindPanelLabels: true,
+  });
+
+  assert.match(report, /architect and Panelist 2 agree\./);
+  assert.doesNotMatch(report, /Candidate [AB]/);
+});

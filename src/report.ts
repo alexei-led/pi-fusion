@@ -4,11 +4,12 @@ import {
   type PanelOutput,
 } from "./run-builder.js";
 import { summarizeProviderFailures } from "./run-observations.js";
-import type {
-  FusionRun,
-  FusionSynthesisMode,
-  ProviderFailure,
-  RunObservation,
+import {
+  panelItemLabel,
+  type FusionRun,
+  type FusionSynthesisMode,
+  type ProviderFailure,
+  type RunObservation,
 } from "./types.js";
 
 type ReportRun = Pick<
@@ -235,10 +236,7 @@ function restoreBlindLabels(
   const items = [...panelOutputs, ...failures];
   const blindLabels = buildBlindLabelMap(items);
   const realNames = new Map(
-    items.map((item) => [
-      item.index,
-      item.label ?? item.id ?? `Panelist ${item.index + 1}`,
-    ]),
+    items.map((item) => [item.index, panelItemLabel(item)]),
   );
 
   let restored = judgeOutput;
@@ -739,7 +737,7 @@ function plural(count: number, singular: string): string {
 function formatPanelName(
   item: Pick<PanelOutput, "index" | "id" | "label">,
 ): string {
-  return item.label ?? item.id ?? `Panelist ${item.index + 1}`;
+  return panelItemLabel(item);
 }
 
 function comparePanelItems(
