@@ -99,6 +99,13 @@ interface AgentStatusOptions {
   judgeStatus: string;
   judgeModel?: string;
   extra?: readonly string[];
+  /** Names the synthesis step for the reader. Merge runs the composer. */
+  synthesis?: FusionSynthesisMode;
+}
+
+/** What actually ran in the synthesis slot, for report labels. */
+function synthesisLabel(synthesis?: FusionSynthesisMode): string {
+  return synthesis === "merge" ? "Composer" : "Judge";
 }
 
 export function renderPanelFailureReport(
@@ -257,7 +264,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
   const recommendationFallback =
     sections.size === 0 && unsectionedOutput
       ? unsectionedOutput
-      : "Judge completed without a recommendation.";
+      : `${synthesisLabel(input.synthesis)} completed without a recommendation.`;
 
   // Section titles differ by synthesis mode; everything around them - agent
   // status, metadata, run details - is shared.
@@ -323,6 +330,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
         failures,
         judgeStatus: "succeeded",
         ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
+        ...(input.synthesis ? { synthesis: input.synthesis } : {}),
       }),
     },
     ...synthesisSections,
@@ -349,6 +357,7 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
     ...(input.judgeObservation
       ? { judgeObservation: input.judgeObservation }
       : {}),
+    ...(input.synthesis ? { synthesis: input.synthesis } : {}),
   });
   if (runDetails) reportSections.splice(-1, 0, runDetails);
   return renderReport(reportSections);
@@ -478,6 +487,7 @@ interface RunDetailsInput {
   failures: readonly FailedPanelSummary[];
   judgeModel?: string;
   judgeObservation?: RunObservation;
+  synthesis?: FusionSynthesisMode;
 }
 
 function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
@@ -497,7 +507,7 @@ function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
   ];
   if (input.judgeObservation) {
     entries.push({
-      label: "Judge",
+      label: synthesisLabel(input.synthesis),
       status: "completed",
       configuredModel: input.judgeModel,
       observation: input.judgeObservation,
@@ -609,7 +619,7 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
     lines.push("- Panel status: not available");
   }
 
-  lines.push(`- Judge: ${options.judgeStatus}`);
+  lines.push(`- ${synthesisLabel(options.synthesis)}: ${options.judgeStatus}`);
   if (options.judgeModel) {
     lines.push(`  Configured model: ${options.judgeModel}`);
   }

@@ -671,3 +671,30 @@ test("renderJudgeReport marks missing composer sections instead of dropping them
   assert.match(report, /## Gaps\nNot specified by the composer\./);
   assert.match(report, /## Coverage Map\nNot specified by the composer\./);
 });
+
+test("merge reports name the composer, not the judge", () => {
+  const shared = {
+    run: { id: "run-1", prompt: "Review", profileName: "audit" },
+    judgeOutput: "# Fusion Report\n## Summary\nDone.",
+    panelOutputs: [
+      {
+        index: 0,
+        id: "errors",
+        label: "errors",
+        agent: "pi-fusion.fusion-panelist",
+        output: "facet",
+      },
+    ],
+    failures: [],
+    judgeModel: "gpt-5-mini",
+    judgeObservation: { durationMs: 1000 },
+  };
+
+  const merged = renderJudgeReport({ ...shared, synthesis: "merge" as const });
+  assert.match(merged, /- Composer: succeeded/);
+  assert.doesNotMatch(merged, /- Judge: succeeded/);
+
+  const selected = renderJudgeReport(shared);
+  assert.match(selected, /- Judge: succeeded/);
+  assert.doesNotMatch(selected, /- Composer: succeeded/);
+});
