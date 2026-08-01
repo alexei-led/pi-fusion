@@ -40,6 +40,8 @@ export function decidePanelCompletion(
       run: input.run,
       failures: input.panelFailures,
       ...withJudgeModel(judgeModel),
+      synthesis: resolveSynthesisMode(input.profile),
+      panel: input.profile.panel,
     });
     return {
       kind: "fail",
