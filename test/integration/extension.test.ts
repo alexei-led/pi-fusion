@@ -220,9 +220,12 @@ test("start_fusion_review forwards an inline panel and omits it when absent", as
     undefined,
     ctx,
   );
-  const withPanel = pi.events.spawns.at(-1) as { tasks: { model?: string }[] };
+  const withPanel = pi.events.spawns.at(-1) as { workflowScript: string };
+  const withPanelTasks = JSON.parse(
+    withPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? "null",
+  ) as { model?: string }[];
   assert.deepEqual(
-    withPanel.tasks.map((entry) => entry.model),
+    withPanelTasks.map((entry) => entry.model),
     ["opus", "gpt"],
   );
 
@@ -238,6 +241,9 @@ test("start_fusion_review forwards an inline panel and omits it when absent", as
   await nextTick();
 
   await tool.execute("call-2", { prompt: "compare" }, undefined, undefined, ctx);
-  const withoutPanel = pi.events.spawns.at(-1) as { tasks: unknown[] };
-  assert.equal(withoutPanel.tasks.length, 3, "falls back to the profile panel");
+  const withoutPanel = pi.events.spawns.at(-1) as { workflowScript: string };
+  const withoutPanelTasks = JSON.parse(
+    withoutPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? "null",
+  ) as unknown[];
+  assert.equal(withoutPanelTasks.length, 3, "falls back to the profile panel");
 });

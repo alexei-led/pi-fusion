@@ -29,7 +29,7 @@ prompts, or both. **Mixing models is the main lever.** The config that
 `/fusion init` writes sets no `model`. By default you therefore get one model in
 three roles. Give each member its own `model` to get the real benefit.
 
-Older runs created as a single `pi-subagents` chain remain supported when restored.
+Fusion launches new panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. Older runs created as a single `pi-subagents` chain remain supported when restored.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -149,7 +149,7 @@ Profile:
 
 - `panel`: one or more panel members
 - `judge`: judge agent config
-- `concurrency`: max parallel panelists
+- `concurrency`: max parallel panelists. When `stopWhenPanelAgrees` is on, Fusion evaluates the first two panelists before launching another batch so it can avoid work after strong agreement.
 - `timeoutMs`: async subagent timeout in milliseconds
 - `context`: `fresh` or `fork`
 - `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet. All four conditions must hold: two or more finished panelists give the same normalized recommendation, every one of them reports `high` confidence, none of them asks for more evidence, and work remains. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
@@ -451,9 +451,15 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 
 `pi-subagents RPC is unavailable`
 
-- install `pi-subagents`
+- install or update `pi-subagents` to 0.42.1 or later
 - reload Pi
 - retry `/fusion status`
+
+`RPC spawn no longer accepts top-level chain or parallel inputs; use workflowScript.`
+
+- update `pi-fusion` to 0.6.1 or later
+- reload Pi so it loads the updated extension
+- retry `/fusion`; do not change your Fusion profile
 
 `Unknown fusion profile`
 

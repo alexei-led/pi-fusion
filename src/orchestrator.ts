@@ -51,6 +51,7 @@ import type { SubagentsTargetParams } from "./subagents-rpc.js";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
 const RECONCILE_INTERVAL_MS = 2_000;
+const WORKFLOW_RESULT_ARTIFACT_GRACE_MS = 5_000;
 
 export type FusionNotifyType = "info" | "warning" | "error";
 
@@ -105,6 +106,7 @@ interface RunLifecycleSnapshot {
   statusPayload?: unknown;
   resultPayload?: unknown;
   resultIsTerminal: boolean;
+  resultArtifactPending?: boolean;
 }
 
 export class FusionOrchestrator {
@@ -556,6 +558,7 @@ export class FusionOrchestrator {
       ...(active.chainAsyncDir ? { asyncDir: active.chainAsyncDir } : {}),
       eventPayload: payload,
     });
+    if (snapshot.resultArtifactPending) return { status: "ignored" };
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
@@ -655,8 +658,12 @@ export class FusionOrchestrator {
           : {}),
       eventPayload: payload,
     });
+    if (snapshot.resultArtifactPending) return { status: "ignored" };
 
-    if (!active.panelStopReason) {
+    const panelIsTerminal =
+      snapshot.resultIsTerminal ||
+      isTerminalSubagentState(extractSubagentState(snapshot.statusPayload));
+    if (!active.panelStopReason && !panelIsTerminal) {
       const partial = extractPanelResults(snapshot.statusPayload, {
         panel: profile.panel,
         completedOnly: true,
@@ -689,12 +696,16 @@ export class FusionOrchestrator {
       return this.failActiveRun(lifecycleError);
     }
 
+    const workflowStoppedIndices = extractWorkflowStoppedPanelIndices(
+      lifecyclePayload,
+    );
+    const stoppedPanelIndices =
+      active.panelStoppedIndices ??
+      (workflowStoppedIndices.length > 0 ? workflowStoppedIndices : undefined);
     const extracted = extractPanelResults(lifecyclePayload, {
       panel: profile.panel,
       limit: profile.panel.length,
-      ...(active.panelStoppedIndices
-        ? { stoppedPanelIndices: active.panelStoppedIndices }
-        : {}),
+      ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}),
     });
     if (!extracted.ok) {
       return this.failActiveRun(
@@ -707,11 +718,18 @@ export class FusionOrchestrator {
       snapshot.statusPayload,
       profile,
     );
-    const updated = this.storePanelResults(
+    const stored = this.storePanelResults(
       active.id,
       observedPanels.outputs,
       observedPanels.failures,
     );
+    const updated =
+      workflowStoppedIndices.length > 0 && !active.panelStopReason
+        ? this.runStore.updateRun(stored.id, {
+            panelStopReason: "agreement",
+            panelStoppedIndices: workflowStoppedIndices,
+          })
+        : stored;
 
     return this.finishPanelCompletion(
       updated,
@@ -840,6 +858,7 @@ export class FusionOrchestrator {
       ...(active.judgeAsyncDir ? { asyncDir: active.judgeAsyncDir } : {}),
       eventPayload: payload,
     });
+    if (snapshot.resultArtifactPending) return { status: "ignored" };
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
@@ -949,6 +968,17 @@ export class FusionOrchestrator {
         statusPayload,
         resultPayload: artifactResult,
         resultIsTerminal: true,
+      };
+    }
+
+    if (
+      statusIsTerminal &&
+      isWorkflowResultArtifactPending(statusPayload)
+    ) {
+      return {
+        statusPayload,
+        resultIsTerminal: false,
+        resultArtifactPending: true,
       };
     }
 
@@ -1608,8 +1638,44 @@ function isTerminalSubagentState(state: string | undefined): boolean {
   );
 }
 
+function isWorkflowResultArtifactPending(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const details = isRecord(payload.details) ? payload.details : undefined;
+  const mode = firstString(payload.mode, details?.mode);
+  const endedAtValue = payload.endedAt ?? details?.endedAt;
+  if (mode === "workflow" && typeof endedAtValue === "number") {
+    return Date.now() - endedAtValue < WORKFLOW_RESULT_ARTIFACT_GRACE_MS;
+  }
+  return isRecord(payload.data)
+    ? isWorkflowResultArtifactPending(payload.data)
+    : false;
+}
+
 function hasLifecycleResults(payload: unknown): boolean {
   return hasResultsArray(payload) || findStepsArray(payload).length > 0;
+}
+
+function extractWorkflowStoppedPanelIndices(payload: unknown): number[] {
+  if (!isRecord(payload)) return [];
+  const emits = isRecord(payload.workflow)
+    ? unknownArray(payload.workflow.emits)
+    : undefined;
+  const indices = new Set<number>();
+  for (const emit of emits ?? []) {
+    if (!isRecord(emit) || emit.type !== "pi-fusion-panel-stop") continue;
+    for (const index of unknownArray(emit.indices) ?? []) {
+      if (typeof index === "number" && Number.isInteger(index) && index >= 0) {
+        indices.add(index);
+      }
+    }
+  }
+  if (indices.size > 0) return [...indices].sort((left, right) => left - right);
+  if (isRecord(payload.details)) {
+    const nested = extractWorkflowStoppedPanelIndices(payload.details);
+    if (nested.length > 0) return nested;
+  }
+  if (isRecord(payload.data)) return extractWorkflowStoppedPanelIndices(payload.data);
+  return [];
 }
 
 function extractSubagentFailure(payload: unknown): string | undefined {

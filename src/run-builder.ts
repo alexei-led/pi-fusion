@@ -36,45 +36,12 @@ export interface PanelSubagentTaskParams {
   model?: string;
 }
 
-export interface PanelChainTaskParams extends PanelSubagentTaskParams {
-  as: string;
-  label: string;
-  phase: "Panel";
+export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
+  key: string;
 }
 
 export interface PanelSpawnParams {
-  tasks: PanelSubagentTaskParams[];
-  async: true;
-  clarify: false;
-  concurrency: number;
-  context: "fresh" | "fork";
-  output: true;
-  outputMode: "inline";
-  acceptance: FusionAcceptanceDisabled;
-  timeoutMs?: number;
-}
-
-export interface FusionChainParallelStepParams {
-  parallel: PanelChainTaskParams[];
-  concurrency: number;
-  failFast: false;
-}
-
-export interface FusionChainJudgeStepParams {
-  agent: string;
-  task: string;
-  label: "Judge";
-  phase: "Judge";
-  output: true;
-  outputMode: "inline";
-  skill: false;
-  acceptance: FusionAcceptanceDisabled;
-  model?: string;
-}
-
-export interface FusionChainSpawnParams {
-  chain: [FusionChainParallelStepParams, FusionChainJudgeStepParams];
-  task: string;
+  workflowScript: string;
   async: true;
   clarify: false;
   context: "fresh" | "fork";
@@ -181,57 +148,24 @@ export function buildPanelSpawnParams(
   profile: FusionProfile,
   prompt: string,
 ): PanelSpawnParams {
-  return {
-    tasks: profile.panel.map((member) =>
-      buildPanelTaskParams(
+  const concurrency = profile.concurrency ?? profile.panel.length;
+  const tasks: PanelWorkflowTaskParams[] = profile.panel.map(
+    (member, index) => ({
+      key: `panel-${index + 1}`,
+      ...buildPanelTaskParams(
         member,
         prompt,
         profile.stopWhenPanelAgrees === true,
       ),
-    ),
-    async: true,
-    clarify: false,
-    concurrency: profile.concurrency ?? profile.panel.length,
-    context: profile.context ?? "fresh",
-    output: true,
-    outputMode: "inline",
-    acceptance: FUSION_ACCEPTANCE_DISABLED,
-    ...(profile.timeoutMs !== undefined
-      ? { timeoutMs: profile.timeoutMs }
-      : {}),
-  };
-}
-
-export function buildFusionChainSpawnParams(
-  profile: FusionProfile,
-  prompt: string,
-): FusionChainSpawnParams {
-  const model = appendThinkingSuffix(
-    profile.judge.model,
-    profile.judge.thinking,
+    }),
   );
+
   return {
-    chain: [
-      {
-        parallel: profile.panel.map((member, index) =>
-          buildPanelChainTaskParams(member, index),
-        ),
-        concurrency: profile.concurrency ?? profile.panel.length,
-        failFast: false,
-      },
-      {
-        agent: profile.judge.agent,
-        task: buildChainJudgeTask(profile.panel),
-        label: "Judge",
-        phase: "Judge",
-        output: true,
-        outputMode: "inline",
-        skill: false,
-        acceptance: FUSION_ACCEPTANCE_DISABLED,
-        ...(model ? { model } : {}),
-      },
-    ],
-    task: prompt.trim(),
+    workflowScript: buildPanelWorkflowScript(
+      tasks,
+      concurrency,
+      profile.stopWhenPanelAgrees === true,
+    ),
     async: true,
     clarify: false,
     context: profile.context ?? "fresh",
@@ -271,6 +205,51 @@ export function buildJudgeSpawnParams(
   };
 }
 
+function buildPanelWorkflowScript(
+  tasks: readonly PanelWorkflowTaskParams[],
+  concurrency: number,
+  stopWhenAgrees: boolean,
+): string {
+  const serializedTasks = JSON.stringify(tasks);
+  const effectiveConcurrency = stopWhenAgrees
+    ? Math.min(concurrency, 2)
+    : concurrency;
+  const stopLogic = stopWhenAgrees
+    ? [
+        "const decisions = results",
+        "  .filter((result) => result && result.ok === true)",
+        "  .map((result) => {",
+        "    const text = typeof result.output === \"string\" ? result.output : \"\";",
+        "    const match = text.match(/<fusion-panel-decision>([\\s\\S]*?)<\\/fusion-panel-decision>\\s*$/);",
+        "    if (!match) return undefined;",
+        "    try { return JSON.parse(match[1]); } catch { return undefined; }",
+        "  })",
+        "  .filter((decision) => decision && typeof decision.recommendation === \"string\" && decision.confidence === \"high\" && decision.needsMoreEvidence === false);",
+        "if (decisions.length >= 2 && results.length < tasks.length) {",
+        "  const recommendation = decisions[0].recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim(),",
+        "    agrees = recommendation && decisions.every((decision) => decision.recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim() === recommendation);",
+        "  if (agrees) {",
+        "    emit({ type: \"pi-fusion-panel-stop\", indices: tasks.slice(results.length).map((_, index) => results.length + index) });",
+        "    return results;",
+        "  }",
+        "}",
+      ].join("\n")
+    : "";
+
+  return [
+    `const tasks = ${serializedTasks};`,
+    `const concurrency = ${effectiveConcurrency};`,
+    "const results = [];",
+    "for (let index = 0; index < tasks.length; index += concurrency) {",
+    "  results.push(...await runs.all(tasks.slice(index, index + concurrency)));",
+    stopWhenAgrees ? "  " + stopLogic.replaceAll("\n", "\n  ") : "",
+    "}",
+    "return results;",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildPanelTaskParams(
   member: PanelMemberConfig,
   prompt: string,
@@ -280,26 +259,6 @@ function buildPanelTaskParams(
   return {
     agent: member.agent,
     task: buildPanelTask(member, prompt, includeDecisionRecord),
-    output: true,
-    outputMode: "inline",
-    progress: true,
-    skill: false,
-    acceptance: FUSION_ACCEPTANCE_DISABLED,
-    ...(model ? { model } : {}),
-  };
-}
-
-function buildPanelChainTaskParams(
-  member: PanelMemberConfig,
-  index: number,
-): PanelChainTaskParams {
-  const model = appendThinkingSuffix(member.model, member.thinking);
-  return {
-    agent: member.agent,
-    task: buildPanelTask(member, "{task}", false),
-    as: chainOutputName(member, index),
-    label: memberLabel(member),
-    phase: "Panel",
     output: true,
     outputMode: "inline",
     progress: true,
@@ -461,30 +420,6 @@ function formatFacetAssignments(
   });
 }
 
-function buildChainJudgeTask(panel: readonly PanelMemberConfig[]): string {
-  return [
-    "You are the fusion judge.",
-    "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
-    "Synthesize the panel results. Preserve disagreement instead of forcing consensus.",
-    "",
-    "Original task:",
-    "{task}",
-    "",
-    "All listed panelists completed successfully.",
-    "",
-    "Panel outputs:",
-    ...panel.flatMap((member, index) => [
-      `## ${memberLabel(member)} (${member.id})`,
-      `Agent: ${member.agent}`,
-      "",
-      `{outputs.${chainOutputName(member, index)}}`,
-      "",
-    ]),
-    "Output contract:",
-    ...JUDGE_OUTPUT_CONTRACT,
-  ].join("\n");
-}
-
 function formatPanelStatus(
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
@@ -623,12 +558,6 @@ function createSeededRandom(seed: string): () => number {
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]?.trim() || "unknown failure";
-}
-
-function chainOutputName(member: PanelMemberConfig, index: number): string {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(member.id)
-    ? member.id
-    : `panel_${index + 1}`;
 }
 
 function hasThinkingSuffix(model: string): boolean {

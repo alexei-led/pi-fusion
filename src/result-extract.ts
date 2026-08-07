@@ -75,6 +75,20 @@ export function extractPanelResults(
     else failures.push(child.failure);
   }
 
+  for (const index of options.stoppedPanelIndices ?? []) {
+    if (index < results.length || index >= (options.limit ?? Infinity)) continue;
+    const child = normalizeChildResult(
+      {
+        success: false,
+        error: "Stopped after strong panel agreement.",
+      },
+      index,
+      options,
+    );
+    if (!child.ok) return child;
+    if (child.status === "failed") failures.push(child.failure);
+  }
+
   const runId = firstString(container.payload.runId, container.payload.id);
   return {
     ok: true,
@@ -197,7 +211,7 @@ function normalizeChildResult(
   }
 
   const member = options.panel?.[index];
-  const agent = firstString(rawResult.agent, member?.agent);
+  const agent = firstString(member?.agent, rawResult.agent);
   if (!agent) {
     return error(
       "missing-result-field",

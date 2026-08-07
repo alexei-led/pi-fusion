@@ -102,6 +102,26 @@ test("extractPanelResults uses structured panel output for the human-readable an
   assert.equal(result.outputs[0]?.output, "## Summary\\nChoose A.");
 });
 
+test("extractPanelResults preserves configured agent identity for workflow result keys", () => {
+  const result = extractPanelResults(
+    {
+      mode: "workflow",
+      results: [
+        {
+          agent: "panel-1",
+          success: true,
+          output: "Choose A.",
+        },
+      ],
+    },
+    { panel: PANEL },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.outputs[0]?.agent, "pi-fusion.fusion-panelist");
+});
+
 test("extractPanelResults preserves configured and observed model identities", () => {
   const result = extractPanelResults(
     {
@@ -271,6 +291,40 @@ test("extractPanelResults labels only stopped panel indices as agreement stops",
     reason: "stopped-after-agreement",
     observation: { model: "deepseek/model" },
   });
+});
+
+test("extractPanelResults synthesizes workflow panelists skipped after agreement", () => {
+  const panel = [
+    ...PANEL,
+    {
+      id: "skeptic",
+      label: "Skeptic",
+      agent: "pi-fusion.fusion-panelist",
+    },
+  ];
+  const result = extractPanelResults(
+    {
+      mode: "workflow",
+      results: [
+        { agent: "panel-1", success: true, output: "Choose A." },
+        { agent: "panel-2", success: true, output: "choose A." },
+      ],
+    },
+    { panel, limit: panel.length, stoppedPanelIndices: [2] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.failures, [
+    {
+      index: 2,
+      id: "skeptic",
+      label: "Skeptic",
+      agent: "pi-fusion.fusion-panelist",
+      summary: "Stopped after strong panel agreement.",
+      reason: "stopped-after-agreement",
+    },
+  ]);
 });
 
 test("extractPanelResults returns typed errors for missing and unknown shapes", () => {
