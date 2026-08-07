@@ -200,7 +200,7 @@ export class FakeEventBus {
     if (Array.isArray(params.chain)) {
       return { details: { runId: "chain-1" } };
     }
-    if (Array.isArray(params.tasks)) {
+    if (typeof params.workflowScript === "string") {
       return { details: { runId: "panel-1" } };
     }
     return { details: { runId: "judge-1" } };

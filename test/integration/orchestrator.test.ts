@@ -516,6 +516,87 @@ test("panel agreement stops unfinished work and still runs the judge", async () 
   );
 });
 
+test("workflow panel waits for the result artifact after terminal status is written", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    mode: "workflow",
+    state: "complete",
+    endedAt: Date.now(),
+    steps: [
+      { agent: "panel-1", status: "complete" },
+      { agent: "panel-2", status: "complete" },
+    ],
+  });
+
+  const pending = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(pending.status, "ignored");
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "panel");
+  assert.equal(fixture.rpc.spawns.length, 1);
+
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  const completed = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(completed.status, "started");
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(fixture.rpc.spawns.length, 2);
+});
+
+test("workflow agreement emit records skipped panelists and starts the judge", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  await fixture.orchestrator.startRun(
+    "--profile agreement compare",
+    fixture.ctx,
+  );
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    mode: "workflow",
+    state: "complete",
+    workflow: {
+      emits: [{ type: "pi-fusion-panel-stop", indices: [2] }],
+    },
+    results: [
+      {
+        agent: "panel-1",
+        success: true,
+        structuredOutput: panelDecision("Choose A"),
+      },
+      {
+        agent: "panel-2",
+        success: true,
+        structuredOutput: panelDecision("choose A."),
+      },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+
+  assert.equal(result.status, "started");
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.panelStopReason,
+    "agreement",
+  );
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.panelFailures?.[0]?.reason,
+    "stopped-after-agreement",
+  );
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.panelOutputs?.[0]?.agent,
+    "panel-agent",
+  );
+});
+
 test("panel completion treats terminal status text as complete even when event payload has no results", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
@@ -905,9 +986,9 @@ test("merge run reaches done through the composer and emits no new phase", async
   );
   phases.push(fixture.orchestrator.getActiveRun()?.phase ?? "none");
 
-  const panelSpawn = fixture.rpc.spawns[0] as { tasks?: { task: string }[] };
+  const panelSpawn = fixture.rpc.spawns[0] as { workflowScript?: string };
   assert.match(
-    panelSpawn.tasks?.[0]?.task ?? "",
+    panelSpawn.workflowScript ?? "",
     /Cover ONLY the security surface of: review the release/,
   );
 

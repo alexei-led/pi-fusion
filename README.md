@@ -177,7 +177,7 @@ Requirements:
 
 - Pi
 - Node.js 22.19+
-- `pi-subagents`
+- `pi-subagents` 0.42.1 or later
 
 ```bash
 pi install npm:pi-subagents
@@ -210,7 +210,7 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Fusion sends your prompt and any inspected snippets to every panel model, and to the judge, through `pi-subagents`.
 - Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown. `$0.0000` is a known zero cost.
 - `Model` is lifecycle metadata. `Configured model` is the profile request. Both appear when the run differs from the request.
-- `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, stops only unfinished panelists, and still runs the judge.
+- `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, evaluates panelists in pairs so it can avoid starting later work, records skipped panelists in the report, and still runs the judge.
 - Panel answers reach the judge in an order seeded from the run id, not in config order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
 - Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.

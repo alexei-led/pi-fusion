@@ -4,13 +4,13 @@ import { readFile } from "node:fs/promises";
 import {
   appendThinkingSuffix,
   buildBlindLabelMap,
-  buildFusionChainSpawnParams,
   buildJudgeSpawnParams,
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
   shufflePanelItems,
   type PanelOutput,
   type FailedPanelSummary,
+  type PanelWorkflowTaskParams,
 } from "../../src/run-builder.js";
 import { createDefaultFusionConfig } from "../../src/config.js";
 import type { FusionProfile } from "../../src/types.js";
@@ -50,6 +50,14 @@ const PROFILE: FusionProfile = {
   context: "fresh",
 };
 
+function workflowTasks(
+  params: ReturnType<typeof buildPanelSpawnParams>,
+): PanelWorkflowTaskParams[] {
+  const serialized = params.workflowScript.match(/^const tasks = (.*);$/m)?.[1];
+  assert.ok(serialized);
+  return JSON.parse(serialized) as PanelWorkflowTaskParams[];
+}
+
 test("appendThinkingSuffix appends only when a model exists and no suffix exists", () => {
   assert.equal(
     appendThinkingSuffix("openai/gpt-5.5", "xhigh"),
@@ -71,16 +79,25 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
 
   assert.equal(params.async, true);
   assert.equal(params.clarify, false);
-  assert.equal(params.concurrency, 2);
   assert.equal(params.timeoutMs, 300_000);
   assert.equal(params.context, "fresh");
   assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
   assert.equal("action" in params, false);
+  assert.equal("tasks" in params, false);
   assert.equal("chain" in params, false);
+  assert.equal("concurrency" in params, false);
   assert.equal("worktree" in params, false);
+  assert.match(
+    params.workflowScript,
+    /runs\.all\(tasks\.slice\(index, index \+ concurrency\)\)/,
+  );
 
-  const tasks = params.tasks;
+  const tasks = workflowTasks(params);
   assert.equal(tasks.length, 3);
+  assert.deepEqual(
+    tasks.map((task) => task.key),
+    ["panel-1", "panel-2", "panel-3"],
+  );
   assert.equal(tasks[0]?.agent, "pi-fusion.fusion-panelist");
   assert.equal(tasks[0]?.model, "openai/gpt-5.5:xhigh");
   assert.equal(tasks[1]?.model, "anthropic/claude:medium");
@@ -94,18 +111,21 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
 
 test("buildPanelSpawnParams adds a decision record only for agreement stopping", () => {
   const params = buildPanelSpawnParams(
-    { ...PROFILE, stopWhenPanelAgrees: true },
+    { ...PROFILE, concurrency: 3, stopWhenPanelAgrees: true },
     "Compare two API designs",
   );
 
-  assert.equal("outputSchema" in (params.tasks[0] ?? {}), false);
-  assert.match(params.tasks[0]?.task ?? "", /<fusion-panel-decision>/);
-  assert.match(params.tasks[0]?.task ?? "", /needsMoreEvidence/);
+  const tasks = workflowTasks(params);
+  assert.equal("outputSchema" in (tasks[0] ?? {}), false);
+  assert.match(tasks[0]?.task ?? "", /<fusion-panel-decision>/);
+  assert.match(tasks[0]?.task ?? "", /needsMoreEvidence/);
+  assert.match(params.workflowScript, /const concurrency = 2;/);
+  assert.match(params.workflowScript, /pi-fusion-panel-stop/);
 });
 
 test("buildPanelSpawnParams includes role, prompt, contract, and read-only instruction", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
-  const task = params.tasks[0]?.task ?? "";
+  const task = workflowTasks(params)[0]?.task ?? "";
 
   assert.match(task, /Panel member: Architect/);
   assert.match(task, /Role: architecture and tradeoffs/);
@@ -121,44 +141,6 @@ test("buildPanelSpawnParams includes role, prompt, contract, and read-only instr
   assert.match(task, /## Summary/);
   assert.match(task, /## Recommendation/);
   assert.match(task, /## Confidence/);
-});
-
-test("buildFusionChainSpawnParams creates a parallel panel step followed by a judge step", () => {
-  const params = buildFusionChainSpawnParams(
-    PROFILE,
-    "Compare two API designs",
-  );
-
-  assert.equal(params.async, true);
-  assert.equal(params.clarify, false);
-  assert.equal(params.context, "fresh");
-  assert.equal(params.task, "Compare two API designs");
-  assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
-  assert.equal(params.chain.length, 2);
-
-  const panelStep = params.chain[0];
-  assert.equal(panelStep.concurrency, 2);
-  assert.equal(panelStep.failFast, false);
-  assert.equal(panelStep.parallel.length, 3);
-  assert.equal(panelStep.parallel[0]?.label, "Architect");
-  assert.equal(panelStep.parallel[0]?.phase, "Panel");
-  assert.equal(panelStep.parallel[0]?.as, "architect");
-  assert.equal(panelStep.parallel[0]?.model, "openai/gpt-5.5:xhigh");
-  assert.equal("outputSchema" in (panelStep.parallel[0] ?? {}), false);
-  assert.deepEqual(
-    panelStep.parallel[0]?.acceptance,
-    FUSION_ACCEPTANCE_DISABLED,
-  );
-
-  const judgeStep = params.chain[1];
-  assert.equal(judgeStep.agent, "pi-fusion.fusion-judge");
-  assert.equal(judgeStep.label, "Judge");
-  assert.equal(judgeStep.phase, "Judge");
-  assert.equal(judgeStep.model, "openai/gpt-5.5:high");
-  assert.match(judgeStep.task, /Original task:\n\{task\}/);
-  assert.match(judgeStep.task, /\{outputs\.architect\}/);
-  assert.match(judgeStep.task, /\{outputs\.tester\}/);
-  assert.match(judgeStep.task, /# Fusion Report/);
 });
 
 test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, and report contract", () => {
@@ -338,9 +320,31 @@ test("buildPanelSpawnParams matches the pre-change baseline for the default prof
   const profile = createDefaultFusionConfig().profiles.quality;
   assert.ok(profile);
 
+  const actual = buildPanelSpawnParams(profile, baseline.prompt);
+  const expected = baseline.panel as {
+    tasks: PanelWorkflowTaskParams[];
+    async: true;
+    clarify: false;
+    concurrency: number;
+    context: "fresh" | "fork";
+    output: true;
+    outputMode: "inline";
+    acceptance: typeof FUSION_ACCEPTANCE_DISABLED;
+    timeoutMs?: number;
+  };
   assert.deepEqual(
-    buildPanelSpawnParams(profile, baseline.prompt),
-    baseline.panel,
+    workflowTasks(actual).map(({ key: _key, ...task }) => task),
+    expected.tasks,
+  );
+  assert.equal(actual.async, expected.async);
+  assert.equal(actual.clarify, expected.clarify);
+  assert.equal(actual.context, expected.context);
+  assert.equal(actual.output, expected.output);
+  assert.equal(actual.outputMode, expected.outputMode);
+  assert.deepEqual(actual.acceptance, expected.acceptance);
+  assert.equal(actual.timeoutMs, expected.timeoutMs);
+  assert.ok(
+    actual.workflowScript.includes(`const concurrency = ${expected.concurrency};`),
   );
 });
 
@@ -373,21 +377,6 @@ test("buildJudgeSpawnParams matches the pre-change baseline once answer order is
   assert.equal(
     normaliseAnswerBlocks(stripContestedClaims(task)),
     normaliseAnswerBlocks(baseline.judge.task),
-  );
-});
-
-test("buildFusionChainSpawnParams is unchanged; the legacy chain path is restore-only", () => {
-  const params = buildFusionChainSpawnParams(
-    PROFILE,
-    "Compare two API designs",
-  );
-  const judgeStep = params.chain[1];
-
-  assert.match(judgeStep.task, /## Architect \(architect\)/);
-  assert.ok(
-    judgeStep.task.indexOf("## Architect") <
-      judgeStep.task.indexOf("## Tester"),
-    "chain judge task must keep profile order",
   );
 });
 
@@ -570,8 +559,9 @@ test("buildPanelSpawnParams substitutes {task} into a member question", () => {
     ],
   };
 
-  const task =
-    buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+  const task = workflowTasks(
+    buildPanelSpawnParams(profile, "Ship the new API"),
+  )[0]?.task ?? "";
 
   assert.match(task, /Your assigned facet of the task:/);
   assert.match(task, /Cover ONLY the security surface of: Ship the new API/);
@@ -592,7 +582,7 @@ test("buildPanelSpawnParams replaces every {task} occurrence", () => {
   };
 
   const task =
-    buildPanelSpawnParams(profile, "Ship the API").tasks[0]?.task ?? "";
+    workflowTasks(buildPanelSpawnParams(profile, "Ship the API"))[0]?.task ?? "";
 
   assert.equal(task.includes("{task}"), false);
   assert.equal(task.split("Ship the API").length - 1, 2);
@@ -611,8 +601,9 @@ test("buildPanelSpawnParams appends the original task when the question omits th
     ],
   };
 
-  const task =
-    buildPanelSpawnParams(profile, "Ship the new API").tasks[0]?.task ?? "";
+  const task = workflowTasks(
+    buildPanelSpawnParams(profile, "Ship the new API"),
+  )[0]?.task ?? "";
 
   assert.match(
     task,
@@ -628,7 +619,9 @@ test("buildPanelSpawnParams without a question reproduces today's task exactly",
   const profile = createDefaultFusionConfig().profiles.quality;
   assert.ok(profile);
 
-  const tasks = buildPanelSpawnParams(profile, baseline.prompt).tasks;
+  const tasks = workflowTasks(
+    buildPanelSpawnParams(profile, baseline.prompt),
+  );
 
   assert.deepEqual(
     tasks.map((entry) => entry.task),
@@ -888,5 +881,8 @@ test("label defaults to id", () => {
     "Compare designs",
   );
 
-  assert.match(params.tasks[0]?.task ?? "", /Panel member: architect \(architect\)/);
+  assert.match(
+    workflowTasks(params)[0]?.task ?? "",
+    /Panel member: architect \(architect\)/,
+  );
 });

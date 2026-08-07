@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1 - 2026-08-07
+
+### Fixed
+
+- Panel fanout now uses the current `pi-subagents` `workflowScript` RPC surface.
+  Fusion no longer sends rejected top-level `tasks`, `chain`, or `concurrency`
+  fields.
+- Workflow panel results retain the configured agent identity instead of exposing
+  internal workflow keys in reports.
+- Fusion waits briefly for a terminal workflow result artifact after status is
+  written, avoiding a false failure during the artifact write race.
+- Agreement stopping records panelists that were not launched and keeps the
+  judge input and failure summary accurate.
+
 ## 0.6.0 - 2026-08-02
 
 ### Changed
