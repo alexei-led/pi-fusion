@@ -13,6 +13,31 @@ import {
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 
+function judgeWorkflowTask(spawn: unknown): { agent: string; task: string } {
+  if (!isRecord(spawn) || typeof spawn.workflowScript !== "string") {
+    throw new TypeError("Expected a judge workflow spawn.");
+  }
+  const serialized = spawn.workflowScript.match(
+    /^return runs\.run\("judge", (.*)\);$/,
+  )?.[1];
+  if (!serialized) throw new TypeError("Expected a serialized judge task.");
+  const task: unknown = JSON.parse(serialized);
+  if (!isJudgeWorkflowTask(task)) {
+    throw new TypeError("Expected a serialized judge task payload.");
+  }
+  return task;
+}
+
+function isJudgeWorkflowTask(
+  value: unknown,
+): value is { agent: string; task: string } {
+  return (
+    isRecord(value) &&
+    typeof value.agent === "string" &&
+    typeof value.task === "string"
+  );
+}
+
 const CONFIG: FusionConfig = {
   defaultProfile: "quality",
   profiles: {
@@ -295,7 +320,7 @@ test("panel completion without a judge result spawns a judge", async () => {
 
   assert.equal(result.status, "started");
   assert.equal(fixture.rpc.spawns.length, 2);
-  assert.equal(fixture.rpc.spawns[1]?.agent, "judge-agent");
+  assert.equal(judgeWorkflowTask(fixture.rpc.spawns[1]).agent, "judge-agent");
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, "judge-1");
   assert.deepEqual(
@@ -1006,13 +1031,10 @@ test("merge run reaches done through the composer and emits no new phase", async
   assert.equal(panelResult.status, "started");
   phases.push(fixture.orchestrator.getActiveRun()?.phase ?? "none");
 
-  const synthesisSpawn = fixture.rpc.spawns[1] as {
-    agent?: string;
-    task?: string;
-  };
+  const synthesisSpawn = judgeWorkflowTask(fixture.rpc.spawns[1]);
   assert.equal(synthesisSpawn.agent, "pi-fusion.fusion-composer");
-  assert.match(synthesisSpawn.task ?? "", /You are the fusion composer\./);
-  assert.match(synthesisSpawn.task ?? "", /Facet assignments:/);
+  assert.match(synthesisSpawn.task, /You are the fusion composer\./);
+  assert.match(synthesisSpawn.task, /Facet assignments:/);
 
   fixture.rpc.statusResults.set("judge-1", {
     runId: "judge-1",
@@ -1069,7 +1091,7 @@ test("merge run with one failed panelist still composes and reports the gap", as
   assert.equal(panelResult.status, "started");
   assert.equal(fixture.rpc.spawns.length, 2);
   assert.equal(
-    (fixture.rpc.spawns[1] as { agent?: string }).agent,
+    judgeWorkflowTask(fixture.rpc.spawns[1]).agent,
     "pi-fusion.fusion-composer",
   );
 });
@@ -1082,13 +1104,10 @@ test("select run is unchanged end to end", async () => {
   fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
   await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
 
-  const synthesisSpawn = fixture.rpc.spawns[1] as {
-    agent?: string;
-    task?: string;
-  };
+  const synthesisSpawn = judgeWorkflowTask(fixture.rpc.spawns[1]);
   assert.equal(synthesisSpawn.agent, "judge-agent");
-  assert.match(synthesisSpawn.task ?? "", /You are the fusion judge\./);
-  assert.doesNotMatch(synthesisSpawn.task ?? "", /Facet assignments:/);
+  assert.match(synthesisSpawn.task, /You are the fusion judge\./);
+  assert.doesNotMatch(synthesisSpawn.task, /Facet assignments:/);
 });
 
 test("an inline --panel run survives a restore", async () => {
@@ -1121,6 +1140,6 @@ test("an inline --panel run survives a restore", async () => {
   });
 
   assert.notEqual(result.status, "failed");
-  const judgeSpawn = second.rpc.spawns.at(-1) as { agent?: string };
+  const judgeSpawn = judgeWorkflowTask(second.rpc.spawns.at(-1));
   assert.equal(judgeSpawn.agent, "judge-agent");
 });

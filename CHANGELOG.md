@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2 - 2026-08-08
+
+### Fixed
+
+- Panel and judge spawns now use only the `pi-subagents` 0.43+ public
+  `workflowScript` surface. Fusion no longer sends the rejected `clarify` UI
+  field, and the judge no longer uses removed direct top-level execution.
+- Regression tests now reject spawn payloads that violate this RPC contract.
+
 ## 0.6.1 - 2026-08-07
 
 ### Fixed

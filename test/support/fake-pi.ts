@@ -195,15 +195,20 @@ export class FakeEventBus {
   }
 
   private spawnData(params: unknown): unknown {
-    assert.ok(isRecord(params));
+    if (!isRecord(params) || typeof params.workflowScript !== "string") {
+      throw new TypeError("Subagent spawn must use workflowScript.");
+    }
+    assert.equal("clarify" in params, false);
+    assert.equal("agent" in params, false);
+    assert.equal("task" in params, false);
     this.spawns.push(params);
-    if (Array.isArray(params.chain)) {
-      return { details: { runId: "chain-1" } };
-    }
-    if (typeof params.workflowScript === "string") {
-      return { details: { runId: "panel-1" } };
-    }
-    return { details: { runId: "judge-1" } };
+    return {
+      details: {
+        runId: params.workflowScript.includes('runs.run("judge",')
+          ? "judge-1"
+          : "panel-1",
+      },
+    };
   }
 
   private statusData(params: unknown): unknown {

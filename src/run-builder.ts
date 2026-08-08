@@ -43,7 +43,6 @@ export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
 export interface PanelSpawnParams {
   workflowScript: string;
   async: true;
-  clarify: false;
   context: "fresh" | "fork";
   output: true;
   outputMode: "inline";
@@ -51,20 +50,26 @@ export interface PanelSpawnParams {
   timeoutMs?: number;
 }
 
-export interface JudgeSpawnParams {
+export interface JudgeWorkflowTaskParams {
   agent: string;
   task: string;
-  async: true;
-  clarify: false;
-  context: "fresh" | "fork";
   output: true;
   outputMode: "inline";
   skill: false;
   acceptance: FusionAcceptanceDisabled;
   model?: string;
-  timeoutMs?: number;
   /** Per-task cap on judge tool calls; see `FusionProfile.judgeToolBudget`. */
   toolBudget?: ToolBudget;
+}
+
+export interface JudgeSpawnParams {
+  workflowScript: string;
+  async: true;
+  context: "fresh" | "fork";
+  output: true;
+  outputMode: "inline";
+  acceptance: FusionAcceptanceDisabled;
+  timeoutMs?: number;
 }
 
 export type { FailedPanelSummary, PanelOutput } from "./types.js";
@@ -167,7 +172,6 @@ export function buildPanelSpawnParams(
       profile.stopWhenPanelAgrees === true,
     ),
     async: true,
-    clarify: false,
     context: profile.context ?? "fresh",
     output: true,
     outputMode: "inline",
@@ -185,12 +189,9 @@ export function buildJudgeSpawnParams(
     input.profile.judge.model,
     input.profile.judge.thinking,
   );
-  return {
+  const task: JudgeWorkflowTaskParams = {
     agent: resolveSynthesisAgent(input.profile),
     task: buildJudgeTask(input),
-    async: true,
-    clarify: false,
-    context: input.profile.context ?? "fresh",
     output: true,
     outputMode: "inline",
     skill: false,
@@ -199,6 +200,15 @@ export function buildJudgeSpawnParams(
     ...(input.profile.judgeToolBudget
       ? { toolBudget: input.profile.judgeToolBudget }
       : {}),
+  };
+
+  return {
+    workflowScript: `return runs.run("judge", ${JSON.stringify(task)});`,
+    async: true,
+    context: input.profile.context ?? "fresh",
+    output: true,
+    outputMode: "inline",
+    acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(input.profile.timeoutMs !== undefined
       ? { timeoutMs: input.profile.timeoutMs }
       : {}),

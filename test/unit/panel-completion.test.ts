@@ -36,6 +36,14 @@ function makeFailure(index: number, summary: string): FailedPanelSummary {
   return { index, agent: "panel-agent", summary };
 }
 
+function judgeWorkflowTask(workflowScript: string): { agent: string; task: string } {
+  const serialized = workflowScript.match(
+    /^return runs\.run\("judge", (.*)\);$/,
+  )?.[1];
+  assert.ok(serialized);
+  return JSON.parse(serialized) as { agent: string; task: string };
+}
+
 test("decidePanelCompletion returns a failure report when no panelists succeed", () => {
   const decision = decidePanelCompletion({
     run: makeRun(),
@@ -74,8 +82,10 @@ test("decidePanelCompletion prepares a standard judge spawn when multiple paneli
   });
 
   assert.equal(decision.kind, "judge");
-  assert.equal(decision.params.agent, "judge-agent");
-  assert.match(decision.params.task, /Architect says A/);
+  if (decision.kind !== "judge") return;
+  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.equal(params.agent, "judge-agent");
+  assert.match(params.task, /Architect says A/);
   assert.equal(decision.notification, "Fusion judge started");
   assert.equal(
     decision.missingRunIdError,
@@ -150,6 +160,7 @@ test("merge synthesis spawns the composer for a full panel", () => {
 
   assert.equal(decision.kind, "judge");
   if (decision.kind !== "judge") return;
-  assert.match(decision.params.task, /You are the fusion composer\./);
-  assert.match(decision.params.task, /## Coverage Map/);
+  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.match(params.task, /You are the fusion composer\./);
+  assert.match(params.task, /## Coverage Map/);
 });

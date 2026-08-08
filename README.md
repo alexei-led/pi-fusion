@@ -177,7 +177,7 @@ Requirements:
 
 - Pi
 - Node.js 22.19+
-- `pi-subagents` 0.42.1 or later
+- `pi-subagents` 0.43.0 or later
 
 ```bash
 pi install npm:pi-subagents

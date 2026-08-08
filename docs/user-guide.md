@@ -451,7 +451,7 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 
 `pi-subagents RPC is unavailable`
 
-- install or update `pi-subagents` to 0.42.1 or later
+- install or update `pi-subagents` to 0.43.0 or later
 - reload Pi
 - retry `/fusion status`
 

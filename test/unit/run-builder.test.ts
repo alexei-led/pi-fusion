@@ -4,12 +4,13 @@ import { readFile } from "node:fs/promises";
 import {
   appendThinkingSuffix,
   buildBlindLabelMap,
-  buildJudgeSpawnParams,
+  buildJudgeSpawnParams as buildJudgeWorkflowSpawnParams,
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
   shufflePanelItems,
   type PanelOutput,
   type FailedPanelSummary,
+  type JudgeWorkflowTaskParams,
   type PanelWorkflowTaskParams,
 } from "../../src/run-builder.js";
 import { createDefaultFusionConfig } from "../../src/config.js";
@@ -58,6 +59,22 @@ function workflowTasks(
   return JSON.parse(serialized) as PanelWorkflowTaskParams[];
 }
 
+function judgeWorkflowTask(
+  params: ReturnType<typeof buildJudgeWorkflowSpawnParams>,
+): JudgeWorkflowTaskParams {
+  const serialized = params.workflowScript.match(
+    /^return runs\.run\("judge", (.*)\);$/,
+  )?.[1];
+  assert.ok(serialized);
+  return JSON.parse(serialized) as JudgeWorkflowTaskParams;
+}
+
+function buildJudgeSpawnParams(
+  input: Parameters<typeof buildJudgeWorkflowSpawnParams>[0],
+): JudgeWorkflowTaskParams {
+  return judgeWorkflowTask(buildJudgeWorkflowSpawnParams(input));
+}
+
 test("appendThinkingSuffix appends only when a model exists and no suffix exists", () => {
   assert.equal(
     appendThinkingSuffix("openai/gpt-5.5", "xhigh"),
@@ -78,7 +95,7 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
 
   assert.equal(params.async, true);
-  assert.equal(params.clarify, false);
+  assert.equal("clarify" in params, false);
   assert.equal(params.timeoutMs, 300_000);
   assert.equal(params.context, "fresh");
   assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
@@ -172,20 +189,26 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
     },
   ];
 
-  const params = buildJudgeSpawnParams({
+  const spawn = buildJudgeWorkflowSpawnParams({
     profile: PROFILE,
     prompt: "Compare two API designs",
     panelOutputs: outputs,
     failedPanelists,
     runId: "run-fixed-seed",
   });
+  const params = judgeWorkflowTask(spawn);
 
-  assert.equal(params.async, true);
-  assert.equal(params.clarify, false);
+  assert.equal(spawn.async, true);
+  assert.equal("clarify" in spawn, false);
+  assert.equal("agent" in spawn, false);
+  assert.equal("task" in spawn, false);
+  assert.equal(spawn.context, "fresh");
+  assert.equal(spawn.timeoutMs, 300_000);
+  assert.equal(spawn.output, true);
+  assert.equal(spawn.outputMode, "inline");
+  assert.deepEqual(spawn.acceptance, FUSION_ACCEPTANCE_DISABLED);
   assert.equal(params.agent, "pi-fusion.fusion-judge");
   assert.equal(params.model, "openai/gpt-5.5:high");
-  assert.equal(params.context, "fresh");
-  assert.equal(params.timeoutMs, 300_000);
   assert.equal(params.output, true);
   assert.equal(params.outputMode, "inline");
   assert.equal(params.skill, false);
@@ -324,7 +347,6 @@ test("buildPanelSpawnParams matches the pre-change baseline for the default prof
   const expected = baseline.panel as {
     tasks: PanelWorkflowTaskParams[];
     async: true;
-    clarify: false;
     concurrency: number;
     context: "fresh" | "fork";
     output: true;
@@ -337,7 +359,7 @@ test("buildPanelSpawnParams matches the pre-change baseline for the default prof
     expected.tasks,
   );
   assert.equal(actual.async, expected.async);
-  assert.equal(actual.clarify, expected.clarify);
+  assert.equal("clarify" in actual, false);
   assert.equal(actual.context, expected.context);
   assert.equal(actual.output, expected.output);
   assert.equal(actual.outputMode, expected.outputMode);
