@@ -1,4 +1,7 @@
-import { validateCallerOutput } from "./caller-contract.js";
+import {
+  detectCallerOutputContract,
+  validateCallerOutput,
+} from "./caller-contract.js";
 import {
   renderFailureReport,
   renderPanelFailureReport,
@@ -80,7 +83,9 @@ export function decidePanelCompletion(
   }
 
   if (input.panelOutputs.length === 1) {
-    const callerContract = input.run.outputContract;
+    const callerContract =
+      input.run.outputContract ??
+      detectCallerOutputContract(input.run.prompt);
     if (callerContract) {
       const validation = validateCallerOutput(
         callerContract,

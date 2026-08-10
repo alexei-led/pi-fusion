@@ -115,7 +115,6 @@ test("decidePanelCompletion rejects invalid exact output from a single-member pa
     run: {
       ...makeRun(),
       prompt: EXACT_REVIEW_PROMPT,
-      outputContract: "plan-review-v1",
     },
     profile: { ...PROFILE, panel: [PROFILE.panel[0]!] },
     panelOutputs: [makeOutput(0, "## Summary\nLooks good.")],
@@ -147,6 +146,23 @@ test("decidePanelCompletion prepares a standard judge spawn when multiple paneli
     decision.missingRunIdError,
     "pi-subagents spawn did not return a judge run ID.",
   );
+});
+
+test("decidePanelCompletion restores caller-contract instructions for legacy judge spawns", () => {
+  const decision = decidePanelCompletion({
+    run: { ...makeRun(), prompt: EXACT_REVIEW_PROMPT },
+    profile: PROFILE,
+    panelOutputs: [
+      makeOutput(0, "NO_FINDINGS"),
+      makeOutput(1, "NO_FINDINGS"),
+    ],
+    panelFailures: [],
+  });
+
+  assert.equal(decision.kind, "judge");
+  if (decision.kind !== "judge") return;
+  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.match(params.task, /exact output contract in the original task/);
 });
 
 test("decidePanelCompletion labels fallback judge spawns explicitly", () => {

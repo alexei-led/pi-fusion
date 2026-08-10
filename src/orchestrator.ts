@@ -643,7 +643,8 @@ export class FusionOrchestrator {
       const observed = this.runStore.updateRun(updated.id, {
         judgeObservation,
       });
-      const callerContract = observed.outputContract;
+      const callerContract =
+        observed.outputContract ?? detectCallerOutputContract(observed.prompt);
       if (callerContract) {
         const validation = validateCallerOutput(callerContract, output.output);
         if (!validation.ok) return this.failActiveRun(validation.error);
@@ -945,7 +946,8 @@ export class FusionOrchestrator {
       );
     }
 
-    const callerContract = active.outputContract;
+    const callerContract =
+      active.outputContract ?? detectCallerOutputContract(active.prompt);
     if (callerContract) {
       const validation = validateCallerOutput(callerContract, output.output);
       if (!validation.ok) return this.failActiveRun(validation.error);

@@ -186,7 +186,6 @@ test("legacy chain completion validates exact caller output", async () => {
     id: "fusion-1",
     prompt: EXACT_REVIEW_PROMPT,
     profileName: "quality",
-    outputContract: "plan-review-v1",
     phase: "chain",
   });
   fixture.runStore.updateRun("fusion-1", { chainRunId: "chain-1" });
@@ -1026,6 +1025,41 @@ test("judge completion fails when synthesis violates an exact caller contract", 
   assert.equal(result.status, "failed");
   assert.match(result.error, /violated the exact caller output contract/);
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+});
+
+test("restored legacy judge completion detects an exact caller contract from the prompt", async () => {
+  const fixture = makeFixture();
+  fixture.runStore.startRun({
+    id: "fusion-1",
+    prompt: EXACT_REVIEW_PROMPT,
+    profileName: "quality",
+    phase: "judge",
+  });
+  fixture.runStore.updateRun("fusion-1", { judgeRunId: "judge-1" });
+  fixture.rpc.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "running",
+    results: [],
+  });
+  await fixture.orchestrator.restore(fixture.ctx);
+  fixture.rpc.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "complete",
+    results: [
+      {
+        agent: "judge-agent",
+        success: true,
+        output: "# Fusion Report\n\n## Summary\nEverything looks good.",
+      },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "judge-1",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.error, /violated the exact caller output contract/);
 });
 
 test("judge completion returns a valid exact caller output unchanged", async () => {
