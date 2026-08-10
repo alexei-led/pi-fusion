@@ -130,7 +130,10 @@ Run this inside a trusted project:
         "agent": "pi-fusion.fusion-judge"
       },
       "concurrency": 3,
-      "timeoutMs": 300000,
+      "panelTimeoutMs": 900000,
+      "judgeTimeoutMs": 900000,
+      "panelToolBudget": { "soft": 8, "hard": 12, "block": "*" },
+      "judgeToolBudget": { "soft": 8, "hard": 12, "block": "*" },
       "context": "fresh",
       "stopWhenPanelAgrees": false
     }
@@ -150,12 +153,17 @@ Profile:
 - `panel`: one or more panel members
 - `judge`: judge agent config
 - `concurrency`: max parallel panelists. When `stopWhenPanelAgrees` is on, Fusion evaluates the first two panelists before launching another batch so it can avoid work after strong agreement.
-- `timeoutMs`: async subagent timeout in milliseconds
+- `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It remains supported as the fallback for both stages. New profiles default to 15 minutes through the stage-specific fields; existing explicit `timeoutMs` values are preserved. Use a stage-specific field when panel and synthesis need different deadlines.
+- `panelTimeoutMs`: panel workflow wall-clock timeout. It overrides `timeoutMs` for the panel. The default profile uses 15 minutes.
+- `judgeTimeoutMs`: synthesis workflow wall-clock timeout. It overrides `timeoutMs` for the judge or composer. The default profile uses 15 minutes.
 - `context`: `fresh` or `fork`
 - `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet. All four conditions must hold: two or more finished panelists give the same normalized recommendation, every one of them reports `high` confidence, none of them asks for more evidence, and work remains. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
 - `synthesis`: rarely needed. Inferred from the panel — any member with a `question` means `merge`, otherwise `select`. Set it only to override that. See [Synthesis modes](#synthesis-modes).
 - `blindPanelLabels`: optional boolean, default `false`. When it is on, the judge sees `Candidate A`, `Candidate B`, and so on, instead of the configured labels. Fusion also withholds agent names and artifact paths, because they contain the member id. A role label reads as an authority cue before the judge compares any content. Your report always shows the real names.
-- `judgeToolBudget`: optional `{ "soft": n, "hard": n }`. It caps the tool calls the judge can spend to verify contested claims. `soft` is a nudge. After `hard`, Fusion blocks further tool use, so the judge still produces a report. Both numbers must be positive integers, and `soft` must not be larger than `hard`.
+- `panelToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` applied to each panelist. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. After `hard`, the selected tools are blocked so the panelist can still finalise.
+- `judgeToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` for the judge or composer. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. `soft` is a nudge. After `hard`, the selected tools are blocked so synthesis can still finalise. `soft` or `hard` must be positive integers when present, and `soft` must not be larger than `hard` when both are present. Legacy soft-only budgets remain valid.
+
+Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion keeps completed panel slots and failed panel slots separate, never relabels a compact completion payload, and fails closed when lifecycle sources disagree. A timed-out judge never becomes a panel-only success. Synthesis also fails closed when any configured panelist is missing or failed, unless the missing slots were explicitly stopped after strong agreement.
 
 Panel member:
 
@@ -357,7 +365,8 @@ Deliberate review:
         "thinking": "high"
       },
       "concurrency": 2,
-      "timeoutMs": 300000,
+      "panelTimeoutMs": 900000,
+      "judgeTimeoutMs": 900000,
       "context": "fresh"
     }
   }
@@ -367,6 +376,8 @@ Deliberate review:
 ## Output
 
 When agreement stopping is on, each panelist appends one tagged JSON decision record. The record holds a short recommendation, a confidence level, and whether the panelist needs more evidence. Fusion uses it only to decide whether an unfinished panel can stop early. A record that is malformed, missing, or not final turns early stopping off. You see the Markdown answer above the record, not the record itself.
+
+An original task can define the strict plan-review contract: exactly `NO_FINDINGS`, or complete `FINDING`/`Evidence`/`Fix` blocks with no other prose. That caller contract overrides Fusion's normal report headings and agreement record. Fusion validates the synthesis, returns it unchanged, and fails rather than fabricating a clean result when the judge violates the contract. RPC `result` also exposes a validated value as `callerOutput`.
 
 The judge returns:
 
@@ -466,6 +477,13 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 - verify `defaultProfile`
 - verify the requested `--profile` name
 - run `/fusion init` to regenerate a known-good template
+
+`Workflow script timed out` or judge exit 143
+
+- raise `panelTimeoutMs` or `judgeTimeoutMs` for slower models
+- keep `panelToolBudget` and `judgeToolBudget` bounded so agents finalise before the deadline
+- inspect `/fusion status`; panel failures and the workflow timeout must both be present
+- retry only after the run is terminal
 
 Run is stuck or no longer useful:
 

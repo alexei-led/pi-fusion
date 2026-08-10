@@ -28,6 +28,9 @@ a winner.
 Read-only synthesis. Do not edit files. Do not ask other agents. Do not run
 subagents.
 
+If the task defines an exact caller output contract, follow it instead of the
+sections below. Return only the caller's required syntax.
+
 Return final Markdown with these sections:
 
 # Fusion Report

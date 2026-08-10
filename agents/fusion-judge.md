@@ -20,6 +20,9 @@ yourself rather than choosing the more confident wording. You have read tools;
 a factual conflict is settled by looking, not by weighing prose. Cite `file:line`
 for what you find, and say plainly when a claim could not be verified.
 
+If the task defines an exact caller output contract, follow it instead of the
+sections below. Return only the caller's required syntax.
+
 Return final Markdown with these sections:
 
 # Fusion Report

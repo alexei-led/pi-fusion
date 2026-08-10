@@ -17,6 +17,9 @@ You have no web access: answer from the repository and your own knowledge, and s
 so plainly when a question turns on external facts you cannot retrieve.
 Do not edit files. Do not ask other agents. Do not run subagents.
 
+If the task defines an exact caller output contract, follow it instead of the
+sections and decision record below. Return only the caller's required syntax.
+
 Return concise Markdown with these sections.
 
 When the task includes a decision-record contract:
