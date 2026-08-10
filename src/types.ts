@@ -15,6 +15,7 @@ export const JUDGE_AGENT = "pi-fusion.fusion-judge";
 export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
 
 export type FusionContextMode = "fresh" | "fork";
+export type CallerOutputContract = "plan-review-v1";
 
 /**
  * How panel answers become one report.
@@ -48,7 +49,12 @@ export interface FusionProfile {
   panel: PanelMemberConfig[];
   judge: JudgeConfig;
   concurrency?: number;
+  /** Legacy shared wall-clock timeout used when a stage timeout is absent. */
   timeoutMs?: number;
+  /** Wall-clock timeout for the complete panel workflow. */
+  panelTimeoutMs?: number;
+  /** Wall-clock timeout for the synthesis workflow. */
+  judgeTimeoutMs?: number;
   context?: FusionContextMode;
   stopWhenPanelAgrees?: boolean;
   /**
@@ -57,6 +63,11 @@ export interface FusionProfile {
    * content is compared. The report always restores the real labels.
    */
   blindPanelLabels?: boolean;
+  /**
+   * Caps each panelist's tool calls. `soft` nudges; `hard` blocks further tool
+   * use so the panelist still finalises before the workflow timeout.
+   */
+  panelToolBudget?: ToolBudget;
   /**
    * Caps the tool calls the judge may spend verifying contested claims.
    * `soft` nudges, `hard` blocks further tool use so the judge still finalises.
@@ -110,6 +121,7 @@ export function resolveSynthesisMode(
 export interface ToolBudget {
   soft?: number;
   hard?: number;
+  block?: "*" | string[];
 }
 
 export type PanelConfidence = "low" | "medium" | "high";
@@ -157,6 +169,7 @@ export interface ParsedFusionArgs {
   prompt: string;
   profile?: string;
   operationId?: string;
+  outputContract?: CallerOutputContract;
   /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
   panel?: string[];
 }
@@ -210,6 +223,7 @@ export interface FusionRun {
   /** Name of the config profile the inline panel was layered onto. */
   baseProfileName?: string;
   operationId?: string;
+  outputContract?: CallerOutputContract;
   phase: FusionPhase;
   createdAt: number;
   updatedAt: number;

@@ -8,6 +8,17 @@ import type {
   PanelOutput,
 } from "../../src/types.js";
 
+const EXACT_REVIEW_PROMPT = `Review the implementation.
+
+Return either:
+- the exact line \`NO_FINDINGS\`, or
+- one or more blocks in this exact format:
+  \`FINDING: CRITICAL|MAJOR|MINOR | <short title>\`
+  \`Evidence: <file:line and concrete failure>\`
+  \`Fix: <specific change>\`
+
+Do not write any other prose.`;
+
 const PROFILE: FusionProfile = {
   panel: [
     { id: "architect", label: "Architect", agent: "panel-agent" },
@@ -57,7 +68,7 @@ test("decidePanelCompletion returns a failure report when no panelists succeed",
   assert.match(decision.report, /No panelists completed successfully/);
 });
 
-test("decidePanelCompletion returns a single-panel report when one panelist succeeds", () => {
+test("decidePanelCompletion fails closed when only one of multiple panelists succeeds", () => {
   const decision = decidePanelCompletion({
     run: makeRun(),
     profile: PROFILE,
@@ -65,9 +76,54 @@ test("decidePanelCompletion returns a single-panel report when one panelist succ
     panelFailures: [makeFailure(1, "timed out")],
   });
 
+  assert.equal(decision.kind, "fail");
+  assert.match(decision.error, /Only 1 of 2 fusion panelists completed/);
+  assert.match(decision.report, /timed out/);
+});
+
+test("decidePanelCompletion does not treat one stopped survivor as agreement", () => {
+  const decision = decidePanelCompletion({
+    run: makeRun(),
+    profile: { ...PROFILE, stopWhenPanelAgrees: true },
+    panelOutputs: [makeOutput(0, "Choose A.")],
+    panelFailures: [
+      {
+        ...makeFailure(1, "Stopped after strong panel agreement."),
+        reason: "stopped-after-agreement",
+      },
+    ],
+  });
+
+  assert.equal(decision.kind, "fail");
+});
+
+test("decidePanelCompletion completes a configured single-member panel", () => {
+  const decision = decidePanelCompletion({
+    run: makeRun(),
+    profile: { ...PROFILE, panel: [PROFILE.panel[0]!] },
+    panelOutputs: [makeOutput(0, "Choose A.")],
+    panelFailures: [],
+  });
+
   assert.equal(decision.kind, "complete");
   assert.match(decision.report, /skipped the judge step/);
   assert.match(decision.report, /Choose A/);
+});
+
+test("decidePanelCompletion rejects invalid exact output from a single-member panel", () => {
+  const decision = decidePanelCompletion({
+    run: {
+      ...makeRun(),
+      prompt: EXACT_REVIEW_PROMPT,
+      outputContract: "plan-review-v1",
+    },
+    profile: { ...PROFILE, panel: [PROFILE.panel[0]!] },
+    panelOutputs: [makeOutput(0, "## Summary\nLooks good.")],
+    panelFailures: [],
+  });
+
+  assert.equal(decision.kind, "fail");
+  assert.match(decision.error, /violated the exact caller output contract/);
 });
 
 test("decidePanelCompletion prepares a standard judge spawn when multiple panelists succeed", () => {
@@ -123,20 +179,20 @@ test("merge synthesis never returns a lone panelist as the answer", () => {
     panelFailures: [makeFailure(1, "timed out")],
   });
 
-  // Under merge the survivor answered ONE facet; returning it would be wrong,
-  // not thin. The composer must run so the report can name the missing facets.
-  assert.equal(merged.kind, "judge");
+  assert.equal(merged.kind, "fail");
+  assert.match(merged.error, /Only 1 of 2 fusion panelists/);
 });
 
-test("select synthesis still short-circuits on a lone panelist", () => {
+test("select synthesis reports every failed panelist when quorum is lost", () => {
   const selected = decidePanelCompletion({
     run: makeRun(),
     profile: PROFILE,
     panelOutputs: [makeOutput(0, "whole answer")],
-    panelFailures: [makeFailure(1, "timed out")],
+    panelFailures: [makeFailure(1, "provider unavailable")],
   });
 
-  assert.equal(selected.kind, "complete");
+  assert.equal(selected.kind, "fail");
+  assert.match(selected.report, /provider unavailable/);
 });
 
 test("merge synthesis still fails when no panelist succeeds", () => {

@@ -60,6 +60,7 @@ test("extractPanelResults reads successful and failed async result children", ()
       label: "Tester",
       agent: "pi-fusion.fusion-panelist",
       summary: "Timed out\n\nstderr tail",
+      reason: "timeout",
       observation: {
         providerFailures: [
           { provider: "unknown provider", message: "Timed out" },

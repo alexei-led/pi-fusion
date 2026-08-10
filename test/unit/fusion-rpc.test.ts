@@ -9,7 +9,11 @@ import {
 } from "../../src/fusion-rpc.js";
 import type { FusionCommandResult } from "../../src/orchestrator.js";
 import { FUSION_RUN_ENTRY_TYPE, FusionRunStore } from "../../src/run-store.js";
-import type { FusionPhase, FusionRun } from "../../src/types.js";
+import type {
+  FusionPhase,
+  FusionRun,
+  ParsedFusionArgs,
+} from "../../src/types.js";
 
 const activeRun: FusionRun = {
   id: "fusion-1",
@@ -32,6 +36,37 @@ test("Fusion RPC exposes its versioned method contract", async () => {
       pong: true,
       version: 1,
       methods: FUSION_RPC_METHODS,
+    }),
+  );
+  fixture.unregister();
+});
+
+test("Fusion RPC forwards an explicit caller output contract", async () => {
+  const fixture = createFixture();
+  const response = await fixture.request("start-contract", "start", {
+    prompt: "Review this.",
+    operationId: "operation-contract",
+    outputContract: "plan-review-v1",
+  });
+
+  assert.equal((response as { success: boolean }).success, true);
+  assert.equal(fixture.lastStartInput()?.outputContract, "plan-review-v1");
+  fixture.unregister();
+});
+
+test("Fusion RPC rejects an unsupported caller output contract", async () => {
+  const fixture = createFixture();
+  const response = await fixture.request("bad-contract", "start", {
+    prompt: "Review this.",
+    operationId: "operation-bad-contract",
+    outputContract: "unknown-v9",
+  });
+
+  assert.deepEqual(
+    response,
+    failure("bad-contract", "start", {
+      code: "invalid_request",
+      message: "start outputContract must be a supported caller output contract.",
     }),
   );
   fixture.unregister();
@@ -238,6 +273,47 @@ test("Fusion RPC status, result, and adopt resolve historical runs", async () =>
   assert.deepEqual(
     await fixture.request("adopt-1", "adopt", { runId: "fusion-1" }),
     success("adopt-1", "adopt", { adopted: true, run: expected }),
+  );
+});
+
+test("Fusion RPC result exposes validated exact caller output", async () => {
+  const store = new FusionRunStore({
+    idFactory: () => "fusion-1",
+    now: sequentialClock(),
+  });
+  const run = store.startRun({
+    prompt: `Review the implementation.
+
+Return either:
+- the exact line \`NO_FINDINGS\`, or
+- one or more blocks in this exact format:
+  \`FINDING: CRITICAL|MAJOR|MINOR | <short title>\`
+  \`Evidence: <file:line and concrete failure>\`
+  \`Fix: <specific change>\`
+
+Do not write any other prose.`,
+    profileName: "quality",
+    operationId: "operation-1",
+    outputContract: "plan-review-v1",
+  });
+  store.completeRun(run.id, { report: "NO_FINDINGS" });
+  const fixture = createFixture(store);
+
+  assert.deepEqual(
+    await fixture.request("result-contract", "result", { runId: "fusion-1" }),
+    success("result-contract", "result", {
+      run: {
+        runId: "fusion-1",
+        operationId: "operation-1",
+        phase: "done",
+        terminal: true,
+        report: "NO_FINDINGS",
+      },
+      callerOutput: {
+        contract: "plan-review-v1",
+        output: "NO_FINDINGS",
+      },
+    }),
   );
 });
 
@@ -473,6 +549,7 @@ function createFixture(
 ) {
   const bus = new FakeEventBus();
   let starts = 0;
+  let lastStartInput: ParsedFusionArgs | undefined;
   const unregister = registerFusionRpc({
     events: bus,
     store,
@@ -480,11 +557,15 @@ function createFixture(
     orchestrator: {
       async startRun(input) {
         starts += 1;
+        lastStartInput = input;
         if (overrides.startRun) return overrides.startRun();
         const run = store.startRun({
           prompt: input.prompt,
           profileName: input.profile ?? "quality",
           ...(input.operationId ? { operationId: input.operationId } : {}),
+          ...(input.outputContract
+            ? { outputContract: input.outputContract }
+            : {}),
           phase: "panel",
         });
         return { status: "started", run };
@@ -501,6 +582,7 @@ function createFixture(
     request: (requestId: string, method: string, params?: unknown) =>
       request(bus, requestId, method, params),
     starts: () => starts,
+    lastStartInput: () => lastStartInput,
     unregister,
   };
 }

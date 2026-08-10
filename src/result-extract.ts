@@ -63,13 +63,19 @@ export function extractPanelResults(
 
   const outputs: PanelOutput[] = [];
   const failures: FailedPanelSummary[] = [];
+  const fallbackFailureReason = failureReason(container.payload);
   const results =
     options.limit === undefined
       ? container.results
       : container.results.slice(0, options.limit);
   for (const [index, rawResult] of results.entries()) {
     if (options.completedOnly && !isCompletedResult(rawResult)) continue;
-    const child = normalizeChildResult(rawResult, index, options);
+    const child = normalizeChildResult(
+      rawResult,
+      index,
+      options,
+      fallbackFailureReason,
+    );
     if (!child.ok) return child;
     if (child.status === "success") outputs.push(child.output);
     else failures.push(child.failure);
@@ -84,6 +90,7 @@ export function extractPanelResults(
       },
       index,
       options,
+      fallbackFailureReason,
     );
     if (!child.ok) return child;
     if (child.status === "failed") failures.push(child.failure);
@@ -197,6 +204,7 @@ function normalizeChildResult(
   rawResult: unknown,
   index: number,
   options: ExtractPanelResultsOptions,
+  fallbackFailureReason?: FailedPanelSummary["reason"],
 ):
   | { ok: true; status: "success"; output: PanelOutput }
   | { ok: true; status: "failed"; failure: FailedPanelSummary }
@@ -275,7 +283,9 @@ function normalizeChildResult(
       summary: stoppedAfterAgreement
         ? "Stopped after strong panel agreement."
         : failureSummary(rawResult, artifactPath),
-      reason: failureReason(rawResult, stoppedAfterAgreement),
+      reason:
+        failureReason(rawResult, stoppedAfterAgreement) ??
+        fallbackFailureReason,
       observation,
       artifactPath,
       sessionPath,
@@ -392,7 +402,12 @@ function failureReason(
   stoppedAfterAgreement = false,
 ): FailedPanelSummary["reason"] {
   if (stoppedAfterAgreement) return "stopped-after-agreement";
-  if (result.timedOut === true) return "timeout";
+  if (
+    result.timedOut === true ||
+    /(?:timed out|timeout)/i.test(firstNonBlankString(result.error) ?? "")
+  ) {
+    return "timeout";
+  }
   if (result.interrupted === true) return "interrupted";
   return undefined;
 }

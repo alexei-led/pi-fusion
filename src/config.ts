@@ -115,7 +115,10 @@ export function createDefaultFusionConfig(): FusionConfig {
           thinking: "high",
         },
         concurrency: 3,
-        timeoutMs: 300_000,
+        panelTimeoutMs: 900_000,
+        judgeTimeoutMs: 900_000,
+        panelToolBudget: { soft: 8, hard: 12, block: "*" },
+        judgeToolBudget: { soft: 8, hard: 12, block: "*" },
         context: "fresh",
         stopWhenPanelAgrees: false,
       },
@@ -322,6 +325,18 @@ function isFusionProfile(value: unknown): value is FusionProfile {
     return false;
   if (value.timeoutMs !== undefined && !isPositiveInteger(value.timeoutMs))
     return false;
+  if (
+    value.panelTimeoutMs !== undefined &&
+    !isPositiveInteger(value.panelTimeoutMs)
+  ) {
+    return false;
+  }
+  if (
+    value.judgeTimeoutMs !== undefined &&
+    !isPositiveInteger(value.judgeTimeoutMs)
+  ) {
+    return false;
+  }
   if (value.context !== undefined && !isFusionContextMode(value.context))
     return false;
   if (
@@ -333,6 +348,12 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   if (
     value.blindPanelLabels !== undefined &&
     typeof value.blindPanelLabels !== "boolean"
+  ) {
+    return false;
+  }
+  if (
+    value.panelToolBudget !== undefined &&
+    !isToolBudget(value.panelToolBudget)
   ) {
     return false;
   }
@@ -354,13 +375,22 @@ function isFusionProfile(value: unknown): value is FusionProfile {
 
 function isToolBudget(value: unknown): value is ToolBudget {
   if (!isRecord(value)) return false;
+  if (value.soft === undefined && value.hard === undefined) return false;
   if (value.soft !== undefined && !isPositiveInteger(value.soft)) return false;
   if (value.hard !== undefined && !isPositiveInteger(value.hard)) return false;
-  if (value.soft === undefined && value.hard === undefined) return false;
   if (
     isPositiveInteger(value.soft) &&
     isPositiveInteger(value.hard) &&
     value.soft > value.hard
+  ) {
+    return false;
+  }
+  if (
+    value.block !== undefined &&
+    value.block !== "*" &&
+    (!Array.isArray(value.block) ||
+      value.block.length === 0 ||
+      !value.block.every(isNonEmptyString))
   ) {
     return false;
   }

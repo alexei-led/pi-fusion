@@ -1,4 +1,8 @@
 import {
+  callerOutputContractInstructions,
+  detectCallerOutputContract,
+} from "./caller-contract.js";
+import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
@@ -8,6 +12,7 @@ import {
   memberLabel,
   panelItemLabel,
   resolveSynthesisMode,
+  type CallerOutputContract,
   THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
@@ -25,6 +30,13 @@ export const FUSION_ACCEPTANCE_DISABLED = {
 
 export type FusionAcceptanceDisabled = typeof FUSION_ACCEPTANCE_DISABLED;
 
+const DEFAULT_STAGE_TIMEOUT_MS = 900_000;
+const DEFAULT_TOOL_BUDGET: ToolBudget = {
+  soft: 8,
+  hard: 12,
+  block: "*",
+};
+
 export interface PanelSubagentTaskParams {
   agent: string;
   task: string;
@@ -34,6 +46,8 @@ export interface PanelSubagentTaskParams {
   skill: false;
   acceptance: FusionAcceptanceDisabled;
   model?: string;
+  /** Per-task cap so a panelist finalises before the workflow timeout. */
+  toolBudget: ToolBudget;
 }
 
 export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
@@ -85,6 +99,7 @@ export interface BuildJudgeSpawnParamsInput {
    * and its position bias.
    */
   runId: string;
+  callerContract?: CallerOutputContract;
 }
 
 const PANEL_OUTPUT_CONTRACT = [
@@ -152,6 +167,7 @@ export function appendThinkingSuffix(
 export function buildPanelSpawnParams(
   profile: FusionProfile,
   prompt: string,
+  callerContract?: CallerOutputContract,
 ): PanelSpawnParams {
   const concurrency = profile.concurrency ?? profile.panel.length;
   const tasks: PanelWorkflowTaskParams[] = profile.panel.map(
@@ -161,6 +177,8 @@ export function buildPanelSpawnParams(
         member,
         prompt,
         profile.stopWhenPanelAgrees === true,
+        profile.panelToolBudget ?? DEFAULT_TOOL_BUDGET,
+        callerContract,
       ),
     }),
   );
@@ -176,9 +194,7 @@ export function buildPanelSpawnParams(
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    ...(profile.timeoutMs !== undefined
-      ? { timeoutMs: profile.timeoutMs }
-      : {}),
+    timeoutMs: resolveStageTimeout(profile.panelTimeoutMs, profile.timeoutMs),
   };
 }
 
@@ -197,9 +213,7 @@ export function buildJudgeSpawnParams(
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
-    ...(input.profile.judgeToolBudget
-      ? { toolBudget: input.profile.judgeToolBudget }
-      : {}),
+    toolBudget: input.profile.judgeToolBudget ?? DEFAULT_TOOL_BUDGET,
   };
 
   return {
@@ -209,9 +223,10 @@ export function buildJudgeSpawnParams(
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    ...(input.profile.timeoutMs !== undefined
-      ? { timeoutMs: input.profile.timeoutMs }
-      : {}),
+    timeoutMs: resolveStageTimeout(
+      input.profile.judgeTimeoutMs,
+      input.profile.timeoutMs,
+    ),
   };
 }
 
@@ -260,20 +275,35 @@ function buildPanelWorkflowScript(
     .join("\n");
 }
 
+function resolveStageTimeout(
+  stageTimeoutMs: number | undefined,
+  legacyTimeoutMs: number | undefined,
+): number {
+  return stageTimeoutMs ?? legacyTimeoutMs ?? DEFAULT_STAGE_TIMEOUT_MS;
+}
+
 function buildPanelTaskParams(
   member: PanelMemberConfig,
   prompt: string,
   includeDecisionRecord: boolean,
+  toolBudget: ToolBudget,
+  callerContract?: CallerOutputContract,
 ): PanelSubagentTaskParams {
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
     agent: member.agent,
-    task: buildPanelTask(member, prompt, includeDecisionRecord),
+    task: buildPanelTask(
+      member,
+      prompt,
+      includeDecisionRecord,
+      callerContract,
+    ),
     output: true,
     outputMode: "inline",
     progress: true,
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
+    toolBudget,
     ...(model ? { model } : {}),
   };
 }
@@ -282,8 +312,11 @@ function buildPanelTask(
   member: PanelMemberConfig,
   prompt: string,
   includeDecisionRecord: boolean,
+  callerContractOverride?: CallerOutputContract,
 ): string {
   const role = member.role?.trim() || "independent analysis and critique";
+  const callerContract =
+    callerContractForPrompt(prompt, callerContractOverride);
   return [
     `Panel member: ${memberLabel(member)} (${member.id})`,
     `Role: ${role}`,
@@ -299,8 +332,10 @@ function buildPanelTask(
     "- Be concise and cite evidence when you inspect files.",
     "",
     "Output contract:",
-    ...PANEL_OUTPUT_CONTRACT,
-    ...(includeDecisionRecord
+    ...(callerContract
+      ? callerOutputContractInstructions(callerContract)
+      : PANEL_OUTPUT_CONTRACT),
+    ...(includeDecisionRecord && !callerContract
       ? [
           "",
           "Decision record:",
@@ -356,6 +391,13 @@ function formatMemberTask(member: PanelMemberConfig, prompt: string): string[] {
   ];
 }
 
+function callerContractForPrompt(
+  prompt: string,
+  explicit?: CallerOutputContract,
+): CallerOutputContract | undefined {
+  return explicit ?? detectCallerOutputContract(prompt);
+}
+
 function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const sortedOutputs = [...input.panelOutputs].sort(comparePanelItems);
   const sortedFailures = [...input.failedPanelists].sort(comparePanelItems);
@@ -366,6 +408,10 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     ? buildBlindLabelMap([...sortedOutputs, ...sortedFailures])
     : undefined;
   const merging = resolveSynthesisMode(input.profile) === "merge";
+  const callerContract = callerContractForPrompt(
+    input.prompt,
+    input.callerContract,
+  );
   return [
     ...(merging
       ? COMPOSER_INSTRUCTIONS
@@ -399,7 +445,11 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     // right" wording contradicts the composer's "do not rank panelists".
     ...(merging ? [] : [...CONTESTED_CLAIMS_INSTRUCTIONS, ""]),
     "Output contract:",
-    ...(merging ? COMPOSER_OUTPUT_CONTRACT : JUDGE_OUTPUT_CONTRACT),
+    ...(callerContract
+      ? callerOutputContractInstructions(callerContract)
+      : merging
+        ? COMPOSER_OUTPUT_CONTRACT
+        : JUDGE_OUTPUT_CONTRACT),
   ].join("\n");
 }
 

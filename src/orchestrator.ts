@@ -1,5 +1,9 @@
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import {
+  detectCallerOutputContract,
+  validateCallerOutput,
+} from "./caller-contract.js";
+import {
   buildInlinePanelProfile,
   loadFusionConfig,
   resolveProfile as resolveFusionProfile,
@@ -17,6 +21,10 @@ import {
   extractPanelResults,
   type ExtractPanelResultsSuccess,
 } from "./result-extract.js";
+import {
+  reconcileIndexedLifecycleResult,
+  reconcilePanelResults,
+} from "./lifecycle-reconcile.js";
 import { appendThinkingSuffix, buildPanelSpawnParams } from "./run-builder.js";
 import { FusionRunStore, FusionRunStoreError } from "./run-store.js";
 import {
@@ -188,6 +196,8 @@ export class FusionOrchestrator {
       return { status: "failed", error: message };
     }
 
+    const outputContract =
+      args.outputContract ?? detectCallerOutputContract(args.prompt);
     let run: FusionRun;
     try {
       run = this.runStore.startRun({
@@ -199,6 +209,7 @@ export class FusionOrchestrator {
         ...(args.operationId !== undefined
           ? { operationId: args.operationId }
           : {}),
+        ...(outputContract ? { outputContract } : {}),
         phase: "panel",
       });
     } catch (error: unknown) {
@@ -219,7 +230,7 @@ export class FusionOrchestrator {
 
     try {
       const spawnResult = await this.rpc.spawn(
-        buildPanelSpawnParams(resolved.profile, args.prompt),
+        buildPanelSpawnParams(resolved.profile, args.prompt, outputContract),
       );
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
@@ -585,19 +596,37 @@ export class FusionOrchestrator {
       );
     }
 
-    const observedPanels = mergePanelObservations(
+    const observedPanels = reconcilePanelResults(
       extracted,
       snapshot.statusPayload,
       profile,
+      lifecyclePayload,
+      { allowedTrailingResults: 1 },
     );
+    if (!observedPanels.ok) {
+      return this.failActiveRun(
+        `${observedPanels.error.message} (${observedPanels.error.path})`,
+      );
+    }
     const updated = this.storePanelResults(
       active.id,
       observedPanels.outputs,
       observedPanels.failures,
     );
 
-    if (hasJudgeResult(snapshot.resultPayload, profile.panel.length)) {
-      const output = extractJudgeOutput(snapshot.resultPayload, {
+    const judgePayload =
+      hasJudgeResult(snapshot.resultPayload, profile.panel.length)
+        ? snapshot.resultPayload
+        : snapshot.statusPayload;
+    if (hasJudgeResult(judgePayload, profile.panel.length)) {
+      const lifecycleConflict = reconcileIndexedLifecycleResult(
+        snapshot.resultPayload,
+        snapshot.statusPayload,
+        profile.panel.length,
+        "judge",
+      );
+      if (lifecycleConflict) return this.failActiveRun(lifecycleConflict);
+      const output = extractJudgeOutput(judgePayload, {
         resultIndex: profile.panel.length,
       });
       if (!output.ok) return this.failActiveRun(output.error);
@@ -608,13 +637,17 @@ export class FusionOrchestrator {
             snapshot.statusPayload,
         ),
         extractRunObservation(
-          findResult(snapshot.resultPayload, profile.panel.length) ??
-            snapshot.resultPayload,
+          findResult(judgePayload, profile.panel.length) ?? judgePayload,
         ),
       );
       const observed = this.runStore.updateRun(updated.id, {
         judgeObservation,
       });
+      const callerContract = observed.outputContract;
+      if (callerContract) {
+        const validation = validateCallerOutput(callerContract, output.output);
+        if (!validation.ok) return this.failActiveRun(validation.error);
+      }
       const report = renderJudgeReport({
         run: observed,
         judgeOutput: output.output,
@@ -713,11 +746,18 @@ export class FusionOrchestrator {
       );
     }
 
-    const observedPanels = mergePanelObservations(
+    const observedPanels = reconcilePanelResults(
       extracted,
       snapshot.statusPayload,
       profile,
+      lifecyclePayload,
+      { ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}) },
     );
+    if (!observedPanels.ok) {
+      return this.failActiveRun(
+        `${observedPanels.error.message} (${observedPanels.error.path})`,
+      );
+    }
     const stored = this.storePanelResults(
       active.id,
       observedPanels.outputs,
@@ -875,8 +915,25 @@ export class FusionOrchestrator {
       return this.failActiveRun(lifecycleError);
     }
 
+    const lifecycleConflict = reconcileIndexedLifecycleResult(
+      snapshot.resultPayload,
+      snapshot.statusPayload,
+      0,
+      "judge",
+    );
+    if (lifecycleConflict) return this.failActiveRun(lifecycleConflict);
+
     const output = extractJudgeOutput(lifecyclePayload);
-    if (!output.ok) return this.failActiveRun(output.error);
+    if (!output.ok) {
+      const stepError = extractSubagentFailure(
+        findStepsArray(snapshot.statusPayload)[0],
+      );
+      const errors = [lifecycleError, stepError, output.error].filter(
+        (error, index, all): error is string =>
+          Boolean(error) && all.indexOf(error) === index,
+      );
+      return this.failActiveRun(errors.join(" "));
+    }
 
     // The panel and chain handlers already treat a missing profile as fatal.
     // Without the same guard here the run "succeeds" with a degraded report:
@@ -886,6 +943,12 @@ export class FusionOrchestrator {
       return this.failActiveRun(
         "Fusion judge completed, but the active profile was not available.",
       );
+    }
+
+    const callerContract = active.outputContract;
+    if (callerContract) {
+      const validation = validateCallerOutput(callerContract, output.output);
+      if (!validation.ok) return this.failActiveRun(validation.error);
     }
 
     const judgeModel = configuredJudgeModel(profile);
@@ -1575,15 +1638,17 @@ function hasResultsArray(payload: unknown): boolean {
 }
 
 function hasJudgeResult(payload: unknown, panelCount: number): boolean {
-  return (findResultsArray(payload)?.length ?? 0) > panelCount;
+  const count =
+    findResultsArray(payload)?.length ?? findStepsArray(payload).length;
+  return count > panelCount;
 }
 
 function findResult(
   payload: unknown,
   resultIndex?: number,
 ): Record<string, unknown> | undefined {
-  const results = findResultsArray(payload);
-  if (!results || results.length === 0) return undefined;
+  const results = findResultsArray(payload) ?? findStepsArray(payload);
+  if (results.length === 0) return undefined;
   if (resultIndex !== undefined) {
     const indexed = results[resultIndex];
     return isRecord(indexed) ? indexed : undefined;
@@ -1750,56 +1815,6 @@ function extractArtifactPath(
     return firstString(result.outputReference.path);
   }
   return undefined;
-}
-
-function mergePanelObservations(
-  result: ExtractPanelResultsSuccess,
-  statusPayload: unknown,
-  profile: FusionProfile,
-): ExtractPanelResultsSuccess {
-  const status = extractPanelResults(statusPayload, {
-    panel: profile.panel,
-    completedOnly: true,
-    limit: profile.panel.length,
-  });
-  if (!status.ok) return result;
-
-  const observations = new Map<number, PanelOutput["observation"]>();
-  for (const output of status.outputs) {
-    observations.set(output.index, output.observation);
-  }
-  for (const failure of status.failures) {
-    observations.set(failure.index, failure.observation);
-  }
-
-  return {
-    ...result,
-    outputs: result.outputs.map((output) =>
-      withMergedObservation(output, observations.get(output.index)),
-    ),
-    failures: result.failures.map((failure) =>
-      withMergedObservation(failure, observations.get(failure.index)),
-    ),
-  };
-}
-
-function withMergedObservation<T extends PanelOutput | FailedPanelSummary>(
-  item: T,
-  statusObservation: PanelOutput["observation"] | undefined,
-): T {
-  const observation = mergeRunObservations(statusObservation, item.observation);
-  return hasObservationData(observation) ? { ...item, observation } : item;
-}
-
-function hasObservationData(observation: PanelOutput["observation"]): boolean {
-  return Boolean(
-    observation &&
-    (observation.model ||
-      observation.durationMs !== undefined ||
-      observation.usage ||
-      observation.attempts ||
-      observation.providerFailures),
-  );
 }
 
 function shouldStopWhenPanelAgrees(

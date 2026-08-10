@@ -25,6 +25,20 @@ const RUN_JUDGE = {
   judgeRunId: "judge-1",
 };
 
+const RUN_EXACT_REVIEW = {
+  ...RUN_JUDGE,
+  prompt: `Review the implementation.
+
+Return either:
+- the exact line \`NO_FINDINGS\`, or
+- one or more blocks in this exact format:
+  \`FINDING: CRITICAL|MAJOR|MINOR | <short title>\`
+  \`Evidence: <file:line and concrete failure>\`
+  \`Fix: <specific change>\`
+
+Do not write any other prose.`,
+};
+
 const ARCHITECT: PanelOutput = {
   index: 0,
   id: "architect",
@@ -50,6 +64,49 @@ const TIMED_OUT_TESTER: FailedPanelSummary = {
   artifactPath: "/tmp/tester.md",
   sessionPath: "/tmp/tester.jsonl",
 };
+
+test("renderJudgeReport preserves an exact caller output without headings", () => {
+  const report = renderJudgeReport({
+    run: RUN_EXACT_REVIEW,
+    judgeOutput: "NO_FINDINGS",
+    panelOutputs: [ARCHITECT, TESTER],
+    failures: [],
+  });
+
+  assert.equal(report, "NO_FINDINGS");
+});
+
+test("renderJudgeReport does not rewrite blind labels inside exact caller output", () => {
+  const output = [
+    "FINDING: MAJOR | Conflicting evidence",
+    "Evidence: Panel 1 and Panel 2 disagree about src/run.ts:42.",
+    "Fix: Resolve the conflict before merging.",
+  ].join("\n");
+  const report = renderJudgeReport({
+    run: RUN_EXACT_REVIEW,
+    judgeOutput: output,
+    panelOutputs: [ARCHITECT, TESTER],
+    failures: [],
+    blindPanelLabels: true,
+  });
+
+  assert.equal(report, output);
+});
+
+test("renderSinglePanelReport preserves an exact caller finding block", () => {
+  const output = [
+    "FINDING: MAJOR | Missing timeout",
+    "Evidence: src/run.ts:42 can wait forever.",
+    "Fix: Add a bounded timeout.",
+  ].join("\n");
+  const report = renderSinglePanelReport({
+    run: RUN_EXACT_REVIEW,
+    output: { ...ARCHITECT, output },
+    failures: [],
+  });
+
+  assert.equal(report, output);
+});
 
 test("renderJudgeReport renders deterministic success sections", () => {
   const report = renderJudgeReport({

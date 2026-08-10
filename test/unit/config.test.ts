@@ -44,6 +44,18 @@ test("loadFusionConfig returns the default quality profile when no config exists
   assert.equal(profile.judge.agent, "pi-fusion.fusion-judge");
   assert.equal(profile.context, "fresh");
   assert.equal(profile.stopWhenPanelAgrees, false);
+  assert.equal(profile.panelTimeoutMs, 900_000);
+  assert.equal(profile.judgeTimeoutMs, 900_000);
+  assert.deepEqual(profile.panelToolBudget, {
+    soft: 8,
+    hard: 12,
+    block: "*",
+  });
+  assert.deepEqual(profile.judgeToolBudget, {
+    soft: 8,
+    hard: 12,
+    block: "*",
+  });
 });
 
 test("parseFusionConfig accepts the intuitive panel agreement setting", () => {
@@ -62,6 +74,54 @@ test("parseFusionConfig accepts the intuitive panel agreement setting", () => {
   );
 
   assert.equal(config.profiles.quality?.stopWhenPanelAgrees, true);
+});
+
+test("parseFusionConfig accepts stage timeouts and panel tool budgets", () => {
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [PANEL_MEMBER],
+          judge: JUDGE,
+          panelTimeoutMs: 600_000,
+          judgeTimeoutMs: 900_000,
+          panelToolBudget: { soft: 4, hard: 8 },
+        },
+      },
+    }),
+    "test",
+  );
+
+  assert.equal(config.profiles.quality?.panelTimeoutMs, 600_000);
+  assert.equal(config.profiles.quality?.judgeTimeoutMs, 900_000);
+  assert.deepEqual(config.profiles.quality?.panelToolBudget, {
+    soft: 4,
+    hard: 8,
+  });
+});
+
+test("parseFusionConfig rejects invalid stage limits", () => {
+  for (const invalid of [
+    { panelTimeoutMs: 0 },
+    { judgeTimeoutMs: -1 },
+    { panelToolBudget: { soft: 9, hard: 8 } },
+    { panelToolBudget: { hard: 8, block: [] } },
+  ]) {
+    assert.throws(
+      () =>
+        parseFusionConfig(
+          JSON.stringify({
+            defaultProfile: "quality",
+            profiles: {
+              quality: { panel: [PANEL_MEMBER], judge: JUDGE, ...invalid },
+            },
+          }),
+          "test",
+        ),
+      /Invalid fusion config/,
+    );
+  }
 });
 
 test("parseFusionConfig rejects a non-boolean panel agreement setting", () => {
@@ -528,7 +588,8 @@ test("buildInlinePanelProfile replaces the panel and keeps the judge", () => {
   assert.equal(profile.panel[1]?.agent, "pi-fusion.fusion-panelist-web");
   assert.equal(profile.panel[1]?.model, "openai/gpt-5.5");
   assert.deepEqual(profile.judge, base.judge);
-  assert.equal(profile.timeoutMs, base.timeoutMs);
+  assert.equal(profile.panelTimeoutMs, base.panelTimeoutMs);
+  assert.equal(profile.judgeTimeoutMs, base.judgeTimeoutMs);
 });
 
 test("buildInlinePanelProfile generates unique ids for repeated models", () => {

@@ -16,6 +16,17 @@ import {
 import { createDefaultFusionConfig } from "../../src/config.js";
 import type { FusionProfile } from "../../src/types.js";
 
+const EXACT_REVIEW_PROMPT = `Review the implementation.
+
+Return either:
+- the exact line \`NO_FINDINGS\`, or
+- one or more blocks in this exact format:
+  \`FINDING: CRITICAL|MAJOR|MINOR | <short title>\`
+  \`Evidence: <file:line and concrete failure>\`
+  \`Fix: <specific change>\`
+
+Do not write any other prose.`;
+
 const PROFILE: FusionProfile = {
   panel: [
     {
@@ -124,6 +135,23 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal("outputSchema" in (tasks[0] ?? {}), false);
   assert.equal(tasks[0]?.skill, false);
   assert.deepEqual(tasks[0]?.acceptance, FUSION_ACCEPTANCE_DISABLED);
+  assert.deepEqual(tasks[0]?.toolBudget, {
+    soft: 8,
+    hard: 12,
+    block: "*",
+  });
+});
+
+test("exact caller contracts replace panel headings and agreement records", () => {
+  const params = buildPanelSpawnParams(
+    { ...PROFILE, stopWhenPanelAgrees: true },
+    EXACT_REVIEW_PROMPT,
+  );
+  const task = workflowTasks(params)[0]?.task ?? "";
+
+  assert.match(task, /exact output contract.*takes priority/i);
+  assert.doesNotMatch(task, /^## Summary$/m);
+  assert.doesNotMatch(task, /<fusion-panel-decision>/);
 });
 
 test("buildPanelSpawnParams adds a decision record only for agreement stopping", () => {
@@ -213,6 +241,11 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
   assert.equal(params.outputMode, "inline");
   assert.equal(params.skill, false);
   assert.deepEqual(params.acceptance, FUSION_ACCEPTANCE_DISABLED);
+  assert.deepEqual(params.toolBudget, {
+    soft: 8,
+    hard: 12,
+    block: "*",
+  });
 
   assert.match(params.task, /Read-only synthesis only\./);
   assert.doesNotMatch(params.task, /Do not edit files/);
@@ -226,6 +259,31 @@ test("buildJudgeSpawnParams includes prompt, panel status, outputs, failures, an
   assert.match(params.task, /\/tmp\/tester\.md/);
   assert.match(params.task, /# Fusion Report/);
   assert.match(params.task, /## Disagreements/);
+});
+
+test("exact caller contracts replace the generic judge report contract", () => {
+  const task = buildJudgeSpawnParams({
+    profile: PROFILE,
+    prompt: EXACT_REVIEW_PROMPT,
+    panelOutputs: [
+      {
+        index: 0,
+        agent: "pi-fusion.fusion-panelist",
+        output: "NO_FINDINGS",
+      },
+      {
+        index: 1,
+        agent: "pi-fusion.fusion-panelist",
+        output: "NO_FINDINGS",
+      },
+    ],
+    failedPanelists: [],
+    runId: "run-exact-contract",
+  }).task;
+
+  assert.match(task, /exact output contract.*takes priority/i);
+  assert.doesNotMatch(task, /^# Fusion Report$/m);
+  assert.doesNotMatch(task, /^## Summary$/m);
 });
 
 test("shufflePanelItems is stable for the same seed", () => {
@@ -336,7 +394,7 @@ test("buildJudgeSpawnParams keeps panel status in configuration order while shuf
   );
 });
 
-test("buildPanelSpawnParams matches the pre-change baseline for the default profile", async () => {
+test("buildPanelSpawnParams matches the pre-change task baseline apart from reliability limits", async () => {
   const baseline = JSON.parse(
     await readFile("test/fixtures/baseline-tasks.json", "utf8"),
   ) as { prompt: string; panel: unknown };
@@ -355,7 +413,9 @@ test("buildPanelSpawnParams matches the pre-change baseline for the default prof
     timeoutMs?: number;
   };
   assert.deepEqual(
-    workflowTasks(actual).map(({ key: _key, ...task }) => task),
+    workflowTasks(actual).map(
+      ({ key: _key, toolBudget: _toolBudget, ...task }) => task,
+    ),
     expected.tasks,
   );
   assert.equal(actual.async, expected.async);
@@ -364,7 +424,6 @@ test("buildPanelSpawnParams matches the pre-change baseline for the default prof
   assert.equal(actual.output, expected.output);
   assert.equal(actual.outputMode, expected.outputMode);
   assert.deepEqual(actual.acceptance, expected.acceptance);
-  assert.equal(actual.timeoutMs, expected.timeoutMs);
   assert.ok(
     actual.workflowScript.includes(`const concurrency = ${expected.concurrency};`),
   );
@@ -542,7 +601,7 @@ test("buildJudgeSpawnParams instructs the judge to verify contested claims", () 
   assert.match(task, /## Contested Claims/);
 });
 
-test("buildJudgeSpawnParams passes judgeToolBudget through and omits it when absent", () => {
+test("buildJudgeSpawnParams uses a bounded default and accepts judgeToolBudget overrides", () => {
   const base = {
     prompt: "Compare two API designs",
     panelOutputs: [
@@ -565,7 +624,56 @@ test("buildJudgeSpawnParams passes judgeToolBudget through and omits it when abs
   assert.deepEqual(withBudget.toolBudget, { soft: 4, hard: 10 });
 
   const withoutBudget = buildJudgeSpawnParams({ ...base, profile: PROFILE });
-  assert.equal("toolBudget" in withoutBudget, false);
+  assert.deepEqual(withoutBudget.toolBudget, {
+    soft: 8,
+    hard: 12,
+    block: "*",
+  });
+});
+
+test("buildPanelSpawnParams accepts panelToolBudget overrides", () => {
+  const tasks = workflowTasks(
+    buildPanelSpawnParams(
+      { ...PROFILE, panelToolBudget: { soft: 3, hard: 6 } },
+      "Compare two API designs",
+    ),
+  );
+
+  assert.deepEqual(tasks[0]?.toolBudget, { soft: 3, hard: 6 });
+});
+
+test("stage-specific timeouts override the legacy shared timeout", () => {
+  const profile = {
+    ...PROFILE,
+    panelTimeoutMs: 600_000,
+    judgeTimeoutMs: 900_000,
+  };
+
+  assert.equal(
+    buildPanelSpawnParams(profile, "Compare two API designs").timeoutMs,
+    600_000,
+  );
+  assert.equal(
+    buildJudgeWorkflowSpawnParams({
+      profile,
+      prompt: "Compare two API designs",
+      panelOutputs: [
+        {
+          index: 0,
+          agent: "pi-fusion.fusion-panelist",
+          output: "Choose A.",
+        },
+        {
+          index: 1,
+          agent: "pi-fusion.fusion-panelist",
+          output: "Choose A.",
+        },
+      ],
+      failedPanelists: [],
+      runId: "run-timeouts",
+    }).timeoutMs,
+    900_000,
+  );
 });
 
 test("buildPanelSpawnParams substitutes {task} into a member question", () => {

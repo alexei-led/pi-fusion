@@ -1,4 +1,8 @@
 import {
+  detectCallerOutputContract,
+  validateCallerOutput,
+} from "./caller-contract.js";
+import {
   buildBlindLabelMap,
   type FailedPanelSummary,
   type PanelOutput,
@@ -23,6 +27,7 @@ type ReportRun = Pick<
   | "panelRunId"
   | "judgeRunId"
   | "panelStopReason"
+  | "outputContract"
 > &
   Partial<Pick<FusionRun, "phase" | "createdAt" | "updatedAt">>;
 
@@ -227,6 +232,9 @@ export function renderPanelFailureReport(
 export function renderSinglePanelReport(
   input: RenderSinglePanelReportInput,
 ): string {
+  const exactOutput = validExactCallerOutput(input.run, input.output.output);
+  if (exactOutput) return exactOutput;
+
   const panelName = formatPanelName(input.output);
   const sections: ReportSection[] = [
     {
@@ -291,6 +299,15 @@ export function renderSinglePanelReport(
  * Rewrites the neutral names the judge saw back to the configured member names.
  * Longest label first so "Candidate AA" is not partly replaced by "Candidate A".
  */
+function validExactCallerOutput(
+  run: ReportRun,
+  output: string,
+): string | undefined {
+  const contract = run.outputContract ?? detectCallerOutputContract(run.prompt);
+  if (!contract) return undefined;
+  return validateCallerOutput(contract, output).ok ? output.trim() : undefined;
+}
+
 function restoreBlindLabels(
   judgeOutput: string,
   panelOutputs: readonly PanelOutput[],
@@ -317,6 +334,9 @@ function restoreBlindLabels(
 export function renderJudgeReport(input: RenderJudgeReportInput): string {
   const panelOutputs = input.panelOutputs ?? [];
   const failures = input.failures ?? [];
+  const exactOutput = validExactCallerOutput(input.run, input.judgeOutput);
+  if (exactOutput) return exactOutput;
+
   const judgeOutput = input.blindPanelLabels
     ? restoreBlindLabels(input.judgeOutput, panelOutputs, failures)
     : input.judgeOutput;

@@ -156,16 +156,18 @@ Other Pi extensions can control Fusion through the versioned event-bus contract
 Methods:
 
 - `ping` — return the RPC version and supported methods
-- `start` — requires `prompt` and a non-empty `operationId`. It accepts an optional `profile`. Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
+- `start` — requires `prompt` and a non-empty `operationId`. It accepts optional `profile` and versioned `outputContract` (`plan-review-v1`). Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
 - `status` — return structured run state by `operationId`, `runId`, or the current/last run
 - `result` — return a terminal run and report. An active run returns `not_ready`
 - `cancel` — cancel the selected active run, or report that the selected terminal run was not cancelled
 - `adopt` — verify and return a run from restored session history by `runId`
 
-`start` returns `{ operationId, replayed, run }`. `status` and `result`
-return `{ run }`. `cancel` returns `{ cancelled, run? }`. `adopt` returns
-`{ adopted: true, run }`. Run state contains `runId`, optional `operationId`,
-`phase`, `terminal`, and optional `report` or `error`.
+`start` returns `{ operationId, replayed, run }`. `status` returns `{ run }`.
+`result` returns `{ run, callerOutput? }`; `callerOutput` is present only when
+Fusion validated a strict caller contract, and contains `{ contract, output }`.
+`cancel` returns `{ cancelled, run? }`. `adopt` returns `{ adopted: true, run }`.
+Run state contains `runId`, optional `operationId`, `phase`, `terminal`, and
+optional `report` or `error`.
 
 Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 `not_ready`, `unavailable`, `start_failed`, `cancel_failed`, and `internal`.

@@ -57,11 +57,34 @@ test("fusionExtension starts and completes a run through pi-subagents RPC events
       {
         agent: "pi-fusion.fusion-panelist",
         success: true,
-        output: "Choose A.",
+        output: "Architect chooses A.",
+      },
+      {
+        agent: "pi-fusion.fusion-panelist",
+        success: true,
+        output: "Implementer chooses A.",
+      },
+      {
+        agent: "pi-fusion.fusion-panelist",
+        success: true,
+        output: "Tester chooses A.",
       },
     ],
   });
   pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  await nextTick();
+  pi.events.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "complete",
+    results: [
+      {
+        agent: "pi-fusion.fusion-judge",
+        success: true,
+        output: "# Fusion Report\n\n## Recommendation\nChoose A.",
+      },
+    ],
+  });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "judge-1" });
   await nextTick();
 
   assert.equal(pi.messages.at(-1)?.customType, "fusion-report");
@@ -144,11 +167,34 @@ test("fusionExtension restores an active run on session_start and unsubscribes o
       {
         agent: "pi-fusion.fusion-panelist",
         success: true,
-        output: "Restored output.",
+        output: "Restored architecture output.",
+      },
+      {
+        agent: "pi-fusion.fusion-panelist",
+        success: true,
+        output: "Restored implementation output.",
+      },
+      {
+        agent: "pi-fusion.fusion-panelist",
+        success: true,
+        output: "Restored test output.",
       },
     ],
   });
   restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  await nextTick();
+  restoredPi.events.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "complete",
+    results: [
+      {
+        agent: "pi-fusion.fusion-judge",
+        success: true,
+        output: "# Fusion Report\n\n## Summary\nRestored output.",
+      },
+    ],
+  });
+  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "judge-1" });
   await nextTick();
 
   assert.match(restoredPi.messages.at(-1)?.content ?? "", /Restored output/);

@@ -24,6 +24,7 @@ export type FusionRunSummary = Omit<
     | "prompt"
     | "profileName"
     | "operationId"
+    | "outputContract"
     | "phase"
     | "createdAt"
     | "updatedAt"
@@ -43,6 +44,7 @@ export interface FusionRunStartInput {
   inlinePanel?: string[];
   baseProfileName?: string;
   operationId?: string;
+  outputContract?: FusionRun["outputContract"];
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
 }
@@ -161,6 +163,9 @@ export class FusionRunStore {
         : {}),
       ...(input.operationId !== undefined
         ? { operationId: input.operationId }
+        : {}),
+      ...(input.outputContract !== undefined
+        ? { outputContract: input.outputContract }
         : {}),
       phase: input.phase ?? "chain",
       createdAt,
@@ -379,6 +384,9 @@ function toRunSummary(
     prompt: run.prompt,
     profileName: run.profileName,
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
+    ...(run.outputContract !== undefined
+      ? { outputContract: run.outputContract }
+      : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -404,6 +412,9 @@ function cloneRun(run: FusionRun): FusionRun {
       ? { baseProfileName: run.baseProfileName }
       : {}),
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
+    ...(run.outputContract !== undefined
+      ? { outputContract: run.outputContract }
+      : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -460,6 +471,12 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
   if (value.operationId !== undefined && !isNonEmptyString(value.operationId)) {
+    return false;
+  }
+  if (
+    value.outputContract !== undefined &&
+    value.outputContract !== "plan-review-v1"
+  ) {
     return false;
   }
   if (

@@ -1,9 +1,19 @@
+import {
+  detectCallerOutputContract,
+  isCallerOutputContract,
+  validateCallerOutput,
+} from "./caller-contract.js";
 import type {
   FusionCommandContext,
   FusionCommandResult,
 } from "./orchestrator.js";
 import type { FusionRunStore } from "./run-store.js";
-import type { FusionPhase, FusionRun, ParsedFusionArgs } from "./types.js";
+import type {
+  CallerOutputContract,
+  FusionPhase,
+  FusionRun,
+  ParsedFusionArgs,
+} from "./types.js";
 import { isNonEmptyString, isRecord } from "./utils.js";
 
 export const FUSION_RPC_VERSION = 1;
@@ -70,8 +80,14 @@ export interface FusionRpcStatusData {
   run: FusionRunState;
 }
 
+export interface FusionRpcCallerOutput {
+  contract: CallerOutputContract;
+  output: string;
+}
+
 export interface FusionRpcResultData {
   run: FusionRunState;
+  callerOutput?: FusionRpcCallerOutput;
 }
 
 export interface FusionRpcCancelData {
@@ -134,6 +150,7 @@ interface StartParams {
   prompt: string;
   profile?: string;
   operationId: string;
+  outputContract?: CallerOutputContract;
 }
 
 interface RunParams {
@@ -143,7 +160,13 @@ interface RunParams {
 
 type ObservableRun = Pick<
   FusionRun,
-  "id" | "operationId" | "phase" | "report" | "error"
+  | "id"
+  | "operationId"
+  | "phase"
+  | "prompt"
+  | "outputContract"
+  | "report"
+  | "error"
 >;
 
 const TERMINAL_PHASES = new Set<FusionPhase>(["done", "failed", "cancelled"]);
@@ -252,7 +275,8 @@ export function registerFusionRpc({
         details: { run: state },
       });
     }
-    return { run: state };
+    const callerOutput = validatedCallerOutput(run);
+    return { run: state, ...(callerOutput ? { callerOutput } : {}) };
   }
 
   async function cancel(params: unknown): Promise<FusionRpcCancelData> {
@@ -401,19 +425,30 @@ function parseStartParams(input: unknown): StartParams {
     );
   }
 
-  return profile === undefined
-    ? { prompt, operationId }
-    : { prompt, operationId, profile };
+  const outputContract = input.outputContract;
+  if (outputContract !== undefined && !isCallerOutputContract(outputContract)) {
+    throw invalidParams(
+      "start outputContract must be a supported caller output contract.",
+    );
+  }
+
+  return {
+    prompt,
+    operationId,
+    ...(profile === undefined ? {} : { profile }),
+    ...(outputContract === undefined ? {} : { outputContract }),
+  };
 }
 
 function toParsedFusionArgs(input: StartParams): ParsedFusionArgs {
-  return input.profile === undefined
-    ? { prompt: input.prompt, operationId: input.operationId }
-    : {
-        prompt: input.prompt,
-        profile: input.profile,
-        operationId: input.operationId,
-      };
+  return {
+    prompt: input.prompt,
+    operationId: input.operationId,
+    ...(input.profile === undefined ? {} : { profile: input.profile }),
+    ...(input.outputContract === undefined
+      ? {}
+      : { outputContract: input.outputContract }),
+  };
 }
 
 function findRun(
@@ -546,6 +581,17 @@ function startFailure(message: string, run?: ObservableRun): RpcFailure {
     message,
     ...(run ? { details: { run: stateFor(run) } } : {}),
   });
+}
+
+function validatedCallerOutput(
+  run: ObservableRun,
+): FusionRpcCallerOutput | undefined {
+  if (!run.report) return undefined;
+  const contract = run.outputContract ?? detectCallerOutputContract(run.prompt);
+  if (!contract || !validateCallerOutput(contract, run.report).ok) {
+    return undefined;
+  }
+  return { contract, output: run.report.trim() };
 }
 
 function stateFor(run: ObservableRun): FusionRunState {
