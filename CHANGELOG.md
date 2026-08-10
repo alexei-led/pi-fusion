@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.0 - 2026-08-10
+
+### Added
+
+- `fusion:rpc:v1` callers can request the versioned `plan-review-v1` output
+  contract and receive a validated `callerOutput` without Fusion headings.
+- Profiles can set separate panel and synthesis timeouts plus bounded panel and
+  judge tool budgets.
+
+### Changed
+
+- Panel and judge lifecycle evidence is reconciled against terminal
+  `pi-subagents` status. Missing, malformed, oversized, or conflicting results
+  now fail closed instead of producing an incomplete review.
+- Every synthesis mode requires complete panel coverage unless at least two
+  successful panelists triggered an explicit strong-agreement stop.
+- Legacy shared timeouts, soft-only tool budgets, and prompt-detected caller
+  contracts remain supported across restored runs.
+
+### Fixed
+
+- Adjacent strict `FINDING` blocks, including mixed whitespace, now validate.
+- Judge event/status conflicts and incomplete merge-facet coverage can no
+  longer return a clean review.
+
 ## 0.6.2 - 2026-08-08
 
 ### Fixed
