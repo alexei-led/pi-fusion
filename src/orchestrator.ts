@@ -183,7 +183,8 @@ export class FusionOrchestrator {
     }
 
     try {
-      await this.rpc.ping();
+      const pingOk = await this.adapter.ping();
+      if (!pingOk) throw new Error("Subagents RPC ping failed.");
       this.installWarning = undefined;
     } catch (error: unknown) {
       const message = `pi-subagents RPC is unavailable: ${errorMessage(error)}`;
@@ -2287,7 +2288,9 @@ function createRpcFromAdapter(
 ): FusionRpcClientLike {
   return {
     async ping() {
-      return adapter.ping();
+      const ok = await adapter.ping();
+      if (!ok) throw new Error("Subagents RPC ping failed.");
+      return { ok: true };
     },
     async spawn(params: object) {
       return adapter.spawn("", "", params as SubagentSpawnOptions);

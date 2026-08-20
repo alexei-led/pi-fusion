@@ -601,13 +601,14 @@ export class AutoDetectingAdapter implements ISubagentRPCAdapter {
     if (this.detectedProvider === "nicopreme") return this.nicopreme.ping(options);
     if (this.detectedProvider === "tintinweb") return this.tintinweb.ping(options);
 
-    // Auto mode: probe nicopreme first
-    const nicoOk = await this.nicopreme.ping(options);
+    // Auto mode: probe nicopreme first with fast probe timeout (100ms) unless explicitly specified
+    const probeOpts = { timeoutMs: options?.timeoutMs ?? 100 };
+    const nicoOk = await this.nicopreme.ping(probeOpts);
     if (nicoOk) {
       this.detectedProvider = "nicopreme";
       return true;
     }
-    const tintinOk = await this.tintinweb.ping(options);
+    const tintinOk = await this.tintinweb.ping(probeOpts);
     if (tintinOk) {
       this.detectedProvider = "tintinweb";
       return true;

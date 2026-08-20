@@ -58,6 +58,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@gaodes/pi-test-harness": "file:../pi-test-harness",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
     "jiti": "^2.7.0",
