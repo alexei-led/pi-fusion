@@ -163,6 +163,7 @@ export interface RunObservation {
 export interface FusionConfig {
   defaultProfile: string;
   profiles: Record<string, FusionProfile>;
+  provider?: "auto" | "nicopreme" | "tintinweb";
 }
 
 export interface ParsedFusionArgs {

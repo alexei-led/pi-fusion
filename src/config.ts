@@ -313,6 +313,14 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.defaultProfile)) return false;
   if (!isRecord(value.profiles)) return false;
+  if (
+    value.provider !== undefined &&
+    value.provider !== "auto" &&
+    value.provider !== "nicopreme" &&
+    value.provider !== "tintinweb"
+  ) {
+    return false;
+  }
   return Object.values(value.profiles).every(isFusionProfile);
 }
 

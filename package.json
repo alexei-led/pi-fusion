@@ -15,6 +15,7 @@
     "pi-package",
     "pi-extension",
     "pi-subagents",
+    "@tintinweb/pi-subagents",
     "fusion",
     "multi-agent",
     "multi-model"

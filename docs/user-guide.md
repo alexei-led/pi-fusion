@@ -147,6 +147,7 @@ Top level:
 
 - `defaultProfile`: profile used when `/fusion` has no `--profile`
 - `profiles`: named profile map
+- `provider`: optional subagent provider selection: `"auto"` (default), `"nicopreme"`, or `"tintinweb"`. By default, Fusion auto-detects installed subagent extensions at runtime and defaults to `pi-subagents` if both `pi-subagents` and `@tintinweb/pi-subagents` are present. You can also override this via the `PI_FUSION_SUBAGENT_PROVIDER` environment variable.
 
 Profile:
 

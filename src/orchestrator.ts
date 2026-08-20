@@ -50,11 +50,22 @@ import {
   type ParsedFusionArgs,
 } from "./types.js";
 import {
+  extractPanelDecision,
   extractRunObservation,
   hasStrongPanelAgreement,
   mergeRunObservations,
 } from "./run-observations.js";
 import type { SubagentsTargetParams } from "./subagents-rpc.js";
+import {
+  type ISubagentRPCAdapter,
+  type SubagentSpawnOptions,
+  type SubagentSpawnResult,
+} from "./subagent-adapter.js";
+import {
+  buildJudgeTask,
+  buildPanelTask,
+  resolveSynthesisAgent,
+} from "./run-builder.js";
 
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
@@ -95,7 +106,8 @@ export interface FusionMessageSink {
 }
 
 export interface FusionOrchestratorDeps {
-  rpc: FusionRpcClientLike;
+  rpc?: FusionRpcClientLike;
+  adapter?: ISubagentRPCAdapter;
   runStore?: FusionRunStore;
   sendMessage?: FusionMessageSink["sendMessage"];
   loadConfig?: typeof loadFusionConfig;
@@ -119,6 +131,7 @@ interface RunLifecycleSnapshot {
 
 export class FusionOrchestrator {
   private readonly rpc: FusionRpcClientLike;
+  private readonly adapter: ISubagentRPCAdapter;
   private readonly runStore: FusionRunStore;
   private readonly sendMessage: FusionMessageSink["sendMessage"] | undefined;
   private readonly loadConfig: typeof loadFusionConfig;
@@ -130,13 +143,29 @@ export class FusionOrchestrator {
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconciling = false;
   private pendingCompletionPayload: unknown;
+  private readonly tintinActivePanelists = new Map<
+    string,
+    { index: number; member: FusionProfile["panel"][number]; runId: string }
+  >();
 
   constructor(deps: FusionOrchestratorDeps) {
-    this.rpc = deps.rpc;
+    if (deps.adapter) {
+      this.adapter = deps.adapter;
+      this.rpc = deps.rpc ?? createRpcFromAdapter(deps.adapter);
+    } else if (deps.rpc) {
+      this.rpc = deps.rpc;
+      this.adapter = createAdapterFromRpc(deps.rpc);
+    } else {
+      throw new Error("FusionOrchestrator requires either adapter or rpc in deps.");
+    }
     this.runStore = deps.runStore ?? new FusionRunStore();
     this.sendMessage = deps.sendMessage;
     this.loadConfig = deps.loadConfig ?? loadFusionConfig;
     this.resolveProfile = deps.resolveProfile ?? resolveFusionProfile;
+  }
+
+  getProvider(): "nicopreme" | "tintinweb" {
+    return this.adapter.provider;
   }
 
   async startRun(
@@ -228,6 +257,85 @@ export class FusionOrchestrator {
     this.activeProfile = resolved.profile;
     publishFusionStatus(ctx, run);
 
+    if (this.getProvider() === "tintinweb") {
+      try {
+        const panelistRuns: Array<{
+          index: number;
+          member: FusionProfile["panel"][number];
+          runId: string;
+        }> = [];
+        this.tintinActivePanelists.clear();
+
+        for (let index = 0; index < resolved.profile.panel.length; index++) {
+          const member = resolved.profile.panel[index]!;
+          const task = buildPanelTask(
+            member,
+            args.prompt,
+            resolved.profile.stopWhenPanelAgrees === true,
+            outputContract,
+          );
+          const model = appendThinkingSuffix(member.model, member.thinking);
+          const spawnResult = await this.adapter.spawn(
+            member.agent,
+            task,
+            {
+              ...(model !== undefined ? { model } : {}),
+              description: `Fusion panelist: ${memberLabel(member)}`,
+              isBackground: true,
+              context: resolved.profile.context ?? "fresh",
+            },
+          );
+          const runId = spawnResult.runId;
+          panelistRuns.push({ index, member, runId });
+          this.tintinActivePanelists.set(runId, { index, member, runId });
+          this.adapter.onCompletion(runId, (res) => {
+            void this.handleSubagentComplete(res.raw ?? res);
+          });
+        }
+
+        const current = this.runStore.getActiveRun();
+        if (!current || current.id !== run.id) {
+          for (const p of panelistRuns) {
+            await this.stopOrphanedRun(p.runId, "panel");
+          }
+          const cancelled = this.runStore.getLastRunSummary();
+          return cancelled?.id === run.id &&
+            cancelled.phase === "cancelled" &&
+            cancelled.report
+            ? { status: "cancelled", run: cancelled, report: cancelled.report }
+            : { status: "ignored" };
+        }
+
+        const panelRunId = panelistRuns[0]?.runId ?? "panel-1";
+        const updated = this.runStore.updateRun(run.id, {
+          panelRunId,
+          panelOutputs: [],
+          panelFailures: [],
+        });
+        publishFusionStatus(ctx, updated);
+        this.notify(
+          ctx,
+          `Fusion ${resolved.name} started (${resolved.profile.panel.length} panelists): "${promptPreview(args.prompt)}"`,
+          "info",
+        );
+        return { status: "started", run: updated };
+      } catch (error: unknown) {
+        const cancelled = this.runStore.getLastRunSummary();
+        if (
+          cancelled?.id === run.id &&
+          cancelled.phase === "cancelled" &&
+          cancelled.report
+        ) {
+          return {
+            status: "cancelled",
+            run: cancelled,
+            report: cancelled.report,
+          };
+        }
+        return this.failActiveRun(errorMessage(error));
+      }
+    }
+
     try {
       const spawnResult = await this.rpc.spawn(
         buildPanelSpawnParams(resolved.profile, args.prompt, outputContract),
@@ -310,6 +418,10 @@ export class FusionOrchestrator {
     const completedRunId = extractSubagentRunId(payload);
     if (!completedRunId) return { status: "ignored" };
 
+    if (this.getProvider() === "tintinweb") {
+      return this.handleTintinComplete(active, completedRunId, payload);
+    }
+
     if (active.phase === "judge") {
       if (!active.judgeRunId || completedRunId !== active.judgeRunId) {
         return { status: "ignored" };
@@ -322,6 +434,196 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     }
     return this.reconcileActiveRun(payload);
+  }
+
+  private async handleTintinComplete(
+    active: FusionRun,
+    completedRunId: string,
+    payload: unknown,
+  ): Promise<FusionCommandResult> {
+    const profile = this.activeProfile;
+    if (!profile) {
+      return this.failActiveRun("Active fusion profile was not available.");
+    }
+
+    if (active.phase === "panel") {
+      const panelistInfo = this.tintinActivePanelists.get(completedRunId);
+      if (!panelistInfo) {
+        if (completedRunId !== active.panelRunId) {
+          return { status: "ignored" };
+        }
+      } else {
+        this.tintinActivePanelists.delete(completedRunId);
+      }
+
+      const index = panelistInfo?.index ?? (active.panelOutputs?.length ?? 0);
+      const member =
+        panelistInfo?.member ?? profile.panel[index] ?? profile.panel[0]!;
+
+      const isError =
+        isRecord(payload) &&
+        (payload.status === "error" ||
+          payload.status === "stopped" ||
+          payload.status === "aborted" ||
+          payload.error !== undefined);
+
+      let updatedOutputs = [...(active.panelOutputs ?? [])];
+      let updatedFailures = [...(active.panelFailures ?? [])];
+
+      const panelModel = configuredPanelModel(member);
+
+      if (isError) {
+        const errorMsg =
+          isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : extractSubagentFailure(payload) ?? "Panelist failed";
+        const failure: FailedPanelSummary = {
+          index,
+          agent: member.agent,
+          summary: errorMsg,
+          ...(member.id !== undefined ? { id: member.id } : {}),
+          ...(member.label !== undefined ? { label: member.label } : {}),
+          ...(member.role !== undefined ? { role: member.role } : {}),
+          ...(panelModel !== undefined ? { model: panelModel } : {}),
+        };
+        updatedFailures = updatedFailures.filter((f) => f.index !== index);
+        updatedFailures.push(failure);
+      } else {
+        const output =
+          isRecord(payload) && typeof payload.result === "string"
+            ? payload.result
+            : firstNonBlankStringFromPayload(payload) ?? "";
+        const decision = extractPanelDecision(output);
+        const panelOut: PanelOutput = {
+          index,
+          agent: member.agent,
+          output,
+          ...(decision !== undefined ? { decision } : {}),
+          ...(member.id !== undefined ? { id: member.id } : {}),
+          ...(member.label !== undefined ? { label: member.label } : {}),
+          ...(member.role !== undefined ? { role: member.role } : {}),
+          ...(panelModel !== undefined ? { model: panelModel } : {}),
+        };
+        updatedOutputs = updatedOutputs.filter((o) => o.index !== index);
+        updatedOutputs.push(panelOut);
+      }
+
+      const updated = this.runStore.updateRun(active.id, {
+        panelOutputs: updatedOutputs,
+        panelFailures: updatedFailures,
+      });
+      publishFusionStatus(this.context, updated);
+
+      if (
+        profile.stopWhenPanelAgrees &&
+        shouldStopWhenPanelAgrees(profile, updatedOutputs, updatedFailures)
+      ) {
+        for (const p of this.tintinActivePanelists.values()) {
+          await this.adapter.stop(p.runId);
+        }
+        this.tintinActivePanelists.clear();
+        const completedIndices = new Set([
+          ...updatedOutputs.map((o) => o.index),
+          ...updatedFailures.map((f) => f.index),
+        ]);
+        const stoppedIndices = Array.from(
+          { length: profile.panel.length },
+          (_, idx) => idx,
+        ).filter((idx) => !completedIndices.has(idx));
+        const stoppedFailures: FailedPanelSummary[] = stoppedIndices.map(
+          (idx) => {
+            const m = profile.panel[idx]!;
+            const model = configuredPanelModel(m);
+            return {
+              index: idx,
+              agent: m.agent,
+              summary: "stopped after panel agreement",
+              reason: "stopped-after-agreement",
+              ...(m.id !== undefined ? { id: m.id } : {}),
+              ...(m.label !== undefined ? { label: m.label } : {}),
+              ...(m.role !== undefined ? { role: m.role } : {}),
+              ...(model !== undefined ? { model } : {}),
+            };
+          },
+        );
+        const finalFailures = [...updatedFailures, ...stoppedFailures];
+        const agreementRun = this.runStore.updateRun(active.id, {
+          panelStopReason: "agreement",
+          panelStoppedIndices: stoppedIndices,
+          panelOutputs: updatedOutputs,
+          panelFailures: finalFailures,
+        });
+        return this.finishPanelCompletion(
+          agreementRun,
+          profile,
+          updatedOutputs,
+          finalFailures,
+          { fallbackJudge: false },
+        );
+      }
+
+      if (
+        updatedOutputs.length + updatedFailures.length >=
+        profile.panel.length
+      ) {
+        return this.finishPanelCompletion(
+          updated,
+          profile,
+          updatedOutputs,
+          updatedFailures,
+          { fallbackJudge: false },
+        );
+      }
+
+      return { status: "started", run: updated };
+    }
+
+    if (active.phase === "judge") {
+      if (active.judgeRunId && completedRunId !== active.judgeRunId) {
+        return { status: "ignored" };
+      }
+
+      const isError =
+        isRecord(payload) &&
+        (payload.status === "error" ||
+          payload.status === "stopped" ||
+          payload.status === "aborted" ||
+          payload.error !== undefined);
+
+      if (isError) {
+        const errorMsg =
+          isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : extractSubagentFailure(payload) ?? "Fusion judge failed";
+        return this.failActiveRun(errorMsg);
+      }
+
+      const judgeOutput =
+        isRecord(payload) && typeof payload.result === "string"
+          ? payload.result
+          : firstNonBlankStringFromPayload(payload) ?? "";
+
+      const callerContract =
+        active.outputContract ?? detectCallerOutputContract(active.prompt);
+      if (callerContract) {
+        const validation = validateCallerOutput(callerContract, judgeOutput);
+        if (!validation.ok) return this.failActiveRun(validation.error);
+      }
+
+      const judgeModel = configuredJudgeModel(profile);
+      const report = renderJudgeReport({
+        run: active,
+        judgeOutput,
+        panelOutputs: storedPanelOutputs(active),
+        failures: storedPanelFailures(active),
+        ...withJudgeModel(judgeModel),
+        ...(profile.blindPanelLabels ? { blindPanelLabels: true } : {}),
+        synthesis: resolveSynthesisMode(profile),
+      });
+      return this.completeActiveRun(report);
+    }
+
+    return { status: "ignored" };
   }
 
   async refreshStatus(
@@ -359,19 +661,39 @@ export class FusionOrchestrator {
 
     const targetRunId = activeRunId(active);
     let method: "stop" | "interrupt" | "local" = "local";
-    if (targetRunId) {
-      try {
-        await this.rpc.stop({ id: targetRunId });
-        method = "stop";
-      } catch (stopError: unknown) {
-        this.installWarning = `Subagent stop failed for ${targetRunId}: ${errorMessage(stopError)}`;
+    if (this.getProvider() === "tintinweb") {
+      for (const p of this.tintinActivePanelists.values()) {
         try {
-          await this.rpc.interrupt({ id: targetRunId });
-          method = "interrupt";
-        } catch (interruptError: unknown) {
-          const message = `Could not cancel subagent run ${targetRunId}: ${errorMessage(interruptError)}`;
-          this.notify(ctx, message, "error");
-          return { status: "failed", error: message };
+          await this.adapter.stop(p.runId);
+        } catch {
+          // ignore
+        }
+      }
+      this.tintinActivePanelists.clear();
+      if (active.phase === "judge" && active.judgeRunId) {
+        try {
+          await this.adapter.stop(active.judgeRunId);
+        } catch {
+          // ignore
+        }
+      }
+      method = "stop";
+    } else {
+      const targetRunId = activeRunId(active);
+      if (targetRunId) {
+        try {
+          await this.rpc.stop({ id: targetRunId });
+          method = "stop";
+        } catch (stopError: unknown) {
+          this.installWarning = `Subagent stop failed for ${targetRunId}: ${errorMessage(stopError)}`;
+          try {
+            await this.rpc.interrupt({ id: targetRunId });
+            method = "interrupt";
+          } catch (interruptError: unknown) {
+            const message = `Could not cancel subagent run ${targetRunId}: ${errorMessage(interruptError)}`;
+            this.notify(ctx, message, "error");
+            return { status: "failed", error: message };
+          }
         }
       }
     }
@@ -858,14 +1180,41 @@ export class FusionOrchestrator {
     }
 
     try {
-      const spawnResult = await this.rpc.spawn(decision.params);
-      const spawnError = extractSubagentFailure(spawnResult);
-      if (spawnError) throw new FusionArgsError(spawnError);
-      const judgeRunId = extractSubagentRunId(spawnResult);
+      let judgeRunId: string | undefined;
+      let judgeAsyncDir: string | undefined;
+
+      if (this.getProvider() === "tintinweb") {
+        const judgeAgent = resolveSynthesisAgent(profile);
+        const judgeModel = configuredJudgeModel(profile);
+        const judgeTask = buildJudgeTask({
+          profile,
+          prompt: run.prompt,
+          panelOutputs,
+          failedPanelists: panelFailures,
+          runId: run.id,
+          ...(run.outputContract ? { callerContract: run.outputContract } : {}),
+        });
+        const spawnRes = await this.adapter.spawn(judgeAgent, judgeTask, {
+          ...(judgeModel !== undefined ? { model: judgeModel } : {}),
+          description: "Fusion judge",
+          isBackground: true,
+          context: profile.context ?? "fresh",
+        });
+        judgeRunId = spawnRes.runId;
+        this.adapter.onCompletion(judgeRunId, (res) => {
+          void this.handleSubagentComplete(res.raw ?? res);
+        });
+      } else {
+        const spawnResult = await this.rpc.spawn(decision.params);
+        const spawnError = extractSubagentFailure(spawnResult);
+        if (spawnError) throw new FusionArgsError(spawnError);
+        judgeRunId = extractSubagentRunId(spawnResult);
+        judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
+      }
+
       if (!judgeRunId) {
         throw new FusionArgsError(decision.missingRunIdError);
       }
-      const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
       if (this.runStore.getActiveRun()?.id !== run.id) {
         await this.stopOrphanedRun(judgeRunId, "judge");
         return { status: "ignored" };
@@ -1888,4 +2237,65 @@ function unknownArray(value: unknown): readonly unknown[] | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createAdapterFromRpc(rpc: FusionRpcClientLike): ISubagentRPCAdapter {
+  return {
+    provider: "nicopreme",
+    async ping() {
+      await rpc.ping();
+      return true;
+    },
+    async spawn(
+      agentType: string,
+      prompt: string,
+      options: SubagentSpawnOptions = {},
+    ): Promise<SubagentSpawnResult> {
+      const res = await rpc.spawn(options);
+      const asyncDir = extractSubagentAsyncDir(res);
+      return {
+        runId: extractSubagentRunId(res) ?? "panel-1",
+        ...(asyncDir !== undefined ? { asyncDir } : {}),
+        raw: res,
+      };
+    },
+    async stop(runId: string) {
+      await rpc.stop({ id: runId });
+      return true;
+    },
+    async interrupt(runId: string) {
+      await rpc.interrupt({ id: runId });
+      return true;
+    },
+    async status(runId: string) {
+      return rpc.status({ id: runId });
+    },
+    onCompletion() {
+      return () => {};
+    },
+  };
+}
+
+function createRpcFromAdapter(
+  adapter: ISubagentRPCAdapter,
+): FusionRpcClientLike {
+  return {
+    async ping() {
+      return adapter.ping();
+    },
+    async spawn(params: object) {
+      return adapter.spawn("", "", params as SubagentSpawnOptions);
+    },
+    async status(params?: SubagentsTargetParams) {
+      return adapter.status ? adapter.status(params?.id ?? "") : undefined;
+    },
+    async stop(params: SubagentsTargetParams) {
+      return adapter.stop(params?.id ?? "");
+    },
+    async interrupt(params: SubagentsTargetParams) {
+      return adapter.interrupt
+        ? adapter.interrupt(params?.id ?? "")
+        : adapter.stop(params?.id ?? "");
+    },
+  };
 }
