@@ -47,6 +47,13 @@ test("Harness Scenario 1: Extension discovers and registers start_fusion_review 
 });
 
 test("Harness Scenario 2: Playbook-driven panel and judge under Tintinweb protocol", async (t) => {
+  const prev = process.env.PI_FUSION_SUBAGENT_PROVIDER;
+  process.env.PI_FUSION_SUBAGENT_PROVIDER = "tintinweb";
+  t.after(() => {
+    if (prev === undefined) delete process.env.PI_FUSION_SUBAGENT_PROVIDER;
+    else process.env.PI_FUSION_SUBAGENT_PROVIDER = prev;
+  });
+
   const spawnedAgents: string[] = [];
   let capturedEvents: ExtensionAPI["events"] | undefined;
 
@@ -123,6 +130,13 @@ test("Harness Scenario 2: Playbook-driven panel and judge under Tintinweb protoc
 });
 
 test("Harness Scenario 3: Playbook-driven panel and judge under Nicopreme protocol", async (t) => {
+  const prev = process.env.PI_FUSION_SUBAGENT_PROVIDER;
+  process.env.PI_FUSION_SUBAGENT_PROVIDER = "nicopreme";
+  t.after(() => {
+    if (prev === undefined) delete process.env.PI_FUSION_SUBAGENT_PROVIDER;
+    else process.env.PI_FUSION_SUBAGENT_PROVIDER = prev;
+  });
+
   const spawnedWorkflows: string[] = [];
   let capturedEvents: ExtensionAPI["events"] | undefined;
 
