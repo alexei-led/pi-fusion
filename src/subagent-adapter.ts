@@ -509,7 +509,7 @@ export class AutoDetectingAdapter implements ISubagentRPCAdapter {
   private readonly events: SubagentsEventBus;
   readonly nicopreme: ISubagentRPCAdapter;
   readonly tintinweb: ISubagentRPCAdapter;
-  private readonly configuredProvider: SubagentProvider;
+  private configuredProvider: SubagentProvider;
   private detectedProvider: "nicopreme" | "tintinweb" | undefined;
   private unsubs: Array<() => void> = [];
 
@@ -524,6 +524,10 @@ export class AutoDetectingAdapter implements ISubagentRPCAdapter {
     this.tintinweb = options.tintinweb ?? new TintinwebAdapter(adapterOpts);
 
     this.initReadinessListeners();
+  }
+
+  setConfiguredProvider(provider: SubagentProvider): void {
+    this.configuredProvider = provider;
   }
 
   private initReadinessListeners(): void {

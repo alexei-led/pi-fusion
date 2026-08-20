@@ -196,6 +196,11 @@ export class FusionOrchestrator {
     let baseProfileName: string | undefined;
     try {
       const config = await this.loadConfig(ctx);
+      if (config.provider && "setConfiguredProvider" in this.adapter) {
+        (this.adapter as { setConfiguredProvider: (p: string) => void }).setConfiguredProvider(
+          config.provider,
+        );
+      }
       resolved = this.resolveProfile(config, args.profile);
       baseProfileName = resolved.name;
       if (args.panel?.length) {
@@ -1499,6 +1504,7 @@ export class FusionOrchestrator {
 
   private clearActiveRuntime(): void {
     this.activeProfile = undefined;
+    this.tintinActivePanelists.clear();
     this.stopReconcileLoop();
   }
 
