@@ -127,11 +127,16 @@ export function createDefaultFusionConfig(): FusionConfig {
 }
 
 export function getProjectFusionConfigPath(cwd: string): string {
-  return join(cwd, CONFIG_DIR_NAME, FUSION_CONFIG_FILE);
+  const configDir = CONFIG_DIR_NAME || ".pi";
+  return join(cwd, configDir, FUSION_CONFIG_FILE);
 }
 
-export function getGlobalFusionConfigPath(agentDir = getAgentDir()): string {
-  return join(agentDir, FUSION_CONFIG_FILE);
+export function getGlobalFusionConfigPath(agentDir?: string): string {
+  const resolvedDir =
+    agentDir ??
+    (typeof getAgentDir === "function" ? getAgentDir() : undefined) ??
+    process.cwd();
+  return join(resolvedDir, FUSION_CONFIG_FILE);
 }
 
 export function getFusionConfigTemplate(): string {
@@ -144,7 +149,7 @@ export async function loadFusionConfig(
 ): Promise<FusionConfig> {
   const readTextFile = deps.readTextFile ?? readUtf8File;
 
-  if (ctx.isProjectTrusted()) {
+  if (typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : true) {
     const projectPath = getProjectFusionConfigPath(ctx.cwd);
     const projectConfig = await readOptionalConfig(projectPath, readTextFile);
     if (projectConfig) {
@@ -313,6 +318,14 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.defaultProfile)) return false;
   if (!isRecord(value.profiles)) return false;
+  if (
+    value.provider !== undefined &&
+    value.provider !== "auto" &&
+    value.provider !== "nicopreme" &&
+    value.provider !== "tintinweb"
+  ) {
+    return false;
+  }
   return Object.values(value.profiles).every(isFusionProfile);
 }
 

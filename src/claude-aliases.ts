@@ -98,9 +98,13 @@ async function loadClaudeAliases(
     getGlobalClaudeAliasConfigPath(deps.agentDir),
     readTextFile,
   );
-  const project = ctx.isProjectTrusted()
+  const isTrusted =
+    typeof ctx.isProjectTrusted === "function"
+      ? ctx.isProjectTrusted()
+      : true;
+  const project = isTrusted
     ? await readOptionalAliasFile(
-        getProjectClaudeAliasConfigPath(ctx.cwd),
+        getProjectClaudeAliasConfigPath(ctx.cwd ?? process.cwd()),
         readTextFile,
       )
     : undefined;
@@ -242,12 +246,17 @@ function normalizeHandle(value: unknown): string | undefined {
   return handle || undefined;
 }
 
-function getGlobalClaudeAliasConfigPath(agentDir = getAgentDir()): string {
-  return join(agentDir, CLAUDE_ALIAS_CONFIG_FILE);
+function getGlobalClaudeAliasConfigPath(agentDir?: string): string {
+  const resolvedDir =
+    agentDir ??
+    (typeof getAgentDir === "function" ? getAgentDir() : undefined) ??
+    process.cwd();
+  return join(resolvedDir, CLAUDE_ALIAS_CONFIG_FILE);
 }
 
 function getProjectClaudeAliasConfigPath(cwd: string): string {
-  return join(cwd, CONFIG_DIR_NAME, CLAUDE_ALIAS_CONFIG_FILE);
+  const configDir = CONFIG_DIR_NAME || ".pi";
+  return join(cwd, configDir, CLAUDE_ALIAS_CONFIG_FILE);
 }
 
 async function readUtf8File(path: string): Promise<string> {

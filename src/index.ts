@@ -8,7 +8,11 @@ import {
 } from "./orchestrator.js";
 import { registerFusionRpc } from "./fusion-rpc.js";
 import { FusionRunStore } from "./run-store.js";
-import { SubagentsRpcClient } from "./subagents-rpc.js";
+import {
+  AutoDetectingAdapter,
+  TINTINWEB_COMPLETED_EVENT,
+  TINTINWEB_FAILED_EVENT,
+} from "./subagent-adapter.js";
 
 function registerFusionTool(
   pi: ExtensionAPI,
@@ -67,8 +71,9 @@ function registerFusionTool(
 export default function fusionExtension(pi: ExtensionAPI): void {
   const store = new FusionRunStore({ persistence: pi });
   let sessionContext: FusionCommandContext | undefined;
+  const adapter = new AutoDetectingAdapter({ events: pi.events });
   const orchestrator = new FusionOrchestrator({
-    rpc: new SubagentsRpcClient({ events: pi.events }),
+    adapter,
     runStore: store,
     sendMessage: (message) => pi.sendMessage(message),
   });
@@ -78,6 +83,18 @@ export default function fusionExtension(pi: ExtensionAPI): void {
 
   const unsubscribeComplete = pi.events.on(
     SUBAGENT_ASYNC_COMPLETE_EVENT,
+    (payload) => {
+      void orchestrator.handleSubagentComplete(payload);
+    },
+  );
+  const unsubTintinCompleted = pi.events.on(
+    TINTINWEB_COMPLETED_EVENT,
+    (payload) => {
+      void orchestrator.handleSubagentComplete(payload);
+    },
+  );
+  const unsubTintinFailed = pi.events.on(
+    TINTINWEB_FAILED_EVENT,
     (payload) => {
       void orchestrator.handleSubagentComplete(payload);
     },
@@ -98,7 +115,10 @@ export default function fusionExtension(pi: ExtensionAPI): void {
     sessionContext = undefined;
     orchestrator.clearUi();
     orchestrator.dispose();
+    adapter.dispose();
     if (typeof unsubscribeComplete === "function") unsubscribeComplete();
+    if (typeof unsubTintinCompleted === "function") unsubTintinCompleted();
+    if (typeof unsubTintinFailed === "function") unsubTintinFailed();
     unsubscribeRpc();
   });
 }
