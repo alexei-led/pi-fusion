@@ -25,23 +25,45 @@ function registerFusionTool(
       "Pass panel only when the user names the models to compare. Otherwise omit it and let the profile decide.",
     ],
     parameters: Type.Object({
-      prompt: Type.String({ description: "What to review or discuss" }),
+      prompt: Type.String({
+        minLength: 1,
+        pattern: ".*\\S.*",
+        description: "What to review or discuss (must contain non-whitespace text)",
+      }),
       profile: Type.Optional(
-        Type.String({ description: "Fusion profile name (optional)" }),
+        Type.String({ minLength: 1, description: "Fusion profile name (optional)" }),
       ),
       panel: Type.Optional(
-        Type.Array(Type.String(), {
+        Type.Array(Type.String({ minLength: 1 }), {
+          minItems: 1,
           description:
             "Models to use for this run, overriding the profile panel. Each entry is <model> or <agent>:<model>. Use only when the user names specific models.",
         }),
       ),
+      panelistTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Per-panelist deadline in milliseconds" })),
+      panelTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Panel workflow deadline in milliseconds" })),
+      panelGraceMs: Type.Optional(Type.Integer({ minimum: 1, description: "Reserved grace between child and panel deadlines in milliseconds" })),
+      judgeTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Judge/composer deadline in milliseconds" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await orchestrator.startRun(
         {
           prompt: params.prompt,
-          ...(params.profile ? { profile: params.profile } : {}),
-          ...(params.panel?.length ? { panel: params.panel } : {}),
+          ...(params.profile !== undefined ? { profile: params.profile } : {}),
+          ...(params.panel !== undefined ? { panel: params.panel } : {}),
+          ...(params.panelistTimeoutMs !== undefined ||
+          params.panelTimeoutMs !== undefined ||
+          params.panelGraceMs !== undefined ||
+          params.judgeTimeoutMs !== undefined
+            ? {
+                timeoutOverrides: {
+                  ...(params.panelistTimeoutMs !== undefined ? { panelistTimeoutMs: params.panelistTimeoutMs } : {}),
+                  ...(params.panelTimeoutMs !== undefined ? { panelTimeoutMs: params.panelTimeoutMs } : {}),
+                  ...(params.panelGraceMs !== undefined ? { panelGraceMs: params.panelGraceMs } : {}),
+                  ...(params.judgeTimeoutMs !== undefined ? { judgeTimeoutMs: params.judgeTimeoutMs } : {}),
+                },
+              }
+            : {}),
         },
         ctx,
       );
@@ -57,6 +79,12 @@ function registerFusionTool(
           prompt: params.prompt,
           profile: params.profile,
           panel: params.panel,
+          timeoutOverrides: {
+            panelistTimeoutMs: params.panelistTimeoutMs,
+            panelTimeoutMs: params.panelTimeoutMs,
+            panelGraceMs: params.panelGraceMs,
+            judgeTimeoutMs: params.judgeTimeoutMs,
+          },
           status: result.status,
         },
       };

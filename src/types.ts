@@ -45,16 +45,41 @@ export interface JudgeConfig {
   thinking?: ThinkingLevel;
 }
 
+export type MinimumSuccessfulPanelists = "majority" | "all" | number;
+
+/** Per-run deadline overrides accepted by CLI, tool, and RPC starts. */
+export interface FusionTimeoutOverrides {
+  panelistTimeoutMs?: number;
+  panelTimeoutMs?: number;
+  panelGraceMs?: number;
+  judgeTimeoutMs?: number;
+}
+
+export interface EffectiveFusionTimeouts {
+  panelistTimeoutMs: number;
+  panelTimeoutMs: number;
+  panelGraceMs: number;
+  judgeTimeoutMs: number;
+  /** True when the legacy shared timeout supplied one or more deadline values. */
+  usesLegacyTimeout: boolean;
+}
+
 export interface FusionProfile {
   panel: PanelMemberConfig[];
   judge: JudgeConfig;
   concurrency?: number;
   /** Legacy shared wall-clock timeout used when a stage timeout is absent. */
   timeoutMs?: number;
+  /** Per-child deadline. It is capped below the enclosing panel deadline. */
+  panelistTimeoutMs?: number;
   /** Wall-clock timeout for the complete panel workflow. */
   panelTimeoutMs?: number;
+  /** Time reserved between child and enclosing panel deadlines. */
+  panelGraceMs?: number;
   /** Wall-clock timeout for the synthesis workflow. */
   judgeTimeoutMs?: number;
+  /** Successful panel outputs required for synthesis. Defaults to a majority. */
+  minimumSuccessfulPanelists?: MinimumSuccessfulPanelists;
   context?: FusionContextMode;
   stopWhenPanelAgrees?: boolean;
   /**
@@ -172,6 +197,7 @@ export interface ParsedFusionArgs {
   outputContract?: CallerOutputContract;
   /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
   panel?: string[];
+  timeoutOverrides?: FusionTimeoutOverrides;
 }
 
 export interface PanelOutput {
@@ -210,6 +236,43 @@ export interface FailedPanelSummary {
 export type FusionPhase =
   "panel" | "chain" | "judge" | "done" | "failed" | "cancelled";
 
+export type CompletionQuality = "complete" | "partial";
+
+/**
+ * The start-time settings required after a process restart. This intentionally
+ * excludes panel execution-only values (concurrency, panel tool budget, and
+ * raw timeout fields): the panel is already running, while resolved deadlines
+ * are persisted separately in `effectiveTimeouts`.
+ */
+export interface FusionProfileSnapshot {
+  panel: PanelMemberConfig[];
+  judge: JudgeConfig;
+  minimumSuccessfulPanelists: number;
+  context?: FusionContextMode;
+  stopWhenPanelAgrees?: boolean;
+  blindPanelLabels?: boolean;
+  judgeToolBudget?: ToolBudget;
+  synthesis?: FusionSynthesisMode;
+}
+
+/** Persisted recovery metadata for a terminal run. Failed-only retry is not
+ * yet exposed, so this records exactly which slots a future explicit retry may
+ * safely target without replaying verified completed work. */
+export interface FusionRecoveryState {
+  retryDeferred: true;
+  failedPanelIndices: number[];
+}
+
+/**
+ * Durable record written before a public RPC spawn. The public API cannot
+ * query by this correlation token, so a restored intent without its returned
+ * run ID is deliberately failed instead of risking a duplicate remote run.
+ */
+export interface FusionSpawnIntent {
+  stage: "panel" | "judge";
+  requestedAt: number;
+}
+
 export interface FusionRun {
   id: string;
   prompt: string;
@@ -224,6 +287,16 @@ export interface FusionRun {
   baseProfileName?: string;
   operationId?: string;
   outputContract?: CallerOutputContract;
+  /** Persisted start policy so recovery is not changed by later config edits. */
+  minimumSuccessfulPanelists?: MinimumSuccessfulPanelists;
+  /**
+   * Additive start-time profile snapshot. Old sessions omit it and retain the
+   * legacy config lookup fallback during restore.
+   */
+  profileSnapshot?: FusionProfileSnapshot;
+  timeoutOverrides?: FusionTimeoutOverrides;
+  effectiveTimeouts?: EffectiveFusionTimeouts;
+  completionQuality?: CompletionQuality;
   phase: FusionPhase;
   createdAt: number;
   updatedAt: number;
@@ -238,6 +311,8 @@ export interface FusionRun {
   judgeObservation?: RunObservation;
   panelOutputs?: PanelOutput[];
   panelFailures?: FailedPanelSummary[];
+  recovery?: FusionRecoveryState;
+  spawnIntent?: FusionSpawnIntent;
   report?: string;
   error?: string;
 }

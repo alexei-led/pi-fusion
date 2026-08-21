@@ -11,7 +11,10 @@ import {
 } from "./config.js";
 import { FusionArgsError } from "./errors.js";
 import { parseFusionArgs } from "./fusion-args.js";
-import { decidePanelCompletion } from "./panel-completion.js";
+import {
+  decidePanelCompletion,
+  resolveMinimumSuccessfulPanelists,
+} from "./panel-completion.js";
 import {
   renderCancelledReport,
   renderFailureReport,
@@ -25,8 +28,16 @@ import {
   reconcileIndexedLifecycleResult,
   reconcilePanelResults,
 } from "./lifecycle-reconcile.js";
-import { appendThinkingSuffix, buildPanelSpawnParams } from "./run-builder.js";
-import { FusionRunStore, FusionRunStoreError } from "./run-store.js";
+import {
+  appendThinkingSuffix,
+  buildPanelSpawnParams,
+  resolveEffectiveTimeouts,
+} from "./run-builder.js";
+import {
+  FusionRunStore,
+  FusionRunStoreError,
+  validateFusionRunPanelSlots,
+} from "./run-store.js";
 import {
   clearFusionUi,
   extractFusionProgressCounts,
@@ -45,6 +56,7 @@ import {
   resolveSynthesisMode,
   type FailedPanelSummary,
   type FusionProfile,
+  type FusionProfileSnapshot,
   type FusionRun,
   type PanelOutput,
   type ParsedFusionArgs,
@@ -113,6 +125,8 @@ export type FusionCommandResult =
 interface RunLifecycleSnapshot {
   statusPayload?: unknown;
   resultPayload?: unknown;
+  /** Compact event results need stable slots; status/artifacts are ordered snapshots. */
+  resultSource?: "artifact" | "event" | "status";
   resultIsTerminal: boolean;
   resultArtifactPending?: boolean;
 }
@@ -146,6 +160,11 @@ export class FusionOrchestrator {
     this.context = ctx;
 
     const args = typeof input === "string" ? parseFusionArgs(input) : input;
+    const inputError = validateStartArgs(args);
+    if (inputError) {
+      this.notify(ctx, inputError, "error");
+      return { status: "failed", error: inputError };
+    }
     const existing = this.runStore.getActiveRun();
     if (existing) {
       const message = `Fusion run ${existing.id} is already active.`;
@@ -198,6 +217,7 @@ export class FusionOrchestrator {
 
     const outputContract =
       args.outputContract ?? detectCallerOutputContract(args.prompt);
+    const profileSnapshot = snapshotProfile(resolved.profile);
     let run: FusionRun;
     try {
       run = this.runStore.startRun({
@@ -210,10 +230,24 @@ export class FusionOrchestrator {
           ? { operationId: args.operationId }
           : {}),
         ...(outputContract ? { outputContract } : {}),
+        // profileSnapshot is the sole quorum record for new runs. The
+        // run-level field remains readable only for legacy snapshots.
+        profileSnapshot,
+        ...(args.timeoutOverrides
+          ? { timeoutOverrides: args.timeoutOverrides }
+          : {}),
+        effectiveTimeouts: resolveEffectiveTimeouts(
+          resolved.profile,
+          args.timeoutOverrides,
+        ),
         phase: "panel",
       });
     } catch (error: unknown) {
-      if (!(error instanceof FusionRunStoreError)) throw error;
+      if (!(error instanceof FusionRunStoreError)) {
+        const message = errorMessage(error);
+        this.notify(ctx, message, "error");
+        return { status: "failed", error: message };
+      }
       const active = this.runStore.getActiveRun();
       if (active) {
         this.notify(
@@ -225,12 +259,25 @@ export class FusionOrchestrator {
       }
       return { status: "failed", error: errorMessage(error) };
     }
-    this.activeProfile = resolved.profile;
+    // Keep runtime behavior aligned with the exact durable profile that a
+    // restart will use, rather than retaining a mutable config object.
+    this.activeProfile = profileFromSnapshot(profileSnapshot);
     publishFusionStatus(ctx, run);
 
     try {
+      // Persist before the side effect. Public pi-subagents RPC has no
+      // correlation-key lookup, so restore treats this intent without its ID
+      // as unsafe to replay rather than creating an orphaned duplicate.
+      this.runStore.updateRun(run.id, {
+        spawnIntent: { stage: "panel", requestedAt: Date.now() },
+      });
       const spawnResult = await this.rpc.spawn(
-        buildPanelSpawnParams(resolved.profile, args.prompt, outputContract),
+        buildPanelSpawnParams(
+          resolved.profile,
+          args.prompt,
+          outputContract,
+          args.timeoutOverrides,
+        ),
       );
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
@@ -251,10 +298,19 @@ export class FusionOrchestrator {
           ? { status: "cancelled", run: cancelled, report: cancelled.report }
           : { status: "ignored" };
       }
-      const updated = this.runStore.updateRun(run.id, {
-        panelRunId,
-        ...(panelAsyncDir ? { panelAsyncDir } : {}),
-      });
+      let updated: FusionRun;
+      try {
+        updated = this.runStore.updateRun(run.id, {
+          spawnIntent: null,
+          panelRunId,
+          ...(panelAsyncDir ? { panelAsyncDir } : {}),
+        });
+      } catch (persistenceError: unknown) {
+        // The remote run is now known but its ID is not durable. It cannot be
+        // safely recovered through the public RPC, so stop it before failing.
+        await this.stopOrphanedRun(panelRunId);
+        throw persistenceError;
+      }
       publishFusionStatus(ctx, updated);
       this.ensureReconcileLoop();
       this.notify(
@@ -341,7 +397,7 @@ export class FusionOrchestrator {
         this.context,
         active,
         progress,
-        deriveFusionStatusPhase(active, statusPayload),
+        deriveFusionStatusPhase(active, statusPayload, this.activeProfile),
       );
     }
     return statusPayload;
@@ -419,34 +475,72 @@ export class FusionOrchestrator {
     const summary = this.runStore.restoreFromSession(ctx);
     this.clearActiveRuntime();
 
+    const restoreError = this.runStore.getRestoreError();
+    if (restoreError) {
+      this.configWarning = restoreError;
+      this.notify(ctx, restoreError, "warning");
+      clearFusionUi(ctx);
+      return summary;
+    }
+
     const active = this.runStore.getActiveRun();
+    if (active && hasUnresolvedSpawnIntent(active)) {
+      const message = `Fusion recovery stopped: ${active.spawnIntent!.stage} spawn may have reached pi-subagents, but its run ID was not persisted. It will not be replayed because public RPC cannot safely adopt it.`;
+      this.failActiveRun(message);
+      this.notify(ctx, message, "warning");
+      return this.runStore.getLastRunSummary();
+    }
     if (!active) {
       this.stopReconcileLoop();
       clearFusionUi(ctx);
       return summary;
     }
 
-    try {
-      const config = await this.loadConfig(ctx);
-      // An inline run's profileName is a display name that no config defines,
-      // so rebuild it from the base profile plus the persisted entries. Looking
-      // the display name up throws, which used to leave activeProfile undefined
-      // and fail the run the moment its panel completed.
-      const base = this.resolveProfile(
-        config,
-        active.inlinePanel?.length
-          ? active.baseProfileName
-          : active.profileName,
-      ).profile;
-      this.activeProfile = active.inlinePanel?.length
-        ? buildInlinePanelProfile(base, active.inlinePanel)
-        : base;
-      this.configWarning = undefined;
-    } catch (error: unknown) {
-      const message = `Could not restore fusion profile "${active.profileName}": ${errorMessage(error)}`;
-      this.configWarning = message;
-      this.notify(ctx, message, "warning");
+    const lifecycleError = validateRestoredRunLifecycle(active);
+    if (lifecycleError) {
+      this.failActiveRun(lifecycleError);
+      this.notify(ctx, lifecycleError, "warning");
+      return this.runStore.getLastRunSummary();
     }
+
+    if (active.profileSnapshot) {
+      // The snapshot was schema-validated while deserializing the run. It is
+      // the source of truth for labels, quorum, synthesis, and judge spawning;
+      // config edits made while a run is active must not rewrite that run.
+      this.activeProfile = profileFromSnapshot(active.profileSnapshot);
+      this.configWarning = undefined;
+    } else {
+      try {
+        const config = await this.loadConfig(ctx);
+        // Backward compatibility for sessions written before profile snapshots.
+        // An inline run's display name has no config entry, so rebuild it from
+        // its base profile plus persisted inline entries.
+        const base = this.resolveProfile(
+          config,
+          active.inlinePanel?.length
+            ? active.baseProfileName
+            : active.profileName,
+        ).profile;
+        this.activeProfile = active.inlinePanel?.length
+          ? buildInlinePanelProfile(base, active.inlinePanel)
+          : base;
+        this.configWarning = undefined;
+      } catch (error: unknown) {
+        const message = `Could not restore legacy fusion profile "${active.profileName}": ${errorMessage(error)}`;
+        this.configWarning = message;
+        this.notify(ctx, message, "warning");
+      }
+    }
+    const panelSlotError = validateFusionRunPanelSlots(
+      active,
+      this.activeProfile?.panel.length ?? 0,
+    );
+    if (panelSlotError) {
+      this.failActiveRun(panelSlotError);
+      this.notify(ctx, panelSlotError, "warning");
+      return this.runStore.getLastRunSummary();
+    }
+
     publishFusionStatus(ctx, active);
     this.ensureReconcileLoop();
     await this.reconcileActiveRun();
@@ -570,6 +664,7 @@ export class FusionOrchestrator {
       eventPayload: payload,
     });
     if (snapshot.resultArtifactPending) return { status: "ignored" };
+    this.persistVerifiedPanelResults(active, profile, snapshot.statusPayload);
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
@@ -589,6 +684,9 @@ export class FusionOrchestrator {
     const extracted = extractPanelResults(lifecyclePayload, {
       panel: profile.panel,
       limit: profile.panel.length,
+      ...(snapshot.resultSource === "event"
+        ? { requireStableSlotIdentity: true }
+        : {}),
     });
     if (!extracted.ok) {
       return this.failActiveRun(
@@ -601,7 +699,13 @@ export class FusionOrchestrator {
       snapshot.statusPayload,
       profile,
       lifecyclePayload,
-      { allowedTrailingResults: 1 },
+      {
+        allowedTrailingResults: 1,
+        ...(isWorkflowDeadline(lifecyclePayload) ||
+        isWorkflowDeadline(snapshot.statusPayload)
+          ? { terminalizeRunning: true }
+          : {}),
+      },
     );
     if (!observedPanels.ok) {
       return this.failActiveRun(
@@ -613,6 +717,26 @@ export class FusionOrchestrator {
       observedPanels.outputs,
       observedPanels.failures,
     );
+
+    // A legacy workflow may contain an embedded judge result even when the
+    // current persisted quorum policy would not permit synthesis. Apply the
+    // same completion decision as modern panel-only runs before accepting it.
+    const completion = decidePanelCompletion({
+      run: updated,
+      profile,
+      panelOutputs: observedPanels.outputs,
+      panelFailures: observedPanels.failures,
+      fallbackJudge: true,
+    });
+    if (completion.kind === "fail") {
+      return this.failActiveRun(completion.error, completion.report);
+    }
+    if (completion.kind === "complete") {
+      this.runStore.updateRun(updated.id, {
+        completionQuality: completionQuality(profile, observedPanels.outputs, observedPanels.failures),
+      });
+      return this.completeActiveRun(completion.report);
+    }
 
     const judgePayload =
       hasJudgeResult(snapshot.resultPayload, profile.panel.length)
@@ -641,6 +765,7 @@ export class FusionOrchestrator {
         ),
       );
       const observed = this.runStore.updateRun(updated.id, {
+        completionQuality: completionQuality(profile, observedPanels.outputs, observedPanels.failures),
         judgeObservation,
       });
       const callerContract =
@@ -694,17 +819,23 @@ export class FusionOrchestrator {
     });
     if (snapshot.resultArtifactPending) return { status: "ignored" };
 
+    const partial = this.persistVerifiedPanelResults(
+      active,
+      profile,
+      snapshot.statusPayload,
+    );
     const panelIsTerminal =
       snapshot.resultIsTerminal ||
       isTerminalSubagentState(extractSubagentState(snapshot.statusPayload));
     if (!active.panelStopReason && !panelIsTerminal) {
-      const partial = extractPanelResults(snapshot.statusPayload, {
-        panel: profile.panel,
-        completedOnly: true,
-      });
       if (
-        partial.ok &&
-        shouldStopWhenPanelAgrees(profile, partial.outputs, partial.failures)
+        partial &&
+        shouldStopWhenPanelAgrees(
+          profile,
+          partial.outputs,
+          partial.failures,
+          active.minimumSuccessfulPanelists,
+        )
       ) {
         return this.stopPanelAfterAgreement(
           active,
@@ -733,6 +864,11 @@ export class FusionOrchestrator {
     const workflowStoppedIndices = extractWorkflowStoppedPanelIndices(
       lifecyclePayload,
     );
+    if (workflowStoppedIndices.some((index) => index >= profile.panel.length)) {
+      return this.failActiveRun(
+        "Terminal subagents data referenced a panel slot outside the configured panel.",
+      );
+    }
     const stoppedPanelIndices =
       active.panelStoppedIndices ??
       (workflowStoppedIndices.length > 0 ? workflowStoppedIndices : undefined);
@@ -740,6 +876,9 @@ export class FusionOrchestrator {
       panel: profile.panel,
       limit: profile.panel.length,
       ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}),
+      ...(snapshot.resultSource === "event"
+        ? { requireStableSlotIdentity: true }
+        : {}),
     });
     if (!extracted.ok) {
       return this.failActiveRun(
@@ -752,17 +891,31 @@ export class FusionOrchestrator {
       snapshot.statusPayload,
       profile,
       lifecyclePayload,
-      { ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}) },
+      {
+        ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}),
+        ...(isWorkflowDeadline(lifecyclePayload) ||
+        isWorkflowDeadline(snapshot.statusPayload)
+          ? { terminalizeRunning: true }
+          : {}),
+      },
     );
     if (!observedPanels.ok) {
       return this.failActiveRun(
         `${observedPanels.error.message} (${observedPanels.error.path})`,
       );
     }
+    const reconciledFailures = withWorkflowDeadlineFailures(
+      observedPanels.failures,
+      isWorkflowDeadline(lifecyclePayload) ||
+        isWorkflowDeadline(snapshot.statusPayload)
+        ? extractSubagentFailure(snapshot.statusPayload) ??
+            extractSubagentFailure(lifecyclePayload)
+        : undefined,
+    );
     const stored = this.storePanelResults(
       active.id,
       observedPanels.outputs,
-      observedPanels.failures,
+      reconciledFailures,
     );
     const updated =
       workflowStoppedIndices.length > 0 && !active.panelStopReason
@@ -776,7 +929,7 @@ export class FusionOrchestrator {
       updated,
       profile,
       observedPanels.outputs,
-      observedPanels.failures,
+      reconciledFailures,
       { fallbackJudge: false },
     );
   }
@@ -854,10 +1007,16 @@ export class FusionOrchestrator {
       return this.failActiveRun(decision.error, decision.report);
     }
     if (decision.kind === "complete") {
+      this.runStore.updateRun(run.id, {
+        completionQuality: completionQuality(profile, panelOutputs, panelFailures),
+      });
       return this.completeActiveRun(decision.report);
     }
 
     try {
+      this.runStore.updateRun(run.id, {
+        spawnIntent: { stage: "judge", requestedAt: Date.now() },
+      });
       const spawnResult = await this.rpc.spawn(decision.params);
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
@@ -870,13 +1029,23 @@ export class FusionOrchestrator {
         await this.stopOrphanedRun(judgeRunId, "judge");
         return { status: "ignored" };
       }
-      const nextRun = this.runStore.updateRun(run.id, {
-        phase: "judge",
-        judgeRunId,
-        ...(judgeAsyncDir ? { judgeAsyncDir } : {}),
-        panelOutputs: [...panelOutputs],
-        panelFailures: [...panelFailures],
-      });
+      let nextRun: FusionRun;
+      try {
+        nextRun = this.runStore.updateRun(run.id, {
+          spawnIntent: null,
+          phase: "judge",
+          completionQuality: completionQuality(profile, panelOutputs, panelFailures),
+          judgeRunId,
+          ...(judgeAsyncDir ? { judgeAsyncDir } : {}),
+          panelOutputs: [...panelOutputs],
+          panelFailures: [...panelFailures],
+        });
+      } catch (persistenceError: unknown) {
+        // As for the panel, never leave a remotely started synthesis run
+        // alive when recording its public ID failed.
+        await this.stopOrphanedRun(judgeRunId, "judge");
+        throw persistenceError;
+      }
       publishFusionStatus(this.context, nextRun);
       this.notify(
         this.context,
@@ -1005,7 +1174,7 @@ export class FusionOrchestrator {
         this.context,
         input.run,
         progress,
-        deriveFusionStatusPhase(input.run, statusPayload),
+        deriveFusionStatusPhase(input.run, statusPayload, this.activeProfile),
       );
     }
 
@@ -1015,23 +1184,20 @@ export class FusionOrchestrator {
     const eventIsTerminal =
       isTerminalSubagentState(extractSubagentState(input.eventPayload)) ||
       isTerminalFusionProgress(input.eventPayload);
-    const eventHasResults = hasResultsArray(input.eventPayload);
-    if (eventPayloadMatches && eventHasResults) {
-      return {
-        statusPayload,
-        resultPayload: input.eventPayload,
-        resultIsTerminal: eventIsTerminal || statusIsTerminal,
-      };
-    }
-
+    const eventHasResults = hasExplicitResultsArray(input.eventPayload);
+    // Completion events are compact and can truncate long inline outputs. A
+    // result artifact is the complete terminal record, so select it before an
+    // event and use it as the reconciliation snapshot as well. Otherwise a
+    // partial status/event could discard verified slots or the judge end tag.
     const artifactResult = readSubagentResultArtifact({
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
     });
-    if (hasResultsArray(artifactResult)) {
+    if (hasExplicitResultsArray(artifactResult)) {
       return {
-        statusPayload,
+        statusPayload: artifactResult,
         resultPayload: artifactResult,
+        resultSource: "artifact",
         resultIsTerminal: true,
       };
     }
@@ -1047,10 +1213,20 @@ export class FusionOrchestrator {
       };
     }
 
-    if (hasResultsArray(statusPayload)) {
+    if (eventPayloadMatches && eventHasResults) {
+      return {
+        statusPayload,
+        resultPayload: input.eventPayload,
+        resultSource: "event",
+        resultIsTerminal: eventIsTerminal || statusIsTerminal,
+      };
+    }
+
+    if (hasExplicitResultsArray(statusPayload)) {
       return {
         statusPayload,
         resultPayload: statusPayload,
+        resultSource: "status",
         resultIsTerminal: statusIsTerminal,
       };
     }
@@ -1074,14 +1250,64 @@ export class FusionOrchestrator {
     return { statusPayload, resultIsTerminal: false };
   }
 
+  /** Persists every terminal child slot observed while the workflow continues. */
+  private persistVerifiedPanelResults(
+    run: FusionRun,
+    profile: FusionProfile,
+    statusPayload: unknown,
+  ): ExtractPanelResultsSuccess | undefined {
+    if (statusPayload === undefined) return undefined;
+    const partial = extractPanelResults(statusPayload, {
+      panel: profile.panel,
+      completedOnly: true,
+      limit: profile.panel.length,
+    });
+    if (!partial.ok) return undefined;
+    if (partial.outputs.length > 0 || partial.failures.length > 0) {
+      this.storePanelResults(run.id, partial.outputs, partial.failures);
+    }
+    return partial;
+  }
+
   private storePanelResults(
     runId: string,
     panelOutputs: readonly PanelOutput[],
     panelFailures: readonly FailedPanelSummary[],
   ): FusionRun {
+    // Lifecycle status is append-only in intent but not guaranteed to repeat
+    // older slots on every poll. Keep persisted verified slots until a newer
+    // observation for that exact stable index supersedes them.
+    const existing = this.runStore.getActiveRun();
+    const slots = new Map<
+      number,
+      { output?: PanelOutput; failure?: FailedPanelSummary }
+    >();
+    for (const output of existing?.panelOutputs ?? []) {
+      slots.set(output.index, { output });
+    }
+    for (const failure of existing?.panelFailures ?? []) {
+      slots.set(failure.index, { failure });
+    }
+    for (const output of panelOutputs) slots.set(output.index, { output });
+    for (const failure of panelFailures) slots.set(failure.index, { failure });
+    const mergedOutputs = Array.from(slots.values())
+      .flatMap((slot) => (slot.output ? [slot.output] : []))
+      .sort((left, right) => left.index - right.index);
+    const mergedFailures = Array.from(slots.values())
+      .flatMap((slot) => (slot.failure ? [slot.failure] : []))
+      .sort((left, right) => left.index - right.index);
+    // Status polling repeats complete snapshots. Persist only a material slot
+    // change so a long-running restore does not append identical session data.
+    if (
+      existing?.id === runId &&
+      sameSnapshot(existing.panelOutputs, mergedOutputs) &&
+      sameSnapshot(existing.panelFailures, mergedFailures)
+    ) {
+      return existing;
+    }
     return this.runStore.updateRun(runId, {
-      panelOutputs: [...panelOutputs],
-      panelFailures: [...panelFailures],
+      panelOutputs: mergedOutputs,
+      panelFailures: mergedFailures,
     });
   }
 
@@ -1112,6 +1338,12 @@ export class FusionOrchestrator {
         ...(active.chainRunId ? { chainRunId: active.chainRunId } : {}),
         ...(active.panelRunId ? { panelRunId: active.panelRunId } : {}),
         ...(active.judgeRunId ? { judgeRunId: active.judgeRunId } : {}),
+        recovery: {
+          retryDeferred: true,
+          failedPanelIndices: storedPanelFailures(active)
+            .map((failure) => failure.index)
+            .sort((left, right) => left - right),
+        },
         report,
         error,
       });
@@ -1197,6 +1429,124 @@ export class FusionOrchestrator {
   ): void {
     ctx?.ui.notify(message, type);
   }
+}
+
+function sameSnapshot<T>(
+  left: readonly T[] | undefined,
+  right: readonly T[],
+): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right);
+}
+
+/** Captures only settings that can affect post-restart reconciliation/reporting. */
+function snapshotProfile(profile: FusionProfile): FusionProfileSnapshot {
+  return {
+    panel: profile.panel.map((member) => ({ ...member })),
+    judge: { ...profile.judge },
+    minimumSuccessfulPanelists: resolveMinimumSuccessfulPanelists(
+      profile.minimumSuccessfulPanelists,
+      profile.panel.length,
+    ),
+    ...(profile.context !== undefined ? { context: profile.context } : {}),
+    ...(profile.stopWhenPanelAgrees !== undefined
+      ? { stopWhenPanelAgrees: profile.stopWhenPanelAgrees }
+      : {}),
+    ...(profile.blindPanelLabels !== undefined
+      ? { blindPanelLabels: profile.blindPanelLabels }
+      : {}),
+    ...(profile.judgeToolBudget !== undefined
+      ? {
+          judgeToolBudget: {
+            ...profile.judgeToolBudget,
+            ...(Array.isArray(profile.judgeToolBudget.block)
+              ? { block: [...profile.judgeToolBudget.block] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(profile.synthesis !== undefined ? { synthesis: profile.synthesis } : {}),
+  };
+}
+
+function profileFromSnapshot(snapshot: FusionProfileSnapshot): FusionProfile {
+  return {
+    panel: snapshot.panel.map((member) => ({ ...member })),
+    judge: { ...snapshot.judge },
+    minimumSuccessfulPanelists: snapshot.minimumSuccessfulPanelists,
+    ...(snapshot.context !== undefined ? { context: snapshot.context } : {}),
+    ...(snapshot.stopWhenPanelAgrees !== undefined
+      ? { stopWhenPanelAgrees: snapshot.stopWhenPanelAgrees }
+      : {}),
+    ...(snapshot.blindPanelLabels !== undefined
+      ? { blindPanelLabels: snapshot.blindPanelLabels }
+      : {}),
+    ...(snapshot.judgeToolBudget !== undefined
+      ? {
+          judgeToolBudget: {
+            ...snapshot.judgeToolBudget,
+            ...(Array.isArray(snapshot.judgeToolBudget.block)
+              ? { block: [...snapshot.judgeToolBudget.block] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(snapshot.synthesis !== undefined ? { synthesis: snapshot.synthesis } : {}),
+  };
+}
+
+function completionQuality(
+  profile: FusionProfile,
+  outputs: readonly PanelOutput[],
+  failures: readonly FailedPanelSummary[],
+): "complete" | "partial" {
+  return outputs.length === profile.panel.length ||
+    (profile.stopWhenPanelAgrees === true &&
+      failures.length > 0 &&
+      failures.every((failure) => failure.reason === "stopped-after-agreement"))
+    ? "complete"
+    : "partial";
+}
+
+function validateStartArgs(args: ParsedFusionArgs): string | undefined {
+  if (typeof args.prompt !== "string" || !args.prompt.trim()) {
+    return "Fusion prompt must not be blank.";
+  }
+  if (args.profile !== undefined && !args.profile.trim()) {
+    return "Fusion profile must not be blank.";
+  }
+  if (
+    args.panel !== undefined &&
+    (args.panel.length === 0 || args.panel.some((entry) => !entry.trim()))
+  ) {
+    return "Fusion panel must contain at least one non-blank entry.";
+  }
+  return undefined;
+}
+
+function hasUnresolvedSpawnIntent(run: FusionRun): boolean {
+  if (!run.spawnIntent) return false;
+  return run.spawnIntent.stage === "panel"
+    ? !run.panelRunId && !run.chainRunId
+    : !run.judgeRunId;
+}
+
+/**
+ * A restored nonterminal phase without the remote ID cannot be reconciled.
+ * Spawn intents are handled first so their more specific no-replay failure is
+ * preserved; all other incomplete records are terminalized rather than left
+ * active forever.
+ */
+function validateRestoredRunLifecycle(run: FusionRun): string | undefined {
+  if (run.phase === "judge" && !run.judgeRunId) {
+    return "Fusion recovery stopped: judge phase has no persisted judge run ID.";
+  }
+  if (run.phase === "chain" && !run.chainRunId) {
+    return "Fusion recovery stopped: chain phase has no persisted chain run ID.";
+  }
+  if (run.phase === "panel" && !run.panelRunId && !run.chainRunId) {
+    return "Fusion recovery stopped: panel phase has no persisted panel run ID.";
+  }
+  return undefined;
 }
 
 export function extractSubagentRunId(payload: unknown): string | undefined {
@@ -1303,14 +1653,17 @@ function formatFusionStatusReport(input: {
     );
     lines.push(`Profile: ${input.active.profileName}`);
     lines.push(`Phase: ${input.details?.phaseLabel ?? input.active.phase}`);
+    appendEffectiveTimeouts(lines, input.active);
     if (input.active.chainRunId)
       lines.push(`Chain run: ${input.active.chainRunId}`);
     else if (input.active.panelRunId)
       lines.push(`Panel run: ${input.active.panelRunId}`);
     if (input.active.judgeRunId) {
-      lines.push(
-        `${input.active.chainRunId ? "Fallback judge run" : "Judge run"}: ${input.active.judgeRunId}`,
-      );
+      const synthesisLabel =
+        input.details?.fallbackJudge?.label ??
+        input.details?.judge?.label ??
+        (input.active.chainRunId ? "Fallback judge" : "Judge");
+      lines.push(`${synthesisLabel} run: ${input.active.judgeRunId}`);
     }
     lines.push(
       `Progress: ${input.progress ? formatProgressCounts(input.progress) : "unknown"}`,
@@ -1322,6 +1675,7 @@ function formatFusionStatusReport(input: {
     lines.push(`Prompt: ${firstLine(input.last.prompt)}`);
     lines.push(`Profile: ${input.last.profileName}`);
     lines.push(`Phase: ${input.last.phase}`);
+    appendEffectiveTimeouts(lines, input.last);
     if (input.last.chainRunId)
       lines.push(`Chain run: ${input.last.chainRunId}`);
     else if (input.last.panelRunId)
@@ -1341,6 +1695,20 @@ function formatFusionStatusReport(input: {
     lines.push("Warnings:", ...input.warnings.map((warning) => `- ${warning}`));
   }
   return lines.join("\n");
+}
+
+function appendEffectiveTimeouts(
+  lines: string[],
+  run: Pick<FusionRun, "effectiveTimeouts">,
+): void {
+  const timeouts = run.effectiveTimeouts;
+  if (!timeouts) return;
+  lines.push(
+    `Deadlines: panelist ${timeouts.panelistTimeoutMs}ms, panel ${timeouts.panelTimeoutMs}ms (+${timeouts.panelGraceMs}ms grace), judge ${timeouts.judgeTimeoutMs}ms`,
+  );
+  if (timeouts.usesLegacyTimeout) {
+    lines.push("Warning: legacy timeoutMs supplied one or more effective deadlines.");
+  }
 }
 
 function appendStatusDetails(
@@ -1397,7 +1765,7 @@ function buildFusionStatusDetails(
 ): FusionStatusDetails {
   const details: FusionStatusDetails = {
     prompt: run.prompt,
-    phaseLabel: deriveFusionStatusPhase(run, payload),
+    phaseLabel: deriveFusionStatusPhase(run, payload, profile),
   };
   if (!profile) return details;
 
@@ -1410,7 +1778,7 @@ function buildFusionStatusDetails(
       storedPanelFailures(run),
     );
     details.fallbackJudge = {
-      label: run.chainRunId ? "Fallback judge" : "Judge",
+      label: synthesisStatusLabel(profile, Boolean(run.chainRunId)),
       ...(judgeModel ? { model: judgeModel } : {}),
       status: describeStandaloneRunStatus(payload),
     };
@@ -1439,7 +1807,7 @@ function buildFusionStatusDetails(
   const judgeActivity = describeStepActivity(steps[profile.panel.length]);
   const judgeMetrics = describeStepMetrics(steps[profile.panel.length]);
   details.judge = {
-    label: "Judge",
+    label: synthesisStatusLabel(profile),
     ...(judgeModel ? { model: judgeModel } : {}),
     status: describeChainJudgeStatus(steps[profile.panel.length], panelists),
     ...([judgeActivity, judgeMetrics].filter(Boolean).length > 0
@@ -1452,9 +1820,10 @@ function buildFusionStatusDetails(
 function deriveFusionStatusPhase(
   run: Pick<FusionRun, "phase" | "chainRunId">,
   payload: unknown,
+  profile?: Pick<FusionProfile, "panel" | "synthesis">,
 ): string {
   if (run.phase === "judge") {
-    return run.chainRunId ? "fallback judge" : "judge";
+    return synthesisStatusLabel(profile, Boolean(run.chainRunId)).toLowerCase();
   }
   if (run.phase !== "chain") return run.phase;
 
@@ -1462,7 +1831,7 @@ function deriveFusionStatusPhase(
   if (steps.length === 0) return "chain";
   const judgeStatus = normalizeStatusLabel(steps.at(-1));
   if (judgeStatus === "running" || judgeStatus === "completed") {
-    return "judge";
+    return synthesisStatusLabel(profile).toLowerCase();
   }
   const panelSteps = steps.slice(0, -1);
   if (panelSteps.some((step) => normalizeStatusLabel(step) === "running")) {
@@ -1473,9 +1842,21 @@ function deriveFusionStatusPhase(
       const status = normalizeStatusLabel(step);
       return status === "completed" || status === "failed";
     });
-    return allPanelsFinished ? "judge" : "panel";
+    return allPanelsFinished
+      ? synthesisStatusLabel(profile).toLowerCase()
+      : "panel";
   }
   return "panel";
+}
+
+function synthesisStatusLabel(
+  profile: Pick<FusionProfile, "panel" | "synthesis"> | undefined,
+  fallback = false,
+): "Judge" | "Fallback judge" | "Composer" | "Fallback composer" {
+  const base = profile && resolveSynthesisMode(profile) === "merge"
+    ? "Composer"
+    : "Judge";
+  return fallback ? `Fallback ${base.toLowerCase()}` as "Fallback judge" | "Fallback composer" : base;
 }
 
 function buildCompletedPanelStatusLines(
@@ -1635,6 +2016,10 @@ function findResultsArray(payload: unknown): readonly unknown[] | undefined {
   return undefined;
 }
 
+function hasExplicitResultsArray(payload: unknown): boolean {
+  return findResultsArray(payload) !== undefined;
+}
+
 function hasResultsArray(payload: unknown): boolean {
   return (findResultsArray(payload)?.length ?? 0) > 0;
 }
@@ -1745,6 +2130,31 @@ function extractWorkflowStoppedPanelIndices(payload: unknown): number[] {
   return [];
 }
 
+function withWorkflowDeadlineFailures(
+  failures: readonly FailedPanelSummary[],
+  deadlineError: string | undefined,
+): FailedPanelSummary[] {
+  if (!deadlineError) return [...failures];
+  return failures.map((failure) => ({
+    ...failure,
+    summary: failure.summary.includes(deadlineError)
+      ? failure.summary
+      : `${deadlineError}\n${failure.summary}`,
+    reason: failure.reason ?? "timeout",
+  }));
+}
+
+function isWorkflowDeadline(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  if (payload.timedOut === true) return true;
+  const error = firstNonBlankString(payload.error, payload.errorMessage);
+  if (error && /(?:workflow.*(?:timed out|timeout)|(?:timed out|timeout).*workflow)/i.test(error)) {
+    return true;
+  }
+  if (isRecord(payload.details) && isWorkflowDeadline(payload.details)) return true;
+  return isRecord(payload.data) ? isWorkflowDeadline(payload.data) : false;
+}
+
 function extractSubagentFailure(payload: unknown): string | undefined {
   if (!isRecord(payload)) return undefined;
   const direct = firstNonBlankString(payload.error, payload.errorMessage);
@@ -1823,9 +2233,15 @@ function shouldStopWhenPanelAgrees(
   profile: FusionProfile,
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
+  persistedPolicy?: FusionRun["minimumSuccessfulPanelists"],
 ): boolean {
+  const required = resolveMinimumSuccessfulPanelists(
+    persistedPolicy ?? profile.minimumSuccessfulPanelists,
+    profile.panel.length,
+  );
   return (
     profile.stopWhenPanelAgrees === true &&
+    outputs.length >= required &&
     hasStrongPanelAgreement(
       outputs,
       outputs.length + failures.length,

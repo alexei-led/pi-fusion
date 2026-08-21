@@ -29,7 +29,7 @@ prompts, or both. **Mixing models is the main lever.** The config that
 `/fusion init` writes sets no `model`. By default you therefore get one model in
 three roles. Give each member its own `model` to get the real benefit.
 
-Fusion launches new panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. Older runs created as a single `pi-subagents` chain remain supported when restored.
+Fusion launches new panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. At start, Fusion persists a small resolved profile snapshot (panel labels/models/roles, quorum, synthesis and judge settings) and uses it after restart, so later config edits cannot change an active run's reconciliation, report, or synthesis spawn. Older runs created before this snapshot, including single-chain runs, retain the legacy config-lookup restore fallback. Before each public RPC spawn, Fusion persists a spawn intent. If Pi crashes after that RPC might have started but before its remote run ID is saved, restore fails that local run with an explicit recovery warning instead of spawning a possible duplicate (public RPC cannot safely adopt by correlation key). A corrupt newest run snapshot is likewise refused rather than reviving an older active run.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -152,18 +152,21 @@ Profile:
 
 - `panel`: one or more panel members
 - `judge`: judge agent config
-- `concurrency`: max parallel panelists. When `stopWhenPanelAgrees` is on, Fusion evaluates the first two panelists before launching another batch so it can avoid work after strong agreement.
-- `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It remains supported as the fallback for both stages. New profiles default to 15 minutes through the stage-specific fields; existing explicit `timeoutMs` values are preserved. Use a stage-specific field when panel and synthesis need different deadlines.
-- `panelTimeoutMs`: panel workflow wall-clock timeout. It overrides `timeoutMs` for the panel. The default profile uses 15 minutes.
-- `judgeTimeoutMs`: synthesis workflow wall-clock timeout. It overrides `timeoutMs` for the judge or composer. The default profile uses 15 minutes.
+- `concurrency`: max parallel panelists. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
+- `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It is a fallback only; `/fusion status` warns when it supplied an effective deadline.
+- `panelistTimeoutMs`: per-panelist deadline. Fusion caps it below the enclosing panel deadline.
+- `panelTimeoutMs`: panel workflow wall-clock deadline.
+- `panelGraceMs`: reserved time between a child deadline and the enclosing panel deadline (default 5 seconds).
+- `judgeTimeoutMs`: synthesis workflow deadline. For every deadline the precedence is per-run CLI/tool/RPC override, stage profile field, legacy `timeoutMs`, then the built-in default.
+- `minimumSuccessfulPanelists`: `"majority"` (default), `"all"`, or a positive number. It is the panel quorum for synthesis. For a multi-member panel, numeric `1` is effectively `2`: synthesis needs two candidate answers. A one-member panel remains a direct single-panel result.
 - `context`: `fresh` or `fork`
-- `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet. All four conditions must hold: two or more finished panelists give the same normalized recommendation, every one of them reports `high` confidence, none of them asks for more evidence, and work remains. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
+- `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet only after the configured synthesis quorum is already met. The agreement conditions also require two or more finished panelists to give the same normalized recommendation, every one to report `high` confidence, none to ask for more evidence, and work to remain. Thus an `"all"` quorum never skips unfinished panelists. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
 - `synthesis`: rarely needed. Inferred from the panel — any member with a `question` means `merge`, otherwise `select`. Set it only to override that. See [Synthesis modes](#synthesis-modes).
 - `blindPanelLabels`: optional boolean, default `false`. When it is on, the judge sees `Candidate A`, `Candidate B`, and so on, instead of the configured labels. Fusion also withholds agent names and artifact paths, because they contain the member id. A role label reads as an authority cue before the judge compares any content. Your report always shows the real names.
 - `panelToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` applied to each panelist. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. After `hard`, the selected tools are blocked so the panelist can still finalise.
 - `judgeToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` for the judge or composer. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. `soft` is a nudge. After `hard`, the selected tools are blocked so synthesis can still finalise. `soft` or `hard` must be positive integers when present, and `soft` must not be larger than `hard` when both are present. Legacy soft-only budgets remain valid.
 
-Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion keeps completed panel slots and failed panel slots separate, never relabels a compact completion payload, and fails closed when lifecycle sources disagree. A timed-out judge never becomes a panel-only success. Synthesis also fails closed when any configured panelist is missing or failed, unless the missing slots were explicitly stopped after strong agreement.
+Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion durably keeps verified completed slots, turns terminal running/interrupted slots into typed failures, and fails closed when lifecycle sources genuinely disagree. A timed-out judge never becomes a panel-only success. When at least one valid panel result exists, Fusion produces either synthesis at quorum or an explicitly unsynthesized partial report below quorum; failures and timeouts are disclosed as missing coverage. Only zero successful outputs fail outright. Fusion never automatically retries a failed panelist, restarts a panel, or extends a deadline.
 
 Panel member:
 
@@ -294,9 +297,7 @@ run does not fail, so a mismatch appears as an empty report, not as an error.
 }
 ```
 
-Under `merge`, one surviving panelist still goes to the composer. Fusion does
-not return that answer directly. One facet is not the answer, and the report must
-name what is missing.
+Under `merge`, surviving outputs at quorum go to the composer even when some facets are unavailable. The composer must name uncovered facets rather than presenting complete coverage. Below quorum Fusion posts an explicitly partial coverage report; it never presents one facet as the full answer.
 
 Judge:
 
@@ -483,7 +484,9 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 - raise `panelTimeoutMs` or `judgeTimeoutMs` for slower models
 - keep `panelToolBudget` and `judgeToolBudget` bounded so agents finalise before the deadline
 - inspect `/fusion status`; panel failures and the workflow timeout must both be present
-- retry only after the run is terminal
+- a timeout ends that child/run attempt; Fusion does not retry panelists, restart the panel, or extend deadlines
+- failed-only retry is deliberately not exposed yet: terminal failure state persists the failed panel slot indices for recovery/provenance, but `/fusion` starts a new independent run rather than replaying only those slots
+- retry manually only after the run is terminal
 
 Run is stuck or no longer useful:
 
@@ -501,4 +504,4 @@ Notes:
 
 - `Panel run` is the normal panel phase for new Fusion runs.
 - `Judge run` is the normal synthesis phase for new runs. `Fallback judge run` appears only while restoring a legacy chain that completed without its judge result.
-- If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory.
+- If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory. The full result artifact is preferred over compact completion events.

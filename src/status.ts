@@ -52,7 +52,7 @@ export function formatFusionStatusText(
     run.phase === "judge" ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
   const phase = phaseLabel ?? run.phase;
   if (progress) {
-    return `fusion: panel · ${formatProgressCounts(progress)} · ${run.profileName}`;
+    return `fusion: ${phase} · ${formatProgressCounts(progress)} · ${run.profileName}`;
   }
   if (activeRunId) {
     return `fusion: ${phase} · ${run.profileName} · ${activeRunId}`;
