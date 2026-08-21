@@ -20,8 +20,11 @@ export function reconcileIndexedLifecycleResult(
 
   const statusSteps = findLifecycleArray(statusPayload, "steps");
   const rawStatusResults = findLifecycleArray(statusPayload, "results");
-  const statusResults =
-    statusSteps ?? (rawStatusResults?.length ? rawStatusResults : undefined);
+  const statusResults = authoritativeStatusLifecycleArray(
+    statusPayload,
+    statusSteps,
+    rawStatusResults,
+  );
   const statusResult = statusResults?.[index];
   if (statusResults && !isRecord(statusResult)) {
     return `Subagents event includes ${label} result ${index + 1}, but status does not.`;
@@ -38,6 +41,8 @@ export interface ReconcilePanelResultsOptions {
   allowedTrailingResults?: number;
   /** Indices intentionally absent from status after early agreement. */
   stoppedPanelIndices?: readonly number[];
+  /** A workflow deadline terminalized running child slots as timeout failures. */
+  terminalizeRunning?: boolean;
 }
 
 /**
@@ -64,8 +69,14 @@ export function reconcilePanelResults(
 
   const rawStatusSteps = findLifecycleArray(statusPayload, "steps");
   const rawStatusResults = findLifecycleArray(statusPayload, "results");
-  const rawStatus =
-    rawStatusSteps ?? (rawStatusResults?.length ? rawStatusResults : undefined);
+  // Preserve an explicit terminal `results: []`: it is authoritative even
+  // when it contains no child results. A running empty poll, however, is not
+  // a terminal lifecycle assertion and can race a completion event.
+  const rawStatus = authoritativeStatusLifecycleArray(
+    statusPayload,
+    rawStatusSteps,
+    rawStatusResults,
+  );
   if (!rawStatus) {
     if (eventResults.outputs.length + eventResults.failures.length !== expectedCount) {
       return error(
@@ -85,7 +96,9 @@ export function reconcilePanelResults(
 
   const statusResults = extractPanelResults(statusPayload, {
     panel: profile.panel,
-    completedOnly: true,
+    ...(options.terminalizeRunning
+      ? { terminalizeRunning: true }
+      : { completedOnly: true }),
     limit: expectedCount,
     ...(options.stoppedPanelIndices
       ? { stoppedPanelIndices: options.stoppedPanelIndices }
@@ -100,6 +113,25 @@ export function reconcilePanelResults(
 
   const statusCount =
     statusResults.outputs.length + statusResults.failures.length;
+  if (
+    !options.terminalizeRunning &&
+    eventResults.outputs.length + eventResults.failures.length === expectedCount
+  ) {
+    const eventSucceeded = new Set(eventResults.outputs.map((item) => item.index));
+    const statusSucceeded = new Set(statusResults.outputs.map((item) => item.index));
+    for (let index = 0; index < expectedCount; index++) {
+      const eventKnown =
+        eventSucceeded.has(index) || eventResults.failures.some((item) => item.index === index);
+      const statusKnown =
+        statusSucceeded.has(index) || statusResults.failures.some((item) => item.index === index);
+      if (eventKnown && statusKnown && eventSucceeded.has(index) !== statusSucceeded.has(index)) {
+        return error(
+          `Subagents event and status disagree about panel result ${index + 1}.`,
+          `$.steps[${index}]`,
+        );
+      }
+    }
+  }
   const eventCount =
     eventResults.outputs.length + eventResults.failures.length;
   const statusIndices = new Set([
@@ -113,7 +145,14 @@ export function reconcilePanelResults(
   ).filter((index) => !statusIndices.has(index));
 
   if (statusCount === expectedCount) {
-    return preserveAgreementReasons(statusResults, eventResults);
+    return options.terminalizeRunning
+      ? mergeTerminalDeadlineResults(
+          eventResults,
+          statusResults,
+          statusPayload,
+          resultPayload,
+        )
+      : preserveAgreementReasons(statusResults, eventResults);
   }
 
   const missingWereStopped =
@@ -135,6 +174,124 @@ export function reconcilePanelResults(
   }
 
   return mergeObservations(eventResults, statusResults);
+}
+
+/**
+ * Status is normally authoritative. At a workflow deadline it can still show
+ * a child as running even though the completion artifact contains that child's
+ * verified final output. Keep that verified output, normalize only genuinely
+ * unfinished slots, and retain status observations/failure details.
+ */
+function mergeTerminalDeadlineResults(
+  event: ExtractPanelResultsSuccess,
+  status: ExtractPanelResultsSuccess,
+  statusPayload: unknown,
+  eventPayload: unknown,
+): ExtractPanelResultsSuccess {
+  const eventOutputs = new Map(event.outputs.map((item) => [item.index, item]));
+  const eventFailures = new Map(event.failures.map((item) => [item.index, item]));
+  const statusOutputs = new Map(status.outputs.map((item) => [item.index, item]));
+  const statusFailures = new Map(status.failures.map((item) => [item.index, item]));
+  const replaceableSlots = deadlineEventReplacementSlots(
+    statusPayload,
+    eventPayload,
+  );
+  const outputs: PanelOutput[] = [];
+  const failures: FailedPanelSummary[] = [];
+  const maxIndex = Math.max(
+    ...[...eventOutputs.keys(), ...eventFailures.keys(), ...statusOutputs.keys(), ...statusFailures.keys()],
+    -1,
+  );
+  for (let index = 0; index <= maxIndex; index++) {
+    const eventOutput = eventOutputs.get(index);
+    const eventFailure = eventFailures.get(index);
+    const statusOutput = statusOutputs.get(index);
+    const statusFailure = statusFailures.get(index);
+
+    // A completed status slot is authoritative even when a stale compact
+    // event reports a failure. Event data can replace only a status slot that
+    // deadline handling normalized from a nonterminal state, and only when
+    // both records identify the same public panel-N slot.
+    if (!replaceableSlots.has(index)) {
+      if (statusOutput) outputs.push(statusOutput);
+      else if (statusFailure) failures.push(statusFailure);
+      continue;
+    }
+
+    if (eventOutput) {
+      outputs.push(withObservation(eventOutput, statusFailure?.observation));
+    } else if (eventFailure) {
+      failures.push(withObservation(eventFailure, statusFailure?.observation));
+    } else if (statusFailure) {
+      failures.push(statusFailure);
+    }
+  }
+  return { ok: true, outputs, failures, ...(event.runId ? { runId: event.runId } : {}) };
+}
+
+/**
+ * Deadline reconciliation never trusts compact-event array order: failed
+ * children can be omitted or arrive late. A compact event may replace only a
+ * status record terminalized from a nonterminal state when both explicitly
+ * name the same public workflow slot.
+ */
+function deadlineEventReplacementSlots(
+  statusPayload: unknown,
+  eventPayload: unknown,
+): ReadonlySet<number> {
+  const statusResults =
+    findLifecycleArray(statusPayload, "steps") ??
+    findLifecycleArray(statusPayload, "results");
+  const eventResults = findLifecycleArray(eventPayload, "results");
+  if (!statusResults || !eventResults) return new Set<number>();
+
+  const nonterminalStatusSlots = new Set<number>();
+  for (const result of statusResults) {
+    const slot = stablePanelSlot(result);
+    if (slot !== undefined && isNonterminalLifecycleResult(result)) {
+      nonterminalStatusSlots.add(slot);
+    }
+  }
+
+  const matchingEventSlots = new Set<number>();
+  for (const result of eventResults) {
+    const slot = stablePanelSlot(result);
+    if (slot !== undefined && nonterminalStatusSlots.has(slot)) {
+      matchingEventSlots.add(slot);
+    }
+  }
+  return matchingEventSlots;
+}
+
+function stablePanelSlot(result: unknown): number | undefined {
+  if (!isRecord(result)) return undefined;
+  // Result extraction already accepts these lifecycle fields as zero-based
+  // public slots. Keep deadline matching exactly aligned; a numeric 1 must
+  // mean panel slot 1, never a guessed one-based panel-1.
+  for (const candidate of [result.index, result.taskIndex, result.stepIndex]) {
+    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+      return candidate;
+    }
+  }
+  const key = firstString(
+    result.key,
+    result.taskKey,
+    result.stepKey,
+    result.agent,
+  );
+  const match = key?.match(/^panel-([1-9]\d*)$/);
+  return match ? Number(match[1]) - 1 : undefined;
+}
+
+function isNonterminalLifecycleResult(result: unknown): boolean {
+  if (!isRecord(result)) return false;
+  const status = firstString(result.status, result.state);
+  return (
+    status === "running" ||
+    status === "active" ||
+    status === "pending" ||
+    status === "queued"
+  );
 }
 
 function preserveAgreementReasons(
@@ -212,6 +369,46 @@ function findLifecycleArray(
   }
   if (isRecord(payload.data)) return findLifecycleArray(payload.data, key);
   return undefined;
+}
+
+function authoritativeStatusLifecycleArray(
+  payload: unknown,
+  steps: readonly unknown[] | undefined,
+  results: readonly unknown[] | undefined,
+): readonly unknown[] | undefined {
+  const lifecycle = steps ?? results;
+  if (!lifecycle || lifecycle.length > 0 || isTerminalLifecyclePayload(payload)) {
+    return lifecycle;
+  }
+  return undefined;
+}
+
+function isTerminalLifecyclePayload(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const state = firstString(payload.state, payload.status);
+  const textState = firstString(payload.text)?.match(
+    /(?:^|\n)(?:State|Status):\s*([^\n\r]+)/i,
+  )?.[1]?.trim();
+  if (
+    state === "complete" ||
+    textState === "complete" ||
+    textState === "completed" ||
+    textState === "done" ||
+    textState === "failed" ||
+    textState === "paused" ||
+    textState === "detached" ||
+    state === "completed" ||
+    state === "done" ||
+    state === "failed" ||
+    state === "paused" ||
+    state === "detached"
+  ) {
+    return true;
+  }
+  if (isRecord(payload.details) && isTerminalLifecyclePayload(payload.details)) {
+    return true;
+  }
+  return isRecord(payload.data) && isTerminalLifecyclePayload(payload.data);
 }
 
 function isFailedLifecycleResult(result: Record<string, unknown>): boolean {

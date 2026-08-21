@@ -76,10 +76,11 @@ better.
 ## After the call
 
 The tool returns at once. The panel and the synthesis step run in the background,
-and Fusion posts the report when they finish.
+and Fusion posts the report when they finish. A panel deadline can produce an explicitly partial report that names unavailable perspectives and timeout coverage gaps.
 
 - Do not call the tool again while a run is active. It returns a conflict with
   the id of the active run.
 - Do not summarize or predict the report. Wait for it.
 - To show progress or stop a run, tell the user to type `/fusion status` or
   `/fusion stop`. No tool does this.
+- Do not invoke another review automatically after a partial report or timeout. Fusion does not retry failed panelists; users can inspect `/fusion status` and manually rerun only after the current run is terminal.

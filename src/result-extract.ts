@@ -22,6 +22,10 @@ export interface ExtractPanelResultsOptions {
   panel?: readonly PanelMemberConfig[];
   limit?: number;
   completedOnly?: boolean;
+  /** On a terminal workflow deadline, running slots become typed failures. */
+  terminalizeRunning?: boolean;
+  /** Compact events need an explicit public workflow slot, never array order. */
+  requireStableSlotIdentity?: boolean;
   stoppedPanelIndices?: readonly number[];
 }
 
@@ -68,8 +72,32 @@ export function extractPanelResults(
     options.limit === undefined
       ? container.results
       : container.results.slice(0, options.limit);
-  for (const [index, rawResult] of results.entries()) {
+  const seenSlots = new Set<number>();
+  for (const [arrayIndex, rawResult] of results.entries()) {
     if (options.completedOnly && !isCompletedResult(rawResult)) continue;
+    const index = workflowSlotIndex(rawResult, arrayIndex, options);
+    if (index === undefined) {
+      return error(
+        "missing-result-field",
+        "Compact subagents result omitted a stable workflow slot identity.",
+        `${container.path}[${arrayIndex}]`,
+      );
+    }
+    if (options.limit !== undefined && index >= options.limit) {
+      return error(
+        "unknown-result-shape",
+        "Subagents result workflow slot is outside the configured panel.",
+        `${container.path}[${arrayIndex}]`,
+      );
+    }
+    if (seenSlots.has(index)) {
+      return error(
+        "unknown-result-shape",
+        "Subagents result repeated a workflow slot identity.",
+        `${container.path}[${arrayIndex}]`,
+      );
+    }
+    seenSlots.add(index);
     const child = normalizeChildResult(
       rawResult,
       index,
@@ -82,7 +110,7 @@ export function extractPanelResults(
   }
 
   for (const index of options.stoppedPanelIndices ?? []) {
-    if (index < results.length || index >= (options.limit ?? Infinity)) continue;
+    if (seenSlots.has(index) || index >= (options.limit ?? Infinity)) continue;
     const child = normalizeChildResult(
       {
         success: false,
@@ -97,6 +125,10 @@ export function extractPanelResults(
   }
 
   const runId = firstString(container.payload.runId, container.payload.id);
+  // Stable slot identity also gives consumers configuration order independent
+  // of compact-event ordering.
+  outputs.sort((left, right) => left.index - right.index);
+  failures.sort((left, right) => left.index - right.index);
   return {
     ok: true,
     outputs,
@@ -200,6 +232,31 @@ function findResultsContainer(
   );
 }
 
+function workflowSlotIndex(
+  rawResult: unknown,
+  fallback: number,
+  options: ExtractPanelResultsOptions,
+): number | undefined {
+  if (!options.requireStableSlotIdentity) return fallback;
+  if (!isRecord(rawResult)) return undefined;
+  for (const candidate of [rawResult.index, rawResult.taskIndex, rawResult.stepIndex]) {
+    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+      return candidate;
+    }
+  }
+  const key = firstString(
+    rawResult.key,
+    rawResult.taskKey,
+    rawResult.stepKey,
+    rawResult.agent,
+  );
+  // Workflow scripts name their public child slots panel-1, panel-2, etc.
+  // Never infer an omitted compact-event slot from its array position: compact
+  // completion events can be reordered or omit failed children.
+  const match = key?.match(/^panel-([1-9]\d*)$/);
+  return match ? Number(match[1]) - 1 : undefined;
+}
+
 function normalizeChildResult(
   rawResult: unknown,
   index: number,
@@ -230,7 +287,9 @@ function normalizeChildResult(
 
   const artifactPath = extractArtifactPath(rawResult);
   const sessionPath = firstString(rawResult.sessionPath, rawResult.sessionFile);
-  const status = classifyChildStatus(rawResult);
+  const terminalizedRunning =
+    options.terminalizeRunning === true && !isCompletedResult(rawResult);
+  const status = terminalizedRunning ? "failed" : classifyChildStatus(rawResult);
 
   if (status === "success") {
     const rawOutput = firstNonBlankString(
@@ -282,8 +341,11 @@ function normalizeChildResult(
       agent,
       summary: stoppedAfterAgreement
         ? "Stopped after strong panel agreement."
-        : failureSummary(rawResult, artifactPath),
+        : terminalizedRunning
+          ? "Panelist did not finish before the workflow deadline."
+          : failureSummary(rawResult, artifactPath),
       reason:
+        (terminalizedRunning ? "timeout" : undefined) ??
         failureReason(rawResult, stoppedAfterAgreement) ??
         fallbackFailureReason,
       observation,

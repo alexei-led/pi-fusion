@@ -47,7 +47,8 @@ test("fusionExtension starts and completes a run through pi-subagents RPC events
   await pi.runCommand("fusion", "compare APIs", ctx);
 
   assert.match(ctx.ui.lastStatus("fusion") ?? "", /panel-1/);
-  assert.equal(pi.entries.length, 2);
+  // start snapshot, durable pre-spawn intent, then returned panel ID
+  assert.equal(pi.entries.length, 3);
   assert.equal(pi.entries.at(-1)?.customType, FUSION_RUN_ENTRY_TYPE);
 
   pi.events.statusResults.set("panel-1", {
@@ -244,9 +245,29 @@ test("start_fusion_review exposes the parameters a skill can drive", () => {
   assert.ok(tool, "start_fusion_review must be registered");
   assert.deepEqual(
     Object.keys(tool.parameters.properties).sort(),
-    ["panel", "profile", "prompt"],
+    [
+      "judgeTimeoutMs",
+      "panel",
+      "panelGraceMs",
+      "panelTimeoutMs",
+      "panelistTimeoutMs",
+      "profile",
+      "prompt",
+    ],
   );
   assert.deepEqual(tool.parameters.required, ["prompt"]);
+  const promptSchema = tool.parameters.properties.prompt;
+  const panelSchema = tool.parameters.properties.panel;
+  const profileSchema = tool.parameters.properties.profile;
+  assert.ok(isRecord(promptSchema));
+  assert.ok(isRecord(panelSchema));
+  assert.ok(isRecord(panelSchema.items));
+  assert.ok(isRecord(profileSchema));
+  assert.equal(promptSchema.minLength, 1);
+  assert.equal(promptSchema.pattern, ".*\\S.*");
+  assert.equal(panelSchema.minItems, 1);
+  assert.equal(panelSchema.items.minLength, 1);
+  assert.equal(profileSchema.minLength, 1);
   // The description is what routes the model to the tool at all, so it must
   // cover both report shapes the skill advertises.
   assert.match(tool.description, /audit|breadth/i);

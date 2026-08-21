@@ -326,14 +326,40 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   if (value.timeoutMs !== undefined && !isPositiveInteger(value.timeoutMs))
     return false;
   if (
+    value.panelistTimeoutMs !== undefined &&
+    !isPositiveInteger(value.panelistTimeoutMs)
+  ) {
+    return false;
+  }
+  if (
     value.panelTimeoutMs !== undefined &&
     !isPositiveInteger(value.panelTimeoutMs)
   ) {
     return false;
   }
   if (
+    value.panelGraceMs !== undefined &&
+    !isPositiveInteger(value.panelGraceMs)
+  ) {
+    return false;
+  }
+  const panelTimeoutMs = value.panelTimeoutMs ?? value.timeoutMs ?? 900_000;
+  const panelGraceMs = value.panelGraceMs ?? 5_000;
+  // Never accept a configuration that would leave child panelists a 1ms
+  // timeout after deadline capping. Overrides receive the same validation when
+  // their effective values are resolved at run start.
+  if (panelGraceMs >= panelTimeoutMs) return false;
+  if (
     value.judgeTimeoutMs !== undefined &&
     !isPositiveInteger(value.judgeTimeoutMs)
+  ) {
+    return false;
+  }
+  if (
+    value.minimumSuccessfulPanelists !== undefined &&
+    value.minimumSuccessfulPanelists !== "majority" &&
+    value.minimumSuccessfulPanelists !== "all" &&
+    !isPositiveInteger(value.minimumSuccessfulPanelists)
   ) {
     return false;
   }

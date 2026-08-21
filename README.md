@@ -156,7 +156,7 @@ Other Pi extensions can control Fusion through the versioned event-bus contract
 Methods:
 
 - `ping` — return the RPC version and supported methods
-- `start` — requires `prompt` and a non-empty `operationId`. It accepts optional `profile` and versioned `outputContract` (`plan-review-v1`). Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
+- `start` — requires `prompt` and a non-empty `operationId`. It accepts optional `profile`, versioned `outputContract` (`plan-review-v1`), and positive-integer millisecond deadline overrides: `panelistTimeoutMs`, `panelTimeoutMs`, `panelGraceMs`, and `judgeTimeoutMs`. Reusing an operation ID returns the original run instead of starting another, including after Fusion restores the Pi session history.
 - `status` — return structured run state by `operationId`, `runId`, or the current/last run
 - `result` — return a terminal run and report. An active run returns `not_ready`
 - `cancel` — cancel the selected active run, or report that the selected terminal run was not cancelled
@@ -207,12 +207,13 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Config is optional. Defaults work. Use `/fusion init` when you want project config.
 - Project config lives at `.pi/fusion.json`. Global config lives at `~/.pi/agent/fusion.json`.
 - Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
-- Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events.
+- Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events. Verified panel outputs survive a panel deadline; unavailable perspectives and timeout failures are disclosed in a partial report when quorum is not met or coverage is incomplete.
+- Timeouts end the current child or workflow attempt. Fusion never automatically retries panelists, restarts a panel, or extends a deadline; start a new run manually after the terminal report.
 - `pi-fusion` does not own the footer.
 - Fusion sends your prompt and any inspected snippets to every panel model, and to the judge, through `pi-subagents`.
 - Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown. `$0.0000` is a known zero cost.
 - `Model` is lifecycle metadata. `Configured model` is the profile request. Both appear when the run differs from the request.
-- `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, evaluates panelists in pairs so it can avoid starting later work, records skipped panelists in the report, and still runs the judge.
+- `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, initially executes only the configured synthesis quorum (not always two) so it can avoid starting later work, records skipped panelists in the report, and still runs the judge.
 - Panel answers reach the judge in an order seeded from the run id, not in config order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
 - Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.

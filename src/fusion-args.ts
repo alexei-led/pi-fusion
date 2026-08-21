@@ -1,8 +1,8 @@
 import { FusionArgsError } from "./errors.js";
-import type { ParsedFusionArgs } from "./types.js";
+import type { FusionTimeoutOverrides, ParsedFusionArgs } from "./types.js";
 
 const FUSION_USAGE =
-  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> | /fusion status | /fusion stop | /fusion init.";
+  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.";
 
 export type FusionInlineCommand = "init" | "status" | "stop";
 
@@ -28,6 +28,13 @@ export function parseFusionArgs(
 
   let profile: string | undefined;
   let panel: string[] | undefined;
+  const timeoutOverrides: FusionTimeoutOverrides = {};
+  const timeoutOptions: Record<string, keyof FusionTimeoutOverrides> = {
+    "--panelist-timeout-ms": "panelistTimeoutMs",
+    "--panel-timeout-ms": "panelTimeoutMs",
+    "--panel-grace-ms": "panelGraceMs",
+    "--judge-timeout-ms": "judgeTimeoutMs",
+  };
   const promptTokens: string[] = [];
 
   for (let index = 0; index < tokens.length; index++) {
@@ -81,6 +88,25 @@ export function parseFusionArgs(
       continue;
     }
 
+    const timeoutKey = timeoutOptions[token];
+    const timeoutEquals = Object.entries(timeoutOptions).find(([option]) =>
+      token.startsWith(`${option}=`),
+    );
+    if (promptTokens.length === 0 && (timeoutKey || timeoutEquals)) {
+      const key = timeoutKey ?? timeoutEquals?.[1];
+      const raw = timeoutKey ? tokens[index + 1] : token.slice((timeoutEquals?.[0].length ?? 0) + 1);
+      const value = raw ? Number(raw) : NaN;
+      if (!key || !Number.isInteger(value) || value <= 0) {
+        throw new FusionArgsError(`Timeout options require a positive integer milliseconds value. ${FUSION_USAGE}`);
+      }
+      if (timeoutOverrides[key] !== undefined) {
+        throw new FusionArgsError(`${token.split("=")[0]} can only be provided once.`);
+      }
+      timeoutOverrides[key] = value;
+      if (timeoutKey) index++;
+      continue;
+    }
+
     if (promptTokens.length === 0 && token.startsWith("-")) {
       throw new FusionArgsError(`Unknown option ${token}. ${FUSION_USAGE}`);
     }
@@ -95,6 +121,7 @@ export function parseFusionArgs(
     prompt,
     ...(profile ? { profile } : {}),
     ...(panel ? { panel } : {}),
+    ...(Object.keys(timeoutOverrides).length ? { timeoutOverrides } : {}),
   };
 }
 
