@@ -16,7 +16,11 @@ import {
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 
-function judgeWorkflowTask(spawn: unknown): { agent: string; task: string } {
+function judgeWorkflowTask(spawn: unknown): {
+  agent: string;
+  task: string;
+  model?: string;
+} {
   if (!isRecord(spawn) || typeof spawn.workflowScript !== "string") {
     throw new TypeError("Expected a judge workflow spawn.");
   }
@@ -33,11 +37,12 @@ function judgeWorkflowTask(spawn: unknown): { agent: string; task: string } {
 
 function isJudgeWorkflowTask(
   value: unknown,
-): value is { agent: string; task: string } {
+): value is { agent: string; task: string; model?: string } {
   return (
     isRecord(value) &&
     typeof value.agent === "string" &&
-    typeof value.task === "string"
+    typeof value.task === "string" &&
+    (value.model === undefined || typeof value.model === "string")
   );
 }
 
@@ -2064,4 +2069,54 @@ test("an inline --panel run survives a restore", async () => {
   assert.notEqual(result.status, "failed");
   const judgeSpawn = judgeWorkflowTask(second.rpc.spawns.at(-1));
   assert.equal(judgeSpawn.agent, "judge-agent");
+});
+
+test("a --judge override composes onto the named profile", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun(
+    { prompt: "compare", judgeOverride: "custom-judge:strong-model" },
+    fixture.ctx,
+  );
+
+  const stored = fixture.orchestrator.getActiveRun();
+  assert.ok(stored);
+  // The override keeps the base profile name and touches only the judge.
+  assert.equal(stored.profileName, "quality");
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "strong-model",
+  });
+  assert.deepEqual(stored.profileSnapshot?.panel, CONFIG.profiles.quality!.panel);
+
+  // The spawned judge uses the override, not the profile's judge.
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  assert.notEqual(result.status, "failed");
+  const judgeSpawn = judgeWorkflowTask(fixture.rpc.spawns.at(-1));
+  assert.equal(judgeSpawn.agent, "custom-judge");
+  assert.equal(judgeSpawn.model, "strong-model");
+});
+
+test("a --judge thinking-only override keeps the profile model", async () => {
+  const startConfig = structuredClone(CONFIG);
+  startConfig.profiles.quality!.judge = {
+    agent: "judge-agent",
+    model: "profile-judge-model",
+  };
+  const seeded = makeFixture({ config: startConfig });
+  await seeded.orchestrator.startRun(
+    { prompt: "compare", judgeOverride: "custom-judge:high" },
+    seeded.ctx,
+  );
+
+  const stored = seeded.orchestrator.getActiveRun();
+  assert.ok(stored);
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "profile-judge-model",
+    thinking: "high",
+  });
 });

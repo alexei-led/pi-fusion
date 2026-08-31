@@ -203,6 +203,13 @@ export interface ParsedFusionArgs {
   outputContract?: CallerOutputContract;
   /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
   panel?: string[];
+  /**
+   * Raw `--judge` override spec: `<agent>[:<model>[:<level>]]`. Kept as a
+   * string here because deciding whether the tail is a thinking level or
+   * part of the model id needs the configured level registry, which is only
+   * seeded after config load; `composeJudgeOverride` resolves it at run start.
+   */
+  judgeOverride?: string;
   timeoutOverrides?: FusionTimeoutOverrides;
 }
 

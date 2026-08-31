@@ -3,12 +3,16 @@ import {
   detectCallerOutputContract,
 } from "./caller-contract.js";
 import { FusionArgsError } from "./errors.js";
+import { parseJudgeSegments } from "./fusion-args.js";
 import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
 import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
-import { hasThinkingSuffix } from "./thinking-levels.js";
+import {
+  hasThinkingSuffix,
+  isThinkingLevel,
+} from "./thinking-levels.js";
 import {
   COMPOSER_AGENT,
   JUDGE_AGENT,
@@ -20,6 +24,7 @@ import {
   type FusionTimeoutOverrides,
   type FailedPanelSummary,
   type FusionProfile,
+  type JudgeConfig,
   type PanelMemberConfig,
   type PanelOutput,
   type ThinkingLevel,
@@ -173,6 +178,50 @@ export function appendThinkingSuffix(
   if (!model || !thinking) return model;
   if (hasThinkingSuffix(model)) return model;
   return `${model}:${thinking}`;
+}
+
+/**
+ * Resolves a `--judge <agent>[:<model>[:<level>]]` spec against the resolved
+ * profile's judge. This runs at start, after config load — not in the arg
+ * parser — because deciding whether a segment is a thinking level needs the
+ * registry seeded by the active config's `extraThinkingLevels`.
+ *
+ * Per-field override: a field the spec omits keeps the profile value. The tail
+ * segment disambiguates against the registry: a known level overrides only the
+ * thinking level (`my-judge:high`), while an unknown tail stays part of the
+ * model id so `my-judge:qwen:3-max` keeps working.
+ */
+export function composeJudgeOverride(
+  profile: FusionProfile,
+  spec: string,
+): FusionProfile {
+  const segments = parseJudgeSegments(spec);
+  const [agent, second, third] = segments;
+  if (!agent) {
+    throw new FusionArgsError(
+      `--judge requires an agent name. Usage: <agent>[:<model>[:<level>]].`,
+    );
+  }
+  const judge: JudgeConfig = { ...profile.judge, agent };
+  if (second === undefined) {
+    return { ...profile, judge };
+  }
+  if (isThinkingLevel(second)) {
+    if (third !== undefined) {
+      throw new FusionArgsError(
+        `--judge "${spec}": "${second}" is a thinking level, so it cannot be followed by another segment. Use <agent>[:<model>[:<level>]].`,
+      );
+    }
+    return { ...profile, judge: { ...judge, thinking: second } };
+  }
+  if (third === undefined) {
+    return { ...profile, judge: { ...judge, model: second } };
+  }
+  if (isThinkingLevel(third)) {
+    return { ...profile, judge: { ...judge, model: second, thinking: third } };
+  }
+  // Unknown tail stays part of the model id so variant suffixes survive.
+  return { ...profile, judge: { ...judge, model: `${second}:${third}` } };
 }
 
 export function buildPanelSpawnParams(
