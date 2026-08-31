@@ -188,6 +188,58 @@ test("TintinwebAdapter handles ping, spawn, stop, and onCompletion", async () =>
   unsubFail();
 });
 
+test("TintinwebAdapter splits thinking suffixes into thinkingLevel spawn option", async () => {
+  const events = new LocalTestEventBus();
+  const emittedOptions: Array<Record<string, unknown>> = [];
+  events.on(TINTINWEB_SPAWN_CHANNEL, (raw) => {
+    const payload = raw as {
+      requestId: string;
+      options?: Record<string, unknown>;
+    };
+    emittedOptions.push(payload.options ?? {});
+    events.emit(`${TINTINWEB_SPAWN_CHANNEL}:reply:${payload.requestId}`, {
+      success: true,
+      data: { id: "tintin-agent-think" },
+    });
+  });
+
+  const adapter = new TintinwebAdapter({ events, timeoutMs: 500 });
+
+  // Suffixed model: suffix moves to thinkingLevel, model id is stripped.
+  await adapter.spawn("fusion-panelist", "inspect code", {
+    model: "openrouter/z-ai/glm-5.3:high",
+  });
+  const suffixed = emittedOptions[0];
+  assert.ok(suffixed);
+  assert.equal(suffixed.model, "openrouter/z-ai/glm-5.3");
+  assert.equal(suffixed.thinkingLevel, "high");
+
+  // Unrecognized tail (registry variant): stays glued, no thinkingLevel key.
+  await adapter.spawn("fusion-panelist", "inspect code", {
+    model: "openrouter/z-ai/glm-5.3:batch",
+  });
+  const registryVariant = emittedOptions[1];
+  assert.ok(registryVariant);
+  assert.equal(registryVariant.model, "openrouter/z-ai/glm-5.3:batch");
+  assert.equal("thinkingLevel" in registryVariant, false);
+
+  // Unsuffixed model: unchanged, no thinkingLevel key.
+  await adapter.spawn("fusion-panelist", "inspect code", {
+    model: "openrouter/z-ai/glm-5.3",
+  });
+  const plain = emittedOptions[2];
+  assert.ok(plain);
+  assert.equal(plain.model, "openrouter/z-ai/glm-5.3");
+  assert.equal("thinkingLevel" in plain, false);
+
+  // Undefined model: no model key, no thinkingLevel key.
+  await adapter.spawn("fusion-panelist", "inspect code", {});
+  const noModel = emittedOptions[3];
+  assert.ok(noModel);
+  assert.equal("model" in noModel, false);
+  assert.equal("thinkingLevel" in noModel, false);
+});
+
 test("AutoDetectingAdapter selects Nicopreme on subagents:rpc:v1:ready", async () => {
   const events = new LocalTestEventBus();
   const adapter = new AutoDetectingAdapter({ events, timeoutMs: 200 });

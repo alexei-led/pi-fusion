@@ -4,6 +4,11 @@ import {
   type SubagentsEventBus,
   type SubagentsRpcClientOptions,
 } from "./subagents-rpc.js";
+import {
+  hasThinkingSuffix,
+  isThinkingLevel,
+} from "./thinking-levels.js";
+import type { ThinkingLevel } from "./types.js";
 
 export type { SubagentsEventBus };
 import {
@@ -202,6 +207,35 @@ export class NicopremeAdapter implements ISubagentRPCAdapter {
   }
 }
 
+/**
+ * Options payload sent to the tintinweb subagents RPC spawn channel. The RPC
+ * resolves `model` by exact registry-id match, so thinking levels must travel
+ * in the dedicated `thinkingLevel` option (see tintinweb docs/rpc.md) instead
+ * of being glued to the model id as a `:<level>` suffix.
+ */
+export interface TintinwebSpawnOptions {
+  isBackground: boolean;
+  description?: string;
+  model?: string;
+  cwd?: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * Splits a recognized `:<level>` thinking suffix off a model id. Returns the
+ * model unchanged (with no level) when the tail is not a recognized thinking
+ * level, so registry variants like `:batch` stay glued to the model id.
+ */
+export function splitThinkingSuffix(
+  model: string,
+): { model: string; level?: ThinkingLevel } {
+  if (!hasThinkingSuffix(model)) return { model };
+  const colonIndex = model.lastIndexOf(":");
+  const suffix = model.slice(colonIndex + 1);
+  if (!isThinkingLevel(suffix)) return { model };
+  return { model: model.slice(0, colonIndex), level: suffix };
+}
+
 export interface TintinwebAdapterOptions {
   events: SubagentsEventBus;
   timeoutMs?: number;
@@ -272,12 +306,17 @@ export class TintinwebAdapter implements ISubagentRPCAdapter {
     const timeoutMs = options.timeoutMs ?? this.timeoutMs;
     const replyChannel = `${TINTINWEB_SPAWN_CHANNEL}:reply:${requestId}`;
 
-    const tintinOptions: Record<string, unknown> = {
+    const tintinOptions: TintinwebSpawnOptions = {
       isBackground: options.isBackground ?? true,
       ...(options.description ? { description: options.description } : {}),
-      ...(options.model ? { model: options.model } : {}),
       ...(options.cwd ? { cwd: options.cwd } : {}),
     };
+
+    if (options.model) {
+      const split = splitThinkingSuffix(options.model);
+      tintinOptions.model = split.model;
+      if (split.level) tintinOptions.thinkingLevel = split.level;
+    }
 
     return new Promise<SubagentSpawnResult>((resolve, reject) => {
       let settled = false;
