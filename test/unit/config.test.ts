@@ -20,7 +20,6 @@ import {
 } from "../../src/config.js";
 import type { FusionConfig } from "../../src/types.js";
 import {
-  getExtraThinkingLevels,
   isThinkingLevel,
   resetExtraThinkingLevels,
   setExtraThinkingLevels,
