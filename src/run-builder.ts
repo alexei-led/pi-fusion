@@ -3,7 +3,7 @@ import {
   detectCallerOutputContract,
 } from "./caller-contract.js";
 import { FusionArgsError } from "./errors.js";
-import { parseJudgeSegments } from "./fusion-args.js";
+import { FUSION_USAGE, parseJudgeSegments } from "./judge-spec.js";
 import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
 import {
   PANEL_DECISION_CLOSE,
@@ -12,6 +12,7 @@ import {
 import {
   hasThinkingSuffix,
   isThinkingLevel,
+  stripThinkingSuffix,
 } from "./thinking-levels.js";
 import {
   COMPOSER_AGENT,
@@ -196,12 +197,10 @@ export function composeJudgeOverride(
   spec: string,
 ): FusionProfile {
   const segments = parseJudgeSegments(spec);
-  const [agent, second, third] = segments;
-  if (!agent) {
-    throw new FusionArgsError(
-      `--judge requires an agent name. Usage: <agent>[:<model>[:<level>]].`,
-    );
-  }
+  // parseJudgeSegments guarantees a non-empty first segment ("".split(":")
+  // yields [""], rejected by its non-empty check).
+  const agent = segments[0] as string;
+  const [second, third] = segments.slice(1);
   const judge: JudgeConfig = { ...profile.judge, agent };
   if (second === undefined) {
     return { ...profile, judge };
@@ -209,10 +208,26 @@ export function composeJudgeOverride(
   if (isThinkingLevel(second)) {
     if (third !== undefined) {
       throw new FusionArgsError(
-        `--judge "${spec}": "${second}" is a thinking level, so it cannot be followed by another segment. Use <agent>[:<model>[:<level>]].`,
+        `--judge "${spec}": "${second}" is a thinking level, so it cannot be followed by another segment. ${FUSION_USAGE}`,
       );
     }
-    return { ...profile, judge: { ...judge, thinking: second } };
+    // A thinking-only override replaces a recognized suffix already on the
+    // profile model: `appendThinkingSuffix` would otherwise keep the old
+    // suffix and silently drop the explicit override. Unrecognized tails
+    // (variant ids like `qwen3:235b`) are left untouched.
+    const model = profile.judge.model;
+    if (model === undefined) {
+      return { ...profile, judge: { ...judge, thinking: second } };
+    }
+    const stripped = stripThinkingSuffix(model);
+    return {
+      ...profile,
+      judge: {
+        ...judge,
+        ...(stripped !== model ? { model: stripped } : {}),
+        thinking: second,
+      },
+    };
   }
   if (third === undefined) {
     return { ...profile, judge: { ...judge, model: second } };

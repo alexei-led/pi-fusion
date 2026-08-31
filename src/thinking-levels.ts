@@ -64,3 +64,14 @@ export function hasThinkingSuffix(model: string): boolean {
   if (colonIndex === -1) return false;
   return isThinkingLevel(model.slice(colonIndex + 1));
 }
+
+/**
+ * Returns `model` without its final `:<level>` segment when that segment is a
+ * recognized thinking level (built-in or registered extra); unchanged when
+ * there is none. Unrecognized tails like `qwen3:235b` are preserved, since
+ * they are part of the model id, not a thinking level.
+ */
+export function stripThinkingSuffix(model: string): string {
+  if (!hasThinkingSuffix(model)) return model;
+  return model.slice(0, model.lastIndexOf(":"));
+}

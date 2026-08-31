@@ -1152,6 +1152,30 @@ test("composeJudgeOverride rejects a thinking level followed by another segment"
   );
 });
 
+test("composeJudgeOverride strips a recognized suffix so a thinking-only override wins", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    judge: { agent: "judge-agent", model: "gpt-4.1:high" },
+  };
+  assert.deepEqual(composeJudgeOverride(profile, "custom:low").judge, {
+    agent: "custom",
+    model: "gpt-4.1",
+    thinking: "low",
+  });
+});
+
+test("composeJudgeOverride keeps unrecognized model suffixes on a thinking-only override", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    judge: { agent: "judge-agent", model: "qwen3:235b" },
+  };
+  assert.deepEqual(composeJudgeOverride(profile, "custom:low").judge, {
+    agent: "custom",
+    model: "qwen3:235b",
+    thinking: "low",
+  });
+});
+
 test("composeJudgeOverride composes onto a judge with no model or thinking", () => {
   const bare: FusionProfile = { ...PROFILE, judge: { agent: "judge-agent" } };
   assert.deepEqual(composeJudgeOverride(bare, "custom:high").judge, {

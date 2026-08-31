@@ -190,10 +190,26 @@ test("parseFusionArgs rejects malformed --judge specs", () => {
   );
 });
 
-test("parseFusionArgs takes the next token as the judge spec, mirroring --profile", () => {
-  const args = parseFusionArgs("/fusion --judge custom Review");
-  assert.equal(args.judgeOverride, "custom");
-  assert.equal(args.prompt, "Review");
+test("parseFusionArgs rejects a dash-prefixed token after --judge", () => {
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge --panel opus Review"),
+    /Missing value for --judge/,
+  );
+});
+
+test("parseFusionArgs parses the equals form of --judge like the space form", () => {
+  const expected = {
+    judgeOverride: "custom:strong-model:high",
+    prompt: "Review",
+  };
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge custom:strong-model:high Review"),
+    expected,
+  );
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge=custom:strong-model:high Review"),
+    expected,
+  );
 });
 
 test("parseFusionArgs treats --judge after the prompt as prompt text", () => {
