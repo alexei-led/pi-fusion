@@ -19,7 +19,12 @@ import {
   splitInlinePanelEntry,
 } from "../../src/config.js";
 import type { FusionConfig } from "../../src/types.js";
-import { isThinkingLevel, resetExtraThinkingLevels } from "../../src/thinking-levels.js";
+import {
+  getExtraThinkingLevels,
+  isThinkingLevel,
+  resetExtraThinkingLevels,
+  setExtraThinkingLevels,
+} from "../../src/thinking-levels.js";
 
 const PANEL_MEMBER = {
   id: "one",
@@ -926,6 +931,56 @@ test("parseFusionConfig registers extraThinkingLevels for the run", () => {
 
   resetExtraThinkingLevels();
   assert.equal(isThinkingLevel("ultra"), false);
+});
+
+test("parseFusionConfig accepts thinking fields referencing the config's own extraThinkingLevels", () => {
+  resetExtraThinkingLevels();
+  // Regression: schema validation used to run before the extras were seeded,
+  // so a config could not reference a level it declared itself.
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: {
+        quality: {
+          panel: [{ ...PANEL_MEMBER, thinking: "max" }],
+          judge: { ...JUDGE, thinking: "max" },
+        },
+      },
+      extraThinkingLevels: ["max"],
+    }),
+    "test.json",
+  );
+
+  assert.ok(config.profiles.quality);
+  assert.deepEqual(config.profiles.quality.judge.thinking, "max");
+  assert.equal(isThinkingLevel("max"), true);
+
+  resetExtraThinkingLevels();
+  assert.equal(isThinkingLevel("max"), false);
+});
+
+test("parseFusionConfig restores prior extras when schema validation fails", () => {
+  resetExtraThinkingLevels();
+  setExtraThinkingLevels(["prior"]);
+
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          // Missing panel/judge -> schema-invalid, but carries valid extras.
+          profiles: { quality: {} },
+          extraThinkingLevels: ["leaked"],
+        }),
+        "test.json",
+      ),
+    FusionConfigError,
+  );
+  // The rejected config's extras must not leak into the registry.
+  assert.equal(isThinkingLevel("leaked"), false);
+  assert.equal(isThinkingLevel("prior"), true);
+
+  resetExtraThinkingLevels();
 });
 
 test("parseFusionConfig rejects duplicate, shadowing, and invalid levels", () => {

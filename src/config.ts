@@ -5,6 +5,7 @@ import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import { FusionConfigError } from "./errors.js";
 import {
   BUILTIN_THINKING_LEVELS,
+  getExtraThinkingLevels,
   isThinkingLevel,
   resetExtraThinkingLevels,
   setExtraThinkingLevels,
@@ -314,20 +315,29 @@ export function parseFusionConfig(raw: string, source: string): FusionConfig {
       `Invalid JSON in fusion config at ${source}: ${message}`,
     );
   }
+  // Validate and seed the extra thinking levels BEFORE schema validation:
+  // `isFusionConfig` accepts `thinking` fields on panel members and the judge,
+  // and a config must be allowed to reference levels it declares itself via
+  // `extraThinkingLevels`. On schema failure the previous registry contents
+  // are restored so a rejected config cannot leak extras into the process.
+  const previousExtras = getExtraThinkingLevels();
+  if (isRecord(value) && value.extraThinkingLevels !== undefined) {
+    if (!isExtraThinkingLevels(value.extraThinkingLevels)) {
+      throw new FusionConfigError(
+        `Invalid fusion config at ${source}. extraThinkingLevels must be an array of unique non-empty strings that do not shadow built-in thinking levels.`,
+      );
+    }
+    setExtraThinkingLevels(value.extraThinkingLevels);
+  }
   if (!isFusionConfig(value)) {
+    setExtraThinkingLevels(previousExtras);
     throw new FusionConfigError(
       `Invalid fusion config at ${source}. Expected defaultProfile and profiles.`,
     );
   }
-  if (
-    value.extraThinkingLevels !== undefined &&
-    !isExtraThinkingLevels(value.extraThinkingLevels)
-  ) {
-    throw new FusionConfigError(
-      `Invalid fusion config at ${source}. extraThinkingLevels must be an array of unique non-empty strings that do not shadow built-in thinking levels.`,
-    );
+  if (isRecord(value) && value.extraThinkingLevels === undefined) {
+    setExtraThinkingLevels([]);
   }
-  setExtraThinkingLevels(value.extraThinkingLevels ?? []);
   return value;
 }
 
