@@ -188,6 +188,12 @@ export interface RunObservation {
 export interface FusionConfig {
   defaultProfile: string;
   profiles: Record<string, FusionProfile>;
+  /**
+   * Provider/model-specific thinking levels accepted wherever built-in levels
+   * are. Parsed configs register them in the thinking-levels registry, so
+   * `gpt-4.1:ultra` parses as model + thinking when `ultra` is listed here.
+   */
+  extraThinkingLevels?: string[];
 }
 
 export interface ParsedFusionArgs {

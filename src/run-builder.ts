@@ -8,6 +8,7 @@ import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
+import { hasThinkingSuffix } from "./thinking-levels.js";
 import {
   COMPOSER_AGENT,
   JUDGE_AGENT,
@@ -17,7 +18,6 @@ import {
   type CallerOutputContract,
   type EffectiveFusionTimeouts,
   type FusionTimeoutOverrides,
-  THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
   type PanelMemberConfig,
@@ -694,11 +694,4 @@ function createSeededRandom(seed: string): () => number {
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]?.trim() || "unknown failure";
-}
-
-function hasThinkingSuffix(model: string): boolean {
-  const colonIndex = model.lastIndexOf(":");
-  if (colonIndex === -1) return false;
-  const suffix = model.slice(colonIndex + 1);
-  return (THINKING_LEVELS as readonly string[]).includes(suffix);
 }
