@@ -43,6 +43,7 @@ Preferred command shape:
 /fusion --profile <name> <prompt>
 /fusion -p <name> <prompt>
 /fusion --panel <entries> <prompt>
+/fusion --judge <agent>[:<model>[:<level>]] <prompt>
 /fusion status
 /fusion stop
 /fusion init
@@ -77,13 +78,57 @@ Each comma-separated entry is `<model>` or `<agent>:<model>`:
 
 An entry counts as agent-qualified only when the part before the first `:`
 contains a `.` and the part after it is not a thinking level. That keeps both
-`opus:high` and `gpt-4.1:high` models rather than agent references.
+`opus:high` and `gpt-4.1:high` models rather than agent references. Entry
+suffixes validate against the built-in thinking levels plus any levels
+registered through `extraThinkingLevels`.
 
-The thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
-A word that is not one of them is read as a model, so `gpt-4.1:ultra` asks for
-the agent `gpt-4.1`, and the run fails with an unknown-agent error. Use a real
-level, or write the agent in full.
+The built-in thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and
+`xhigh` (mirroring pi core). A word that is not one of them — and not a level
+you registered — is read as a model, so `gpt-4.1:ultra` asks for the agent
+`gpt-4.1`, and the run fails with an unknown-agent error. Use a real level,
+write the agent in full, or register `ultra` via `extraThinkingLevels`.
 Claude alias shorthand works inline: `--panel claude-work/opus-4.8`.
+
+### `--judge`
+
+Overrides the resolved profile's judge for one run, without editing config.
+Only the judge changes — the panel and every other setting still come from the
+profile. The grammar is `<agent>[:<model>[:<level>]]`, and each segment
+overrides that one field of the profile judge; fields you leave out stay as
+the profile has them.
+
+```text
+/fusion --judge my-judge Which design should we pick?
+/fusion --judge my-judge:openai/gpt-5.5 Which design should we pick?
+/fusion --judge my-judge:openai/gpt-5.5:low Which design should we pick?
+/fusion --profile audit --judge=pi-fusion.fusion-judge:high What did we miss?
+```
+
+- agent only — the profile judge keeps its model and thinking; only the agent
+  changes.
+- `agent:model` — the profile judge keeps its thinking; only agent and model
+  change.
+- `agent:model:level` — full override of agent, model, and thinking.
+
+The tail segment is disambiguated at composition time. If it matches a known
+thinking level (a built-in or one registered through `extraThinkingLevels`) it
+is a thinking-only override and cannot be followed by another segment. An
+unknown tail rejoins into the model id, so variant suffixes keep working:
+`--judge my-judge:qwen:batch` uses the model `qwen:batch` with no thinking
+change.
+
+A thinking-only override first strips a recognized level suffix from the
+profile judge's model, then applies the new level. `--judge my-judge:low` over
+a profile judge model `gpt-4.1:high` therefore yields model `gpt-4.1` with
+thinking `low`, instead of stacking suffixes. Unrecognized tails are left
+untouched.
+
+The composed judge is baked into the run-start snapshot, so it survives a
+restore after a Pi restart.
+
+Limitation: specs with more than three segments are rejected. A model id that
+itself contains two colons cannot be combined with a level segment — write
+that model into the profile instead.
 
 ## Config files
 
@@ -98,6 +143,38 @@ Run this inside a trusted project:
 ```text
 /fusion init
 ```
+
+### `extraThinkingLevels`
+
+Top-level config key that registers fork-specific thinking levels beyond the
+built-ins. The built-ins are exactly `off`, `minimal`, `low`, `medium`,
+`high`, and `xhigh`, mirroring pi core; there is no built-in `max`. A level
+registered here validates wherever a built-in level does: inline
+`model:<level>` suffixes in `--panel`, profile `thinking` fields, and the
+level segment of `--judge`.
+
+```json
+{
+  "extraThinkingLevels": ["max", "ultra"],
+  "defaultProfile": "quality",
+  "profiles": {
+    "quality": {
+      "judge": { "agent": "pi-fusion.fusion-judge", "thinking": "max" }
+    }
+  }
+}
+```
+
+Validation at config load: the value must be an array of non-empty strings.
+Duplicates, entries that shadow a built-in level, and empty or non-string
+entries are rejected with a config error.
+
+> **Spawn-boundary caveat.** A level suffix that is neither a built-in nor in
+> `extraThinkingLevels` is not recognized by Fusion, and the downstream spawn
+> boundary (`pi-subagents`) only strips the small set of levels it knows. Any
+> other suffix stays glued to the model id and fails model lookup at spawn.
+> That loud failure is intentional: register the level instead of passing
+> unvalidated thinking strings through.
 
 ## Minimal config
 
@@ -175,7 +252,8 @@ Panel member:
 - `agent`: subagent name. This is where a member's tool access comes from — see [Panel agents and tools](#panel-agents-and-tools).
 - `model`: optional model override, and usually the main source of panel diversity. It accepts normal Pi model ids. If `pi-claude-alias` is installed, it also accepts Claude alias shorthand like `claude-work/opus-4.8`
 - A Claude alias handle must be unique across the global and project alias files. Fusion rejects a duplicate handle.
-- `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
+- `thinking`: optional `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or a
+  level registered through `extraThinkingLevels`
 - `role`: optional perspective hint layered on top of the model
 - `question`: optional facet prompt sent **instead of** the raw task. `{task}` is substituted with the original prompt. Use with `synthesis: "merge"` to divide the work rather than duplicate it. If the template omits `{task}`, the original task is still appended so the panelist keeps its context.
 
@@ -303,7 +381,8 @@ Judge:
 
 - `agent`: judge subagent name
 - `model`: optional model override
-- `thinking`: optional thinking level
+- `thinking`: optional thinking level — a built-in level or one registered
+  through `extraThinkingLevels`
 
 ## Example profiles
 

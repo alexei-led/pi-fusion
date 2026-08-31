@@ -141,3 +141,90 @@ test("parseFusionArgs treats --panel after the prompt as prompt text", () => {
 test("parseFusionArgs omits panel when --panel is absent", () => {
   assert.equal(parseFusionArgs("/fusion Compare designs").panel, undefined);
 });
+
+test("parseFusionArgs parses --judge in all segment shapes", () => {
+  assert.deepEqual(parseFusionArgs("/fusion --judge custom Review"), {
+    judgeOverride: "custom",
+    prompt: "Review",
+  });
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge custom:strong-model Review"),
+    {
+      judgeOverride: "custom:strong-model",
+      prompt: "Review",
+    },
+  );
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge custom:strong-model:high Review"),
+    {
+      judgeOverride: "custom:strong-model:high",
+      prompt: "Review",
+    },
+  );
+});
+
+test("parseFusionArgs accepts --judge=VALUE", () => {
+  assert.deepEqual(parseFusionArgs("/fusion --judge=custom Review"), {
+    judgeOverride: "custom",
+    prompt: "Review",
+  });
+});
+
+test("parseFusionArgs rejects malformed --judge specs", () => {
+  assert.throws(() => parseFusionArgs("/fusion --judge"), /Missing value for --judge/);
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge= Review"),
+    /Missing value for --judge/,
+  );
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge a:b:c:d Review"),
+    /at most 3 segments/,
+  );
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge a::high Review"),
+    /must be non-empty/,
+  );
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge a --judge b Review"),
+    /only be provided once/,
+  );
+});
+
+test("parseFusionArgs rejects a dash-prefixed token after --judge", () => {
+  assert.throws(
+    () => parseFusionArgs("/fusion --judge --panel opus Review"),
+    /Missing value for --judge/,
+  );
+});
+
+test("parseFusionArgs parses the equals form of --judge like the space form", () => {
+  const expected = {
+    judgeOverride: "custom:strong-model:high",
+    prompt: "Review",
+  };
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge custom:strong-model:high Review"),
+    expected,
+  );
+  assert.deepEqual(
+    parseFusionArgs("/fusion --judge=custom:strong-model:high Review"),
+    expected,
+  );
+});
+
+test("parseFusionArgs treats --judge after the prompt as prompt text", () => {
+  const args = parseFusionArgs("/fusion Review --judge custom");
+  assert.equal(args.judgeOverride, undefined);
+  assert.equal(args.prompt, "Review --judge custom");
+});
+
+test("parseFusionArgs combines --judge with --profile and --panel", () => {
+  const args = parseFusionArgs(
+    "/fusion --profile fast --panel opus --judge custom:high Review",
+  );
+
+  assert.equal(args.profile, "fast");
+  assert.deepEqual(args.panel, ["opus"]);
+  assert.equal(args.judgeOverride, "custom:high");
+  assert.equal(args.prompt, "Review");
+});

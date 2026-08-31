@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   appendThinkingSuffix,
   buildBlindLabelMap,
+  composeJudgeOverride,
   buildJudgeSpawnParams as buildJudgeWorkflowSpawnParams,
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
@@ -14,6 +15,10 @@ import {
   type PanelWorkflowTaskParams,
 } from "../../src/run-builder.js";
 import { createDefaultFusionConfig } from "../../src/config.js";
+import {
+  resetExtraThinkingLevels,
+  setExtraThinkingLevels,
+} from "../../src/thinking-levels.js";
 import type { FusionProfile } from "../../src/types.js";
 
 const EXACT_REVIEW_PROMPT = `Review the implementation.
@@ -1070,4 +1075,114 @@ test("label defaults to id", () => {
     workflowTasks(params)[0]?.task ?? "",
     /Panel member: architect \(architect\)/,
   );
+});
+
+test("composeJudgeOverride replaces only the agent when the spec names one segment", () => {
+  const composed = composeJudgeOverride(PROFILE, "custom-judge");
+  assert.deepEqual(composed.judge, {
+    agent: "custom-judge",
+    model: "openai/gpt-5.5",
+    thinking: "high",
+  });
+  // Every other profile setting is shared, not copied.
+  assert.equal(composed.panel, PROFILE.panel);
+  assert.equal(composed.concurrency, PROFILE.concurrency);
+});
+
+test("composeJudgeOverride treats a known thinking level as a thinking-only override", () => {
+  assert.deepEqual(composeJudgeOverride(PROFILE, "custom-judge:high").judge, {
+    agent: "custom-judge",
+    model: "openai/gpt-5.5",
+    thinking: "high",
+  });
+});
+
+test("composeJudgeOverride recognizes configured extra thinking levels", () => {
+  resetExtraThinkingLevels();
+  try {
+    setExtraThinkingLevels(["ultra"]);
+    assert.deepEqual(composeJudgeOverride(PROFILE, "custom-judge:ultra").judge, {
+      agent: "custom-judge",
+      model: "openai/gpt-5.5",
+      thinking: "ultra",
+    });
+  } finally {
+    resetExtraThinkingLevels();
+  }
+});
+
+test("composeJudgeOverride keeps an unknown tail as part of the model id", () => {
+  assert.deepEqual(
+    composeJudgeOverride(PROFILE, "custom-judge:qwen:3-max").judge,
+    {
+      agent: "custom-judge",
+      model: "qwen:3-max",
+      thinking: "high",
+    },
+  );
+  assert.deepEqual(
+    composeJudgeOverride(PROFILE, "custom-judge:strong-model").judge,
+    {
+      agent: "custom-judge",
+      model: "strong-model",
+      thinking: "high",
+    },
+  );
+});
+
+test("composeJudgeOverride applies model and thinking together", () => {
+  assert.deepEqual(
+    composeJudgeOverride(PROFILE, "custom-judge:strong-model:xhigh").judge,
+    {
+      agent: "custom-judge",
+      model: "strong-model",
+      thinking: "xhigh",
+    },
+  );
+});
+
+test("composeJudgeOverride rejects a thinking level followed by another segment", () => {
+  assert.throws(
+    () => composeJudgeOverride(PROFILE, "custom-judge:high:more"),
+    /cannot be followed/,
+  );
+  assert.throws(
+    () => composeJudgeOverride(PROFILE, "custom-judge:a:b:c:d"),
+    /at most 3 segments/,
+  );
+});
+
+test("composeJudgeOverride strips a recognized suffix so a thinking-only override wins", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    judge: { agent: "judge-agent", model: "gpt-4.1:high" },
+  };
+  assert.deepEqual(composeJudgeOverride(profile, "custom:low").judge, {
+    agent: "custom",
+    model: "gpt-4.1",
+    thinking: "low",
+  });
+});
+
+test("composeJudgeOverride keeps unrecognized model suffixes on a thinking-only override", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    judge: { agent: "judge-agent", model: "qwen3:235b" },
+  };
+  assert.deepEqual(composeJudgeOverride(profile, "custom:low").judge, {
+    agent: "custom",
+    model: "qwen3:235b",
+    thinking: "low",
+  });
+});
+
+test("composeJudgeOverride composes onto a judge with no model or thinking", () => {
+  const bare: FusionProfile = { ...PROFILE, judge: { agent: "judge-agent" } };
+  assert.deepEqual(composeJudgeOverride(bare, "custom:high").judge, {
+    agent: "custom",
+    thinking: "high",
+  });
+  assert.deepEqual(composeJudgeOverride(bare, "custom").judge, {
+    agent: "custom",
+  });
 });

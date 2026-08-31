@@ -137,6 +137,7 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion <prompt>
 /fusion --profile <name> <prompt>
 /fusion --panel <models> <prompt>
+/fusion --judge <agent>[:<model>[:<level>]] <prompt>
 /fusion -p <name> <prompt>
 /fusion status
 /fusion stop
@@ -218,6 +219,8 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
 - `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
+- `--judge <agent>[:<model>[:<level>]]` overrides the resolved profile's judge for one run, per field; the tail segment counts as a thinking level only when it is built-in or registered via `extraThinkingLevels`.
+- `extraThinkingLevels` is a top-level config key that registers thinking levels beyond the built-ins (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, mirroring pi core), so forks can use levels like `max` or `ultra` anywhere a level validates.
 - `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in, it voids the read-only property the other agents have, and it is unsafe at `concurrency > 1` because panelists share one working directory.
 
 ## Read more

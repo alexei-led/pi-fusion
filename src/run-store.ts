@@ -883,21 +883,27 @@ function isSnapshotPanelMember(value: unknown): boolean {
   if (!isRecord(value) || !isNonEmptyString(value.id) || !isSnapshotAgent(value.agent)) {
     return false;
   }
+  // Snapshot `thinking` values are validated at write time (config parse /
+  // --judge compose) and only round-tripped at read time. Restore runs before
+  // config load seeds the extras registry, so read-time validation must not
+  // consult it — accept any non-empty string here.
   return (
     (value.label === undefined || isNonEmptyString(value.label)) &&
     (value.model === undefined || isNonEmptyString(value.model)) &&
-    (value.thinking === undefined || isThinkingLevel(value.thinking)) &&
+    (value.thinking === undefined || isNonEmptyString(value.thinking)) &&
     (value.role === undefined || typeof value.role === "string") &&
     (value.question === undefined || isNonEmptyString(value.question))
   );
 }
 
 function isSnapshotJudge(value: unknown): boolean {
+  // See isSnapshotPanelMember: `thinking` is write-time-validated and must
+  // not be checked against the extras registry during restore.
   return (
     isRecord(value) &&
     isSnapshotAgent(value.agent) &&
     (value.model === undefined || isNonEmptyString(value.model)) &&
-    (value.thinking === undefined || isThinkingLevel(value.thinking))
+    (value.thinking === undefined || isNonEmptyString(value.thinking))
   );
 }
 
@@ -906,11 +912,6 @@ function isSnapshotAgent(value: unknown): boolean {
     isNonEmptyString(value) &&
     /^[^\s.]+(?:\.[^\s.]+)*$/.test(value.trim())
   );
-}
-
-function isThinkingLevel(value: unknown): boolean {
-  return value === "off" || value === "minimal" || value === "low" ||
-    value === "medium" || value === "high" || value === "xhigh";
 }
 
 function isSnapshotToolBudget(value: unknown): boolean {

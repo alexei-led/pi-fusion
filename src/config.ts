@@ -4,15 +4,20 @@ import { dirname, join } from "node:path";
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import { FusionConfigError } from "./errors.js";
 import {
+  BUILTIN_THINKING_LEVELS,
+  getExtraThinkingLevels,
+  isThinkingLevel,
+  resetExtraThinkingLevels,
+  setExtraThinkingLevels,
+} from "./thinking-levels.js";
+import {
   JUDGE_AGENT,
   PANEL_AGENT,
-  THINKING_LEVELS,
   type FusionConfig,
   type FusionContextMode,
   type FusionProfile,
   type JudgeConfig,
   type PanelMemberConfig,
-  type ThinkingLevel,
   type ToolBudget,
 } from "./types.js";
 import {
@@ -154,6 +159,7 @@ export async function loadFusionConfig(
 
   const globalPath = getGlobalFusionConfigPath(deps.agentDir);
   const globalConfig = await readOptionalConfig(globalPath, readTextFile);
+  if (!globalConfig) resetExtraThinkingLevels();
   const config = globalConfig ?? createDefaultFusionConfig();
   return applyClaudeAliasShorthand(config, ctx, deps);
 }
@@ -291,6 +297,14 @@ async function readOptionalConfig(
   return parseFusionConfig(raw, path);
 }
 
+/**
+ * Parses a raw fusion config into a `FusionConfig`.
+ *
+ * Side effect: seeds the module-global thinking-level registry with the
+ * config's `extraThinkingLevels` (or clears it when absent). Callers and
+ * tests working with independent configs should call
+ * `resetExtraThinkingLevels()` between parses to avoid leaking extras.
+ */
 export function parseFusionConfig(raw: string, source: string): FusionConfig {
   let value: unknown;
   try {
@@ -301,10 +315,28 @@ export function parseFusionConfig(raw: string, source: string): FusionConfig {
       `Invalid JSON in fusion config at ${source}: ${message}`,
     );
   }
+  // Validate and seed the extra thinking levels BEFORE schema validation:
+  // `isFusionConfig` accepts `thinking` fields on panel members and the judge,
+  // and a config must be allowed to reference levels it declares itself via
+  // `extraThinkingLevels`. On schema failure the previous registry contents
+  // are restored so a rejected config cannot leak extras into the process.
+  const previousExtras = getExtraThinkingLevels();
+  if (isRecord(value) && value.extraThinkingLevels !== undefined) {
+    if (!isExtraThinkingLevels(value.extraThinkingLevels)) {
+      throw new FusionConfigError(
+        `Invalid fusion config at ${source}. extraThinkingLevels must be an array of unique non-empty strings that do not shadow built-in thinking levels.`,
+      );
+    }
+    setExtraThinkingLevels(value.extraThinkingLevels);
+  }
   if (!isFusionConfig(value)) {
+    setExtraThinkingLevels(previousExtras);
     throw new FusionConfigError(
       `Invalid fusion config at ${source}. Expected defaultProfile and profiles.`,
     );
+  }
+  if (isRecord(value) && value.extraThinkingLevels === undefined) {
+    setExtraThinkingLevels([]);
   }
   return value;
 }
@@ -451,11 +483,15 @@ function isJudgeConfig(value: unknown): value is JudgeConfig {
   return true;
 }
 
-function isThinkingLevel(value: unknown): value is ThinkingLevel {
-  return (
-    typeof value === "string" &&
-    (THINKING_LEVELS as readonly string[]).includes(value)
-  );
+function isExtraThinkingLevels(value: unknown): value is string[] {
+  if (!Array.isArray(value) || !value.every(isNonEmptyString)) return false;
+  const builtins = new Set<string>(BUILTIN_THINKING_LEVELS);
+  const seen = new Set<string>();
+  for (const level of value) {
+    if (builtins.has(level) || seen.has(level)) return false;
+    seen.add(level);
+  }
+  return true;
 }
 
 function isFusionContextMode(value: unknown): value is FusionContextMode {

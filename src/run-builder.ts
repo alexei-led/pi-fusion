@@ -3,11 +3,17 @@ import {
   detectCallerOutputContract,
 } from "./caller-contract.js";
 import { FusionArgsError } from "./errors.js";
+import { FUSION_USAGE, parseJudgeSegments } from "./judge-spec.js";
 import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
 import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from "./run-observations.js";
+import {
+  hasThinkingSuffix,
+  isThinkingLevel,
+  stripThinkingSuffix,
+} from "./thinking-levels.js";
 import {
   COMPOSER_AGENT,
   JUDGE_AGENT,
@@ -17,9 +23,9 @@ import {
   type CallerOutputContract,
   type EffectiveFusionTimeouts,
   type FusionTimeoutOverrides,
-  THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
+  type JudgeConfig,
   type PanelMemberConfig,
   type PanelOutput,
   type ThinkingLevel,
@@ -173,6 +179,64 @@ export function appendThinkingSuffix(
   if (!model || !thinking) return model;
   if (hasThinkingSuffix(model)) return model;
   return `${model}:${thinking}`;
+}
+
+/**
+ * Resolves a `--judge <agent>[:<model>[:<level>]]` spec against the resolved
+ * profile's judge. This runs at start, after config load — not in the arg
+ * parser — because deciding whether a segment is a thinking level needs the
+ * registry seeded by the active config's `extraThinkingLevels`.
+ *
+ * Per-field override: a field the spec omits keeps the profile value. The tail
+ * segment disambiguates against the registry: a known level overrides only the
+ * thinking level (`my-judge:high`), while an unknown tail stays part of the
+ * model id so `my-judge:qwen:3-max` keeps working.
+ */
+export function composeJudgeOverride(
+  profile: FusionProfile,
+  spec: string,
+): FusionProfile {
+  const segments = parseJudgeSegments(spec);
+  // parseJudgeSegments guarantees a non-empty first segment ("".split(":")
+  // yields [""], rejected by its non-empty check).
+  const agent = segments[0] as string;
+  const [second, third] = segments.slice(1);
+  const judge: JudgeConfig = { ...profile.judge, agent };
+  if (second === undefined) {
+    return { ...profile, judge };
+  }
+  if (isThinkingLevel(second)) {
+    if (third !== undefined) {
+      throw new FusionArgsError(
+        `--judge "${spec}": "${second}" is a thinking level, so it cannot be followed by another segment. ${FUSION_USAGE}`,
+      );
+    }
+    // A thinking-only override replaces a recognized suffix already on the
+    // profile model: `appendThinkingSuffix` would otherwise keep the old
+    // suffix and silently drop the explicit override. Unrecognized tails
+    // (variant ids like `qwen3:235b`) are left untouched.
+    const model = profile.judge.model;
+    if (model === undefined) {
+      return { ...profile, judge: { ...judge, thinking: second } };
+    }
+    const stripped = stripThinkingSuffix(model);
+    return {
+      ...profile,
+      judge: {
+        ...judge,
+        ...(stripped !== model ? { model: stripped } : {}),
+        thinking: second,
+      },
+    };
+  }
+  if (third === undefined) {
+    return { ...profile, judge: { ...judge, model: second } };
+  }
+  if (isThinkingLevel(third)) {
+    return { ...profile, judge: { ...judge, model: second, thinking: third } };
+  }
+  // Unknown tail stays part of the model id so variant suffixes survive.
+  return { ...profile, judge: { ...judge, model: `${second}:${third}` } };
 }
 
 export function buildPanelSpawnParams(
@@ -694,11 +758,4 @@ function createSeededRandom(seed: string): () => number {
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]?.trim() || "unknown failure";
-}
-
-function hasThinkingSuffix(model: string): boolean {
-  const colonIndex = model.lastIndexOf(":");
-  if (colonIndex === -1) return false;
-  const suffix = model.slice(colonIndex + 1);
-  return (THINKING_LEVELS as readonly string[]).includes(suffix);
 }

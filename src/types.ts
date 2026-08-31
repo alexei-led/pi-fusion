@@ -188,6 +188,12 @@ export interface RunObservation {
 export interface FusionConfig {
   defaultProfile: string;
   profiles: Record<string, FusionProfile>;
+  /**
+   * Provider/model-specific thinking levels accepted wherever built-in levels
+   * are. Parsed configs register them in the thinking-levels registry, so
+   * `gpt-4.1:ultra` parses as model + thinking when `ultra` is listed here.
+   */
+  extraThinkingLevels?: string[];
 }
 
 export interface ParsedFusionArgs {
@@ -197,6 +203,13 @@ export interface ParsedFusionArgs {
   outputContract?: CallerOutputContract;
   /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
   panel?: string[];
+  /**
+   * Raw `--judge` override spec: `<agent>[:<model>[:<level>]]`. Kept as a
+   * string here because deciding whether the tail is a thinking level or
+   * part of the model id needs the configured level registry, which is only
+   * seeded after config load; `composeJudgeOverride` resolves it at run start.
+   */
+  judgeOverride?: string;
   timeoutOverrides?: FusionTimeoutOverrides;
 }
 

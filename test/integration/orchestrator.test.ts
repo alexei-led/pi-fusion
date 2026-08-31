@@ -13,10 +13,19 @@ import {
   buildPanelSpawnParams,
   FUSION_ACCEPTANCE_DISABLED,
 } from "../../src/run-builder.js";
+import { loadFusionConfig } from "../../src/config.js";
+import {
+  isThinkingLevel,
+  resetExtraThinkingLevels,
+} from "../../src/thinking-levels.js";
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 
-function judgeWorkflowTask(spawn: unknown): { agent: string; task: string } {
+function judgeWorkflowTask(spawn: unknown): {
+  agent: string;
+  task: string;
+  model?: string;
+} {
   if (!isRecord(spawn) || typeof spawn.workflowScript !== "string") {
     throw new TypeError("Expected a judge workflow spawn.");
   }
@@ -33,11 +42,12 @@ function judgeWorkflowTask(spawn: unknown): { agent: string; task: string } {
 
 function isJudgeWorkflowTask(
   value: unknown,
-): value is { agent: string; task: string } {
+): value is { agent: string; task: string; model?: string } {
   return (
     isRecord(value) &&
     typeof value.agent === "string" &&
-    typeof value.task === "string"
+    typeof value.task === "string" &&
+    (value.model === undefined || typeof value.model === "string")
   );
 }
 
@@ -1718,6 +1728,10 @@ test("repeated lifecycle polls do not persist duplicate panel snapshots", async 
 function makeFixture(seed?: {
   entries?: Array<{ type: "custom"; customType: string; data?: unknown }>;
   config?: FusionConfig;
+  cwd?: string;
+  /** Use the real `loadFusionConfig` (reads `<cwd>/.pi/fusion.json`) instead
+   * of the stubbed config. */
+  realConfig?: boolean;
 }): {
   orchestrator: FusionOrchestrator;
   runStore: FusionRunStore;
@@ -1732,7 +1746,7 @@ function makeFixture(seed?: {
   const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
     seed?.entries ?? [];
   const ctx: FusionCommandContext = {
-    cwd: "/project",
+    cwd: seed?.cwd ?? "/project",
     hasUI: true,
     isProjectTrusted: () => true,
     sessionManager: { getEntries: () => entries },
@@ -1751,7 +1765,9 @@ function makeFixture(seed?: {
     rpc,
     runStore,
     sendMessage: (message) => messages.push(message),
-    loadConfig: async () => seed?.config ?? CONFIG,
+    ...(seed?.realConfig
+      ? {}
+      : { loadConfig: async () => seed?.config ?? CONFIG }),
   });
   return { orchestrator, rpc, runStore, entries, ui, ctx, messages };
 }
@@ -2064,4 +2080,195 @@ test("an inline --panel run survives a restore", async () => {
   assert.notEqual(result.status, "failed");
   const judgeSpawn = judgeWorkflowTask(second.rpc.spawns.at(-1));
   assert.equal(judgeSpawn.agent, "judge-agent");
+});
+
+test("a --judge override composes onto the named profile", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun(
+    { prompt: "compare", judgeOverride: "custom-judge:strong-model" },
+    fixture.ctx,
+  );
+
+  const stored = fixture.orchestrator.getActiveRun();
+  assert.ok(stored);
+  // The override keeps the base profile name and touches only the judge.
+  assert.equal(stored.profileName, "quality");
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "strong-model",
+  });
+  assert.deepEqual(stored.profileSnapshot?.panel, CONFIG.profiles.quality!.panel);
+
+  // The spawned judge uses the override, not the profile's judge.
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  assert.notEqual(result.status, "failed");
+  const judgeSpawn = judgeWorkflowTask(fixture.rpc.spawns.at(-1));
+  assert.equal(judgeSpawn.agent, "custom-judge");
+  assert.equal(judgeSpawn.model, "strong-model");
+});
+
+test("a --judge thinking-only override keeps the profile model", async () => {
+  const startConfig = structuredClone(CONFIG);
+  startConfig.profiles.quality!.judge = {
+    agent: "judge-agent",
+    model: "profile-judge-model",
+  };
+  const seeded = makeFixture({ config: startConfig });
+  await seeded.orchestrator.startRun(
+    { prompt: "compare", judgeOverride: "custom-judge:high" },
+    seeded.ctx,
+  );
+
+  const stored = seeded.orchestrator.getActiveRun();
+  assert.ok(stored);
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "profile-judge-model",
+    thinking: "high",
+  });
+});
+
+test("a --judge override composes with an inline --panel", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun(
+    {
+      prompt: "compare",
+      panel: ["opus", "gpt-5.5"],
+      judgeOverride: "custom-judge:strong-model:high",
+    },
+    fixture.ctx,
+  );
+
+  const stored = fixture.orchestrator.getActiveRun();
+  assert.ok(stored);
+  assert.equal(stored.profileName, "quality (inline panel)");
+  assert.deepEqual(stored.inlinePanel, ["opus", "gpt-5.5"]);
+  // The judge compose runs before buildInlinePanelProfile, and both survive
+  // the Claude-alias re-pass over the composed profile.
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "strong-model",
+    thinking: "high",
+  });
+  assert.deepEqual(
+    stored.profileSnapshot?.panel.map((member) => member.model),
+    ["opus", "gpt-5.5"],
+  );
+
+  // Both overrides survive into the spawned judge.
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  assert.notEqual(result.status, "failed");
+  const judgeSpawn = judgeWorkflowTask(fixture.rpc.spawns.at(-1));
+  assert.equal(judgeSpawn.agent, "custom-judge");
+  assert.equal(judgeSpawn.model, "strong-model:high");
+});
+
+test("a --judge composed run survives a restore", async () => {
+  const first = makeFixture();
+  await first.orchestrator.startRun(
+    { prompt: "compare", judgeOverride: "custom-judge:strong-model:high" },
+    first.ctx,
+  );
+
+  const stored = first.orchestrator.getActiveRun();
+  assert.ok(stored);
+  assert.deepEqual(stored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "strong-model",
+    thinking: "high",
+  });
+
+  // Restart: a fresh orchestrator over the same persisted session.
+  const second = makeFixture({ entries: first.entries });
+  await second.orchestrator.restore(second.ctx);
+
+  const restored = second.orchestrator.getActiveRun();
+  assert.ok(restored, "the run should still be active after restore");
+  // The composed judge is the quorum record; restore must keep it instead of
+  // silently falling back to the profile's judge.
+  assert.deepEqual(restored.profileSnapshot?.judge, {
+    agent: "custom-judge",
+    model: "strong-model",
+    thinking: "high",
+  });
+
+  second.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  second.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  const result = await second.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+  });
+  assert.notEqual(result.status, "failed");
+  const judgeSpawn = judgeWorkflowTask(second.rpc.spawns.at(-1));
+  assert.equal(judgeSpawn.agent, "custom-judge");
+  assert.equal(judgeSpawn.model, "strong-model:high");
+});
+
+test("a config-driven extra thinking level flows into --judge end to end", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "fusion-judge-config-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cwd = join(root, "project");
+  await mkdir(join(cwd, ".pi"), { recursive: true });
+  await writeFile(
+    join(cwd, ".pi", "fusion.json"),
+    JSON.stringify({
+      defaultProfile: "quality",
+      extraThinkingLevels: ["ultra"],
+      profiles: {
+        quality: {
+          panel: [
+            { id: "architect", label: "Architect", agent: "panel-agent" },
+            { id: "tester", label: "Tester", agent: "panel-agent" },
+          ],
+          judge: { agent: "judge-agent", model: "profile-judge-model" },
+        },
+      },
+    }),
+  );
+
+  // No stubbed loadConfig: the registry must be seeded by the real
+  // loadFusionConfig -> parseFusionConfig path for "ultra" to be recognized.
+  const fixture = makeFixture({ cwd, realConfig: true });
+  try {
+    await fixture.orchestrator.startRun(
+      { prompt: "compare", judgeOverride: "custom-judge:ultra" },
+      fixture.ctx,
+    );
+
+    const stored = fixture.orchestrator.getActiveRun();
+    assert.ok(stored);
+    assert.deepEqual(stored.profileSnapshot?.judge, {
+      agent: "custom-judge",
+      model: "profile-judge-model",
+      thinking: "ultra",
+    });
+
+    fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+    fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+    const result = await fixture.orchestrator.handleSubagentComplete({
+      runId: "chain-1",
+    });
+    assert.notEqual(result.status, "failed");
+    const judgeSpawn = judgeWorkflowTask(fixture.rpc.spawns.at(-1));
+    assert.equal(judgeSpawn.agent, "custom-judge");
+    assert.equal(judgeSpawn.model, "profile-judge-model:ultra");
+  } finally {
+    resetExtraThinkingLevels();
+  }
+
+  // Loading a config-free environment through the same real path resets the
+  // registry (the missing-global-config branch in loadFusionConfig), so the
+  // extra level cannot leak into later runs.
+  await loadFusionConfig(
+    { cwd: join(root, "no-project"), isProjectTrusted: () => true },
+    { agentDir: join(root, "agent") },
+  );
+  assert.equal(isThinkingLevel("ultra"), false);
 });

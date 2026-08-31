@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Extensible thinking-level registry: the new top-level `extraThinkingLevels`
+  config key registers fork-specific levels (for example `max` or `ultra`) so
+  they validate wherever built-in levels do. Built-ins now exactly mirror pi
+  core: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.
+- Snapshot restore no longer rejects snapshots carrying extra thinking levels.
+  `thinking` values are validated at write time and round-tripped unchanged at
+  read time.
+- `/fusion --judge <agent>[:<model>[:<level>]]` overrides the resolved
+  profile's judge for one run, per field: an agent-only spec keeps the
+  profile's model and thinking, `agent:model` keeps its thinking, and a tail
+  segment matching a built-in or registered extra level becomes a
+  thinking-only override (stripping a recognized suffix from the profile
+  model first) while unknown tails join the model id so variant suffixes like
+  `:batch` keep working. The composed judge is persisted in the run-start
+  snapshot and survives restore.
+
 ## 0.7.0 - 2026-08-10
 
 ### Added

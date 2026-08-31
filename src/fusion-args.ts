@@ -1,8 +1,10 @@
 import { FusionArgsError } from "./errors.js";
+import { FUSION_USAGE, parseJudgeSegments } from "./judge-spec.js";
 import type { FusionTimeoutOverrides, ParsedFusionArgs } from "./types.js";
 
-const FUSION_USAGE =
-  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.";
+// The judge-spec grammar now lives in judge-spec.ts; re-exported so existing
+// imports keep working.
+export { parseJudgeSegments } from "./judge-spec.js";
 
 export type FusionInlineCommand = "init" | "status" | "stop";
 
@@ -28,6 +30,7 @@ export function parseFusionArgs(
 
   let profile: string | undefined;
   let panel: string[] | undefined;
+  let judgeOverride: string | undefined;
   const timeoutOverrides: FusionTimeoutOverrides = {};
   const timeoutOptions: Record<string, keyof FusionTimeoutOverrides> = {
     "--panelist-timeout-ms": "panelistTimeoutMs",
@@ -88,6 +91,33 @@ export function parseFusionArgs(
       continue;
     }
 
+    if (promptTokens.length === 0 && token === "--judge") {
+      const value = tokens[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new FusionArgsError(`Missing value for --judge. ${FUSION_USAGE}`);
+      }
+      if (judgeOverride) {
+        throw new FusionArgsError("Judge can only be provided once.");
+      }
+      judgeOverride = value;
+      parseJudgeSegments(judgeOverride);
+      index++;
+      continue;
+    }
+
+    if (promptTokens.length === 0 && token.startsWith("--judge=")) {
+      const value = token.slice("--judge=".length).trim();
+      if (!value) {
+        throw new FusionArgsError(`Missing value for --judge. ${FUSION_USAGE}`);
+      }
+      if (judgeOverride) {
+        throw new FusionArgsError("Judge can only be provided once.");
+      }
+      judgeOverride = value;
+      parseJudgeSegments(judgeOverride);
+      continue;
+    }
+
     const timeoutKey = timeoutOptions[token];
     const timeoutEquals = Object.entries(timeoutOptions).find(([option]) =>
       token.startsWith(`${option}=`),
@@ -121,6 +151,7 @@ export function parseFusionArgs(
     prompt,
     ...(profile ? { profile } : {}),
     ...(panel ? { panel } : {}),
+    ...(judgeOverride ? { judgeOverride } : {}),
     ...(Object.keys(timeoutOverrides).length ? { timeoutOverrides } : {}),
   };
 }

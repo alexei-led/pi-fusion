@@ -31,6 +31,7 @@ import {
 import {
   appendThinkingSuffix,
   buildPanelSpawnParams,
+  composeJudgeOverride,
   resolveEffectiveTimeouts,
 } from "./run-builder.js";
 import {
@@ -188,24 +189,32 @@ export class FusionOrchestrator {
       const config = await this.loadConfig(ctx);
       resolved = this.resolveProfile(config, args.profile);
       baseProfileName = resolved.name;
-      if (args.panel?.length) {
-        // The named profile still supplies the judge and every other setting;
-        // only the panel is replaced. Inline models skip the alias pass that
-        // runs at config load, so re-run it over the assembled profile.
-        const inlineName = `${resolved.name} (inline panel)`;
+      const panelEntries = args.panel;
+      const inlinePanel = panelEntries?.length ? panelEntries : undefined;
+      if (args.judgeOverride || inlinePanel) {
+        // Both overrides compose a profile at start, after the alias pass that
+        // runs at config load — so re-run it over the composed profile. The
+        // named profile still supplies the judge and every other setting;
+        // only the panel is replaced, and `--judge` overrides only the judge
+        // fields the spec names.
+        let composed = resolved.profile;
+        if (args.judgeOverride) {
+          composed = composeJudgeOverride(composed, args.judgeOverride);
+        }
+        const profileName = inlinePanel
+          ? `${resolved.name} (inline panel)`
+          : resolved.name;
+        const profileForPass = inlinePanel
+          ? buildInlinePanelProfile(composed, inlinePanel)
+          : composed;
         const aliased = await applyClaudeAliasShorthand(
           {
-            defaultProfile: inlineName,
-            profiles: {
-              [inlineName]: buildInlinePanelProfile(
-                resolved.profile,
-                args.panel,
-              ),
-            },
+            defaultProfile: profileName,
+            profiles: { [profileName]: profileForPass },
           },
           ctx,
         );
-        resolved = this.resolveProfile(aliased, inlineName);
+        resolved = this.resolveProfile(aliased, profileName);
       }
       this.configWarning = undefined;
     } catch (error: unknown) {
