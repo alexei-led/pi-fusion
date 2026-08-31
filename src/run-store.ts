@@ -10,6 +10,7 @@ import type {
   RunObservation,
   RunUsage,
 } from "./types.js";
+import { isThinkingLevel } from "./thinking-levels.js";
 import { isFiniteNumber, isNonEmptyString, isRecord } from "./utils.js";
 
 export const FUSION_RUN_ENTRY_TYPE = "fusion-run";
@@ -906,11 +907,6 @@ function isSnapshotAgent(value: unknown): boolean {
     isNonEmptyString(value) &&
     /^[^\s.]+(?:\.[^\s.]+)*$/.test(value.trim())
   );
-}
-
-function isThinkingLevel(value: unknown): boolean {
-  return value === "off" || value === "minimal" || value === "low" ||
-    value === "medium" || value === "high" || value === "xhigh";
 }
 
 function isSnapshotToolBudget(value: unknown): boolean {
