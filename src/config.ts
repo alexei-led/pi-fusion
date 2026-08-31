@@ -296,6 +296,14 @@ async function readOptionalConfig(
   return parseFusionConfig(raw, path);
 }
 
+/**
+ * Parses a raw fusion config into a `FusionConfig`.
+ *
+ * Side effect: seeds the module-global thinking-level registry with the
+ * config's `extraThinkingLevels` (or clears it when absent). Callers and
+ * tests working with independent configs should call
+ * `resetExtraThinkingLevels()` between parses to avoid leaking extras.
+ */
 export function parseFusionConfig(raw: string, source: string): FusionConfig {
   let value: unknown;
   try {

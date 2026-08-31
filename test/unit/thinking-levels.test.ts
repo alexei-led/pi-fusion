@@ -14,7 +14,7 @@ test("isThinkingLevel accepts built-in levels only before registration", () => {
 
   assert.equal(isThinkingLevel("high"), true);
   assert.equal(isThinkingLevel("xhigh"), true);
-  assert.equal(isThinkingLevel("max"), true);
+  assert.equal(isThinkingLevel("max"), false);
   assert.equal(isThinkingLevel("ultra"), false);
   assert.equal(isThinkingLevel(42), false);
   assert.equal(isThinkingLevel(undefined), false);
@@ -99,8 +99,20 @@ test("BUILTIN_THINKING_LEVELS mirrors the pi core set", () => {
     "medium",
     "high",
     "xhigh",
-    "max",
   ]);
+});
+
+test("fork-specific levels like max register via setExtraThinkingLevels", () => {
+  resetExtraThinkingLevels();
+  setExtraThinkingLevels(["max"]);
+
+  // Migration path for fork-specific levels: "max" is no longer a built-in
+  // but passes validation once registered as an extra.
+  assert.equal(isThinkingLevel("max"), true);
+  assert.equal(hasThinkingSuffix("openai/gpt-5.5:max"), true);
+
+  resetExtraThinkingLevels();
+  assert.equal(isThinkingLevel("max"), false);
 });
 
 test("teardown restores a clean registry", () => {

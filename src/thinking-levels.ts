@@ -14,8 +14,10 @@ let extraThinkingLevels: readonly string[] = [];
  * built-in levels do — inline `model:<level>` suffixes, profile `thinking`
  * fields, and snapshot validation. Config parsing validates the array first
  * and surfaces problems as `FusionConfigError`s; this is the defensive layer
- * for direct callers. Built-in names and duplicates are ignored, so a config
- * that lists them stays loadable.
+ * for direct callers. Built-in names and duplicates are ignored here as a
+ * defensive layer for direct callers; config parsing rejects them outright
+ * with a `FusionConfigError` (see the `extraThinkingLevels` validation in
+ * config.ts).
  */
 export function setExtraThinkingLevels(levels: readonly string[]): void {
   const seen = new Set<string>(BUILTIN_THINKING_LEVELS);
