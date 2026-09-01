@@ -132,6 +132,7 @@ export class FakePi {
 export class FakeEventBus {
   readonly emitted: Array<{ event: string; payload: unknown }> = [];
   readonly statusResults = new Map<string, unknown>();
+  mode: "nicopreme" | "tintinweb" | "both" = "nicopreme";
   private readonly handlers = new Map<
     string,
     Set<(payload: unknown) => void>
@@ -153,13 +154,53 @@ export class FakeEventBus {
     if (handlers) {
       for (const handler of [...handlers]) handler(payload);
     }
-    if (event === SUBAGENTS_RPC_REQUEST_CHANNEL) {
+    if (
+      (this.mode === "nicopreme" || this.mode === "both") &&
+      event === SUBAGENTS_RPC_REQUEST_CHANNEL
+    ) {
       this.replyToRpcRequest(payload);
+    }
+    if (this.mode === "tintinweb" || this.mode === "both") {
+      if (event === "subagents:rpc:ping") {
+        this.replyToTintinPing(payload);
+      } else if (event === "subagents:rpc:spawn") {
+        this.replyToTintinSpawn(payload);
+      } else if (event === "subagents:rpc:stop") {
+        this.replyToTintinStop(payload);
+      }
     }
   }
 
   listenerCount(event: string): number {
     return this.handlers.get(event)?.size ?? 0;
+  }
+
+  private replyToTintinPing(payload: unknown): void {
+    if (!isRecord(payload) || typeof payload.requestId !== "string") return;
+    this.emit(`subagents:rpc:ping:reply:${payload.requestId}`, {
+      success: true,
+      data: { version: 2 },
+    });
+  }
+
+  private replyToTintinSpawn(payload: unknown): void {
+    if (!isRecord(payload) || typeof payload.requestId !== "string") return;
+    this.spawns.push(payload);
+    const id =
+      typeof payload.type === "string" && payload.type.includes("judge")
+        ? `judge-${this.spawns.length}`
+        : `panel-${this.spawns.length}`;
+    this.emit(`subagents:rpc:spawn:reply:${payload.requestId}`, {
+      success: true,
+      data: { id },
+    });
+  }
+
+  private replyToTintinStop(payload: unknown): void {
+    if (!isRecord(payload) || typeof payload.requestId !== "string") return;
+    this.emit(`subagents:rpc:stop:reply:${payload.requestId}`, {
+      success: true,
+    });
   }
 
   private replyToRpcRequest(payload: unknown): void {

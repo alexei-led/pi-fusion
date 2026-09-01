@@ -384,7 +384,7 @@ function buildPanelTaskParams(
   };
 }
 
-function buildPanelTask(
+export function buildPanelTask(
   member: PanelMemberConfig,
   prompt: string,
   includeDecisionRecord: boolean,
@@ -435,7 +435,7 @@ function buildPanelTask(
  * An explicitly configured judge agent still wins: a user who names their own
  * synthesis agent means it.
  */
-function resolveSynthesisAgent(profile: FusionProfile): string {
+export function resolveSynthesisAgent(profile: FusionProfile): string {
   if (resolveSynthesisMode(profile) !== "merge") return profile.judge.agent;
   return profile.judge.agent === JUDGE_AGENT
     ? COMPOSER_AGENT
@@ -474,7 +474,7 @@ function callerContractForPrompt(
   return explicit ?? detectCallerOutputContract(prompt);
 }
 
-function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
+export function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const sortedOutputs = [...input.panelOutputs].sort(comparePanelItems);
   const sortedFailures = [...input.failedPanelists].sort(comparePanelItems);
   // Status and failure lists stay in configuration order so the reader can map

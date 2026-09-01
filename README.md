@@ -179,10 +179,13 @@ Requirements:
 
 - Pi
 - Node.js 22.19+
-- `pi-subagents` 0.43.0 or later
+- A subagent provider: `pi-subagents` (0.43.0+) or `@tintinweb/pi-subagents`
 
 ```bash
+# Using pi-subagents (or @tintinweb/pi-subagents)
 pi install npm:pi-subagents
+# or: pi install npm:@tintinweb/pi-subagents
+
 pi install npm:@alexeiled/pi-fusion
 ```
 
@@ -207,6 +210,7 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Config is optional. Defaults work. Use `/fusion init` when you want project config.
 - Project config lives at `.pi/fusion.json`. Global config lives at `~/.pi/agent/fusion.json`.
 - Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
+- Supports both `pi-subagents` and `@tintinweb/pi-subagents` with automatic runtime detection (defaulting to `pi-subagents` if both are installed). Override via `provider: "auto" | "nicopreme" | "tintinweb"` in config or `PI_FUSION_SUBAGENT_PROVIDER` environment variable.
 - Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events. Verified panel outputs survive a panel deadline; unavailable perspectives and timeout failures are disclosed in a partial report when quorum is not met or coverage is incomplete.
 - Timeouts end the current child or workflow attempt. Fusion never automatically retries panelists, restarts a panel, or extends a deadline; start a new run manually after the terminal report.
 - `pi-fusion` does not own the footer.
