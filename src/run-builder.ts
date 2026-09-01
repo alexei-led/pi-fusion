@@ -2,6 +2,8 @@ import {
   callerOutputContractInstructions,
   detectCallerOutputContract,
 } from "./caller-contract.js";
+import { FusionArgsError } from "./errors.js";
+import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
 import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
@@ -13,6 +15,8 @@ import {
   panelItemLabel,
   resolveSynthesisMode,
   type CallerOutputContract,
+  type EffectiveFusionTimeouts,
+  type FusionTimeoutOverrides,
   THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
@@ -31,6 +35,8 @@ export const FUSION_ACCEPTANCE_DISABLED = {
 export type FusionAcceptanceDisabled = typeof FUSION_ACCEPTANCE_DISABLED;
 
 const DEFAULT_STAGE_TIMEOUT_MS = 900_000;
+const DEFAULT_PANELIST_TIMEOUT_MS = 840_000;
+const DEFAULT_PANEL_GRACE_MS = 5_000;
 const DEFAULT_TOOL_BUDGET: ToolBudget = {
   soft: 8,
   hard: 12,
@@ -48,6 +54,8 @@ export interface PanelSubagentTaskParams {
   model?: string;
   /** Per-task cap so a panelist finalises before the workflow timeout. */
   toolBudget: ToolBudget;
+  /** Child deadline, always shorter than the enclosing panel workflow. */
+  timeoutMs?: number;
 }
 
 export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
@@ -100,6 +108,9 @@ export interface BuildJudgeSpawnParamsInput {
    */
   runId: string;
   callerContract?: CallerOutputContract;
+  timeoutOverrides?: FusionTimeoutOverrides;
+  /** Persisted at panel start so restored fallback judges keep their deadline. */
+  effectiveTimeouts?: EffectiveFusionTimeouts;
 }
 
 const PANEL_OUTPUT_CONTRACT = [
@@ -168,7 +179,9 @@ export function buildPanelSpawnParams(
   profile: FusionProfile,
   prompt: string,
   callerContract?: CallerOutputContract,
+  timeoutOverrides?: FusionTimeoutOverrides,
 ): PanelSpawnParams {
+  const timeouts = resolveEffectiveTimeouts(profile, timeoutOverrides);
   const concurrency = profile.concurrency ?? profile.panel.length;
   const tasks: PanelWorkflowTaskParams[] = profile.panel.map(
     (member, index) => ({
@@ -179,8 +192,14 @@ export function buildPanelSpawnParams(
         profile.stopWhenPanelAgrees === true,
         profile.panelToolBudget ?? DEFAULT_TOOL_BUDGET,
         callerContract,
+        timeouts.panelistTimeoutMs,
       ),
     }),
+  );
+
+  const requiredSuccessfulPanelists = resolveMinimumSuccessfulPanelists(
+    profile.minimumSuccessfulPanelists,
+    profile.panel.length,
   );
 
   return {
@@ -188,13 +207,14 @@ export function buildPanelSpawnParams(
       tasks,
       concurrency,
       profile.stopWhenPanelAgrees === true,
+      requiredSuccessfulPanelists,
     ),
     async: true,
     context: profile.context ?? "fresh",
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    timeoutMs: resolveStageTimeout(profile.panelTimeoutMs, profile.timeoutMs),
+    timeoutMs: timeouts.panelTimeoutMs,
   };
 }
 
@@ -223,10 +243,9 @@ export function buildJudgeSpawnParams(
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    timeoutMs: resolveStageTimeout(
-      input.profile.judgeTimeoutMs,
-      input.profile.timeoutMs,
-    ),
+    timeoutMs:
+      input.effectiveTimeouts?.judgeTimeoutMs ??
+      resolveEffectiveTimeouts(input.profile, input.timeoutOverrides).judgeTimeoutMs,
   };
 }
 
@@ -234,13 +253,18 @@ function buildPanelWorkflowScript(
   tasks: readonly PanelWorkflowTaskParams[],
   concurrency: number,
   stopWhenAgrees: boolean,
+  requiredSuccessfulPanelists: number,
 ): string {
   const serializedTasks = JSON.stringify(tasks);
+  // Start no more work than the resolved quorum requires. This preserves the
+  // two-at-a-time majority behavior while allowing a larger configured quorum
+  // to be observed before agreement can stop the remaining panelists.
   const effectiveConcurrency = stopWhenAgrees
-    ? Math.min(concurrency, 2)
+    ? Math.min(concurrency, requiredSuccessfulPanelists)
     : concurrency;
   const stopLogic = stopWhenAgrees
     ? [
+        `const requiredSuccessfulPanelists = ${requiredSuccessfulPanelists};`,
         "const decisions = results",
         "  .filter((result) => result && result.ok === true)",
         "  .map((result) => {",
@@ -250,7 +274,7 @@ function buildPanelWorkflowScript(
         "    try { return JSON.parse(match[1]); } catch { return undefined; }",
         "  })",
         "  .filter((decision) => decision && typeof decision.recommendation === \"string\" && decision.confidence === \"high\" && decision.needsMoreEvidence === false);",
-        "if (decisions.length >= 2 && results.length < tasks.length) {",
+        "if (decisions.length >= requiredSuccessfulPanelists && results.length < tasks.length) {",
         "  const recommendation = decisions[0].recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim(),",
         "    agrees = recommendation && decisions.every((decision) => decision.recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim() === recommendation);",
         "  if (agrees) {",
@@ -278,8 +302,58 @@ function buildPanelWorkflowScript(
 function resolveStageTimeout(
   stageTimeoutMs: number | undefined,
   legacyTimeoutMs: number | undefined,
+  defaultTimeoutMs = DEFAULT_STAGE_TIMEOUT_MS,
 ): number {
-  return stageTimeoutMs ?? legacyTimeoutMs ?? DEFAULT_STAGE_TIMEOUT_MS;
+  return stageTimeoutMs ?? legacyTimeoutMs ?? defaultTimeoutMs;
+}
+
+/** Resolves and records the deadline precedence used for one start attempt. */
+export function resolveEffectiveTimeouts(
+  profile: FusionProfile,
+  overrides: FusionTimeoutOverrides | undefined = undefined,
+): EffectiveFusionTimeouts {
+  const panelTimeoutMs = resolveStageTimeout(
+    overrides?.panelTimeoutMs ?? profile.panelTimeoutMs,
+    profile.timeoutMs,
+  );
+  const panelGraceMs = resolveStageTimeout(
+    overrides?.panelGraceMs ?? profile.panelGraceMs,
+    undefined,
+    DEFAULT_PANEL_GRACE_MS,
+  );
+  const requestedPanelistTimeoutMs = resolveStageTimeout(
+    overrides?.panelistTimeoutMs ?? profile.panelistTimeoutMs,
+    profile.timeoutMs,
+    DEFAULT_PANELIST_TIMEOUT_MS,
+  );
+  if (panelGraceMs >= panelTimeoutMs) {
+    throw new FusionArgsError(
+      `panelGraceMs (${panelGraceMs}ms) must be shorter than panelTimeoutMs (${panelTimeoutMs}ms).`,
+    );
+  }
+  // A child must conclude before the enclosing workflow. The validated grace
+  // interval guarantees this cap remains a meaningful deadline.
+  const panelistTimeoutMs = Math.min(
+    requestedPanelistTimeoutMs,
+    panelTimeoutMs - panelGraceMs,
+  );
+  return {
+    panelistTimeoutMs,
+    panelTimeoutMs,
+    panelGraceMs,
+    judgeTimeoutMs: resolveStageTimeout(
+      overrides?.judgeTimeoutMs ?? profile.judgeTimeoutMs,
+      profile.timeoutMs,
+    ),
+    usesLegacyTimeout:
+      profile.timeoutMs !== undefined &&
+      (overrides?.panelistTimeoutMs === undefined &&
+        profile.panelistTimeoutMs === undefined ||
+        overrides?.panelTimeoutMs === undefined &&
+          profile.panelTimeoutMs === undefined ||
+        overrides?.judgeTimeoutMs === undefined &&
+          profile.judgeTimeoutMs === undefined),
+  };
 }
 
 function buildPanelTaskParams(
@@ -288,6 +362,7 @@ function buildPanelTaskParams(
   includeDecisionRecord: boolean,
   toolBudget: ToolBudget,
   callerContract?: CallerOutputContract,
+  timeoutMs?: number,
 ): PanelSubagentTaskParams {
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
@@ -304,6 +379,7 @@ function buildPanelTaskParams(
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     toolBudget,
+    ...(timeoutMs ? { timeoutMs } : {}),
     ...(model ? { model } : {}),
   };
 }

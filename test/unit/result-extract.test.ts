@@ -362,6 +362,29 @@ test("extractPanelResults falls back to artifact paths when inline output is abs
   ]);
 });
 
+test("extractPanelResults requires and uses stable slots for compact workflow events", () => {
+  const rejected = extractPanelResults(
+    { results: [{ agent: "pi-fusion.fusion-panelist", success: true, output: "late slot" }] },
+    { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
+  );
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) assert.match(rejected.error.message, /stable workflow slot identity/);
+
+  const identified = extractPanelResults(
+    { results: [{ key: "panel-2", agent: "pi-fusion.fusion-panelist", success: true, output: "late slot" }] },
+    { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
+  );
+  assert.equal(identified.ok, true);
+  if (identified.ok) assert.equal(identified.outputs[0]?.index, 1);
+
+  const workflowNamed = extractPanelResults(
+    { results: [{ agent: "panel-2", success: true, output: "late slot" }] },
+    { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
+  );
+  assert.equal(workflowNamed.ok, true);
+  if (workflowNamed.ok) assert.equal(workflowNamed.outputs[0]?.index, 1);
+});
+
 test("extractPanelResults can limit extraction to the panel prefix of a chain result", () => {
   const result = extractPanelResults(
     {

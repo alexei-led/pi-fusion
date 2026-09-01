@@ -637,6 +637,27 @@ test("parseFusionConfig accepts a judge tool budget", () => {
   });
 });
 
+test("parseFusionConfig rejects grace that consumes the panel deadline", () => {
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles: {
+            quality: {
+              panel: [PANEL_MEMBER],
+              judge: JUDGE,
+              panelTimeoutMs: 5_000,
+              panelGraceMs: 5_000,
+            },
+          },
+        }),
+        "test",
+      ),
+    /Invalid fusion config/,
+  );
+});
+
 test("parseFusionConfig accepts a partial judge tool budget", () => {
   const config = parseFusionConfig(
     JSON.stringify({

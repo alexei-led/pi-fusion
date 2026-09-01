@@ -28,6 +28,9 @@ type ReportRun = Pick<
   | "judgeRunId"
   | "panelStopReason"
   | "outputContract"
+  | "completionQuality"
+  | "minimumSuccessfulPanelists"
+  | "effectiveTimeouts"
 > &
   Partial<Pick<FusionRun, "phase" | "createdAt" | "updatedAt">>;
 
@@ -45,6 +48,16 @@ export interface RenderSinglePanelReportInput {
   run: ReportRun;
   output: PanelOutput;
   failures: readonly FailedPanelSummary[];
+  judgeModel?: string;
+}
+
+export interface RenderPartialPanelReportInput {
+  run: ReportRun;
+  panelOutputs: readonly PanelOutput[];
+  failures: readonly FailedPanelSummary[];
+  required: number;
+  synthesis: FusionSynthesisMode;
+  panel: readonly PanelMemberConfig[];
   judgeModel?: string;
 }
 
@@ -123,9 +136,13 @@ interface AgentStatusOptions {
 /** Lists the facets that no panelist covered, for a merge-mode failure. */
 function formatUncoveredFacets(
   panel?: readonly PanelMemberConfig[],
+  outputs: readonly PanelOutput[] = [],
 ): string | string[] {
   if (!panel?.length) return "Every configured facet is uncovered.";
-  return panel.map((member) => {
+  const covered = new Set(outputs.map((output) => output.index));
+  const missing = panel.filter((_member, index) => !covered.has(index));
+  if (missing.length === 0) return "No configured facets are uncovered.";
+  return missing.map((member) => {
     const facet =
       member.question?.trim() ?? member.role?.trim() ?? "the whole task";
     return `- ${memberLabel(member)}: ${facet} (uncovered)`;
@@ -331,6 +348,62 @@ function restoreBlindLabels(
   return restored;
 }
 
+export function renderPartialPanelReport(
+  input: RenderPartialPanelReportInput,
+): string {
+  const succeeded = input.panelOutputs.length;
+  const merger = input.synthesis === "merge";
+  const partial = `Partial panel coverage: ${succeeded} successful panelist(s), below the required quorum of ${input.required}. No ${merger ? "composer" : "judge"} synthesis was run.`;
+  const candidateText = input.panelOutputs
+    .map((output) => `### ${formatPanelName(output)}\n${output.output.trim()}`)
+    .join("\n\n");
+  const sections: ReportSection[] = [
+    { title: "Summary", content: partial },
+    {
+      title: "Agent Status",
+      content: formatAgentStatus({
+        panelOutputs: input.panelOutputs,
+        failures: input.failures,
+        judgeStatus: `not run - below quorum (${succeeded}/${input.required})`,
+        ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
+        synthesis: input.synthesis,
+        extra: ["- Completion quality: partial"],
+      }),
+    },
+    ...(merger
+      ? [
+          { title: "Coverage Map" as const, content: "Partial coverage only; surviving facet outputs are listed below." },
+          { title: "Combined Answer" as const, content: candidateText || "No usable panel output." },
+          {
+            title: "Gaps" as const,
+            content: formatUncoveredFacets(input.panel, input.panelOutputs),
+          },
+          { title: "Conflicts At Seams" as const, content: "Not synthesized because the composer quorum was not met." },
+        ]
+      : [
+          { title: "Consensus" as const, content: "Not synthesized because the panel quorum was not met." },
+          { title: "Disagreements" as const, content: "Not synthesized because the judge did not run." },
+          { title: "Unique Insights" as const, content: candidateText || "No usable panel output." },
+          { title: "Blind Spots" as const, content: "Unavailable perspectives and absent cross-panel synthesis can hide important issues." },
+        ]),
+    { title: "Recommendation", content: "Use the surviving panel output as incomplete evidence, not a final fusion recommendation." },
+    {
+      title: "Risks",
+      content: `Coverage is incomplete; ${input.failures.length} panelist(s) were unavailable${input.failures.some((failure) => failure.reason === "timeout") ? " (including timeout failures)" : ""}. Fusion did not retry any panelist.`,
+    },
+    { title: "Next Step", content: "Inspect the unavailable perspectives; after this terminal run, manually start a new /fusion run if full coverage is needed." },
+    { title: "Run Metadata", content: formatRunMetadata(input.run) },
+  ];
+  const runDetails = formatRunDetails({
+    panelOutputs: input.panelOutputs,
+    failures: input.failures,
+    ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
+    synthesis: input.synthesis,
+  });
+  if (runDetails) sections.splice(-1, 0, runDetails);
+  return renderReport(sections);
+}
+
 export function renderJudgeReport(input: RenderJudgeReportInput): string {
   const panelOutputs = input.panelOutputs ?? [];
   const failures = input.failures ?? [];
@@ -402,7 +475,10 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
   const reportSections: ReportSection[] = [
     {
       title: "Summary",
-      content: sections.get("Summary") ?? judgeSummary(panelOutputs, failures),
+      content:
+        input.run.completionQuality === "partial"
+          ? `Partial panel coverage: ${panelOutputs.length} successful panelist(s) and ${failures.length} unavailable perspective(s) were synthesized. ${sections.get("Summary") ?? ""}`.trim()
+          : (sections.get("Summary") ?? judgeSummary(panelOutputs, failures)),
     },
     {
       title: "Agent Status",
@@ -412,6 +488,9 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
         judgeStatus: "succeeded",
         ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
         ...(input.synthesis ? { synthesis: input.synthesis } : {}),
+        ...(input.run.completionQuality === "partial"
+          ? { extra: ["- Completion quality: partial (incomplete coverage)"] }
+          : {}),
       }),
     },
     ...synthesisSections,
@@ -421,7 +500,10 @@ export function renderJudgeReport(input: RenderJudgeReportInput): string {
     },
     {
       title: "Risks",
-      content: sections.get("Risks") ?? "Not specified by the judge.",
+      content:
+        input.run.completionQuality === "partial"
+          ? `Incomplete coverage: unavailable panel perspectives${failures.some((failure) => failure.reason === "timeout") ? " include timeout failures" : ""}. ${sections.get("Risks") ?? ""}`.trim()
+          : (sections.get("Risks") ?? "Not specified by the judge."),
     },
     {
       title: "Next Step",

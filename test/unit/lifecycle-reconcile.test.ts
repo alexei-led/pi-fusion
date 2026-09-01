@@ -26,6 +26,91 @@ const eventSuccesses = (outputs: string[]): ExtractPanelResultsSuccess => ({
   failures: [],
 });
 
+test("deadline reconciliation preserves completed status output over a stale event failure", () => {
+  const profile: FusionProfile = { ...PROFILE, panel: PROFILE.panel.slice(0, 2) };
+  const result = reconcilePanelResults(
+    {
+      ok: true,
+      outputs: [
+        { index: 1, agent: "panel-agent", output: "Event verified output." },
+      ],
+      failures: [
+        { index: 0, agent: "panel-agent", summary: "Stale event failure." },
+      ],
+    },
+    {
+      steps: [
+        {
+          key: "panel-1",
+          agent: "panel-agent",
+          status: "completed",
+          output: "Authoritative status output.",
+        },
+        { key: "panel-2", agent: "panel-agent", status: "running" },
+      ],
+    },
+    profile,
+    {
+      results: [
+        { key: "panel-1", agent: "panel-agent", success: false, error: "Stale failure." },
+        { key: "panel-2", agent: "panel-agent", success: true, output: "Event verified output." },
+      ],
+    },
+    { terminalizeRunning: true },
+  );
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(
+      result.outputs.map(({ index, output }) => ({ index, output })),
+      [
+        { index: 0, output: "Authoritative status output." },
+        { index: 1, output: "Event verified output." },
+      ],
+    );
+    assert.deepEqual(result.failures, []);
+  }
+});
+
+test("deadline reconciliation matches zero-based numeric lifecycle slots", () => {
+  const profile: FusionProfile = { ...PROFILE, panel: PROFILE.panel.slice(0, 2) };
+  for (const field of ["index", "taskIndex", "stepIndex"] as const) {
+    const result = reconcilePanelResults(
+      {
+        ok: true,
+        outputs: [{ index: 1, agent: "panel-agent", output: `${field} event output` }],
+        failures: [{ index: 0, agent: "panel-agent", summary: "stale event failure" }],
+      },
+      {
+        steps: [
+          { index: 0, status: "completed", output: "status slot zero" },
+          { [field]: 1, status: "running" },
+        ],
+      },
+      profile,
+      {
+        results: [
+          { index: 0, success: false, error: "stale event failure" },
+          { [field]: 1, success: true, output: `${field} event output` },
+        ],
+      },
+      { terminalizeRunning: true },
+    );
+
+    assert.equal(result.ok, true, field);
+    if (result.ok) {
+      assert.deepEqual(
+        result.outputs.map(({ index, output }) => ({ index, output })),
+        [
+          { index: 0, output: "status slot zero" },
+          { index: 1, output: `${field} event output` },
+        ],
+        field,
+      );
+    }
+  }
+});
+
 test("uses complete status steps to restore failures omitted by compact events", () => {
   const result = reconcilePanelResults(
     eventSuccesses(["operator", "skeptic"]),
@@ -50,16 +135,21 @@ test("uses complete status steps to restore failures omitted by compact events",
   }
 });
 
-test("rejects an explicit empty terminal steps array", () => {
-  const result = reconcilePanelResults(
-    eventSuccesses(["a", "b", "c", "d"]),
-    { steps: [] },
-    PROFILE,
-    { results: [{ output: "a" }, { output: "b" }, { output: "c" }, { output: "d" }] },
-  );
+test("rejects explicit empty terminal status arrays rather than treating them as absent", () => {
+  for (const statusPayload of [
+    { state: "complete", steps: [] },
+    { state: "complete", results: [] },
+  ]) {
+    const result = reconcilePanelResults(
+      eventSuccesses(["a", "b", "c", "d"]),
+      statusPayload,
+      PROFILE,
+      { results: [{ output: "a" }, { output: "b" }, { output: "c" }, { output: "d" }] },
+    );
 
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.error.message, /status described 0 of 4/);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error.message, /status described 0 of 4/);
+  }
 });
 
 test("rejects extra status steps instead of truncating them", () => {

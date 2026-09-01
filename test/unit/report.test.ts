@@ -5,6 +5,7 @@ import {
   renderFailureReport,
   renderJudgeReport,
   renderPanelFailureReport,
+  renderPartialPanelReport,
   renderSinglePanelReport,
 } from "../../src/report.js";
 import type { FailedPanelSummary, PanelOutput } from "../../src/run-builder.js";
@@ -773,6 +774,23 @@ test("blind restoration falls back when a label is blank", () => {
 
   assert.match(report, /architect and Panelist 2 agree\./);
   assert.doesNotMatch(report, /Candidate [AB]/);
+});
+
+test("merge partial reports list only facets with no surviving output", () => {
+  const report = renderPartialPanelReport({
+    run: RUN_PANEL,
+    panelOutputs: [{ index: 0, agent: "a", output: "security covered" }],
+    failures: [{ index: 1, agent: "b", summary: "timeout" }],
+    required: 2,
+    synthesis: "merge",
+    panel: [
+      { id: "security", label: "Security", agent: "a", question: "security facet" },
+      { id: "perf", label: "Performance", agent: "b", question: "performance facet" },
+    ],
+  });
+  const gaps = report.match(/## Gaps\n([\s\S]*?)(?=\n## |$)/)?.[1] ?? "";
+  assert.doesNotMatch(gaps, /Security/);
+  assert.match(gaps, /Performance/);
 });
 
 test("merge failure report names the uncovered facets", () => {

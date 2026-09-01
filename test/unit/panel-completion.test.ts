@@ -68,7 +68,7 @@ test("decidePanelCompletion returns a failure report when no panelists succeed",
   assert.match(decision.report, /No panelists completed successfully/);
 });
 
-test("decidePanelCompletion fails closed when only one of multiple panelists succeeds", () => {
+test("decidePanelCompletion returns an explicitly partial report below quorum", () => {
   const decision = decidePanelCompletion({
     run: makeRun(),
     profile: PROFILE,
@@ -76,9 +76,21 @@ test("decidePanelCompletion fails closed when only one of multiple panelists suc
     panelFailures: [makeFailure(1, "timed out")],
   });
 
-  assert.equal(decision.kind, "fail");
-  assert.match(decision.error, /Only 1 of 2 fusion panelists completed/);
+  assert.equal(decision.kind, "complete");
+  assert.match(decision.report, /Partial panel coverage/);
   assert.match(decision.report, /timed out/);
+});
+
+test("decidePanelCompletion fails rather than emitting an out-of-contract partial report", () => {
+  const decision = decidePanelCompletion({
+    run: { ...makeRun(), prompt: EXACT_REVIEW_PROMPT },
+    profile: PROFILE,
+    panelOutputs: [makeOutput(0, "NO_FINDINGS")],
+    panelFailures: [makeFailure(1, "timed out")],
+  });
+
+  assert.equal(decision.kind, "fail");
+  assert.match(decision.error, /contract-compliant result from below-quorum/);
 });
 
 test("decidePanelCompletion does not treat one stopped survivor as agreement", () => {
@@ -94,7 +106,8 @@ test("decidePanelCompletion does not treat one stopped survivor as agreement", (
     ],
   });
 
-  assert.equal(decision.kind, "fail");
+  assert.equal(decision.kind, "complete");
+  assert.match(decision.report, /below the required quorum/);
 });
 
 test("decidePanelCompletion completes a configured single-member panel", () => {
@@ -123,6 +136,50 @@ test("decidePanelCompletion rejects invalid exact output from a single-member pa
 
   assert.equal(decision.kind, "fail");
   assert.match(decision.error, /violated the exact caller output contract/);
+});
+
+test("merge singleton uses the partial coverage path and preserves exact contracts", () => {
+  const profile = {
+    ...PROFILE,
+    panel: [PROFILE.panel[0]!],
+    synthesis: "merge" as const,
+  };
+  const partial = decidePanelCompletion({
+    run: makeRun(),
+    profile,
+    panelOutputs: [makeOutput(0, "security facet")],
+    panelFailures: [],
+  });
+  assert.equal(partial.kind, "complete");
+  if (partial.kind === "complete") {
+    assert.match(partial.report, /Partial panel coverage/);
+    assert.match(partial.report, /Coverage Map/);
+    assert.doesNotMatch(partial.report, /skipped the judge step/);
+  }
+
+  const exact = decidePanelCompletion({
+    run: { ...makeRun(), prompt: EXACT_REVIEW_PROMPT },
+    profile,
+    panelOutputs: [makeOutput(0, "NO_FINDINGS")],
+    panelFailures: [],
+  });
+  assert.equal(exact.kind, "fail");
+  if (exact.kind === "fail") {
+    assert.match(exact.error, /contract-compliant result from below-quorum/);
+  }
+});
+
+test("numeric quorum one is raised to a truthful two-candidate synthesis quorum", () => {
+  const decision = decidePanelCompletion({
+    run: { ...makeRun(), minimumSuccessfulPanelists: 1 },
+    profile: PROFILE,
+    panelOutputs: [makeOutput(0, "Choose A.")],
+    panelFailures: [makeFailure(1, "timed out")],
+  });
+  assert.equal(decision.kind, "complete");
+  if (decision.kind === "complete") {
+    assert.match(decision.report, /required quorum of 2/);
+  }
 });
 
 test("decidePanelCompletion prepares a standard judge spawn when multiple panelists succeed", () => {
@@ -195,8 +252,9 @@ test("merge synthesis never returns a lone panelist as the answer", () => {
     panelFailures: [makeFailure(1, "timed out")],
   });
 
-  assert.equal(merged.kind, "fail");
-  assert.match(merged.error, /Only 1 of 2 fusion panelists/);
+  assert.equal(merged.kind, "complete");
+  assert.match(merged.report, /Partial coverage only/);
+  assert.match(merged.report, /timed out/);
 });
 
 test("select synthesis reports every failed panelist when quorum is lost", () => {
@@ -207,8 +265,9 @@ test("select synthesis reports every failed panelist when quorum is lost", () =>
     panelFailures: [makeFailure(1, "provider unavailable")],
   });
 
-  assert.equal(selected.kind, "fail");
+  assert.equal(selected.kind, "complete");
   assert.match(selected.report, /provider unavailable/);
+  assert.match(selected.report, /Fusion did not retry/);
 });
 
 test("merge synthesis still fails when no panelist succeeds", () => {

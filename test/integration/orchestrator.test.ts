@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   FusionOrchestrator,
@@ -340,7 +343,7 @@ test("chain completion with zero successful panelists fails with a clear report"
   assert.equal(fixture.ui.lastStatus("fusion"), undefined);
 });
 
-test("panel completion with one success fails closed when quorum is lost", async () => {
+test("panel completion with one success produces an unsynthesized partial report", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("chain-1", {
@@ -356,13 +359,10 @@ test("panel completion with one success fails closed when quorum is lost", async
     runId: "chain-1",
   });
 
-  assert.equal(result.status, "failed");
+  assert.equal(result.status, "done");
   assert.equal(fixture.rpc.spawns.length, 1);
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
-  assert.match(
-    fixture.messages.at(-1)?.content ?? "",
-    /Only 1 of 2 fusion panelists completed successfully/,
-  );
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Partial panel coverage/);
   assert.match(fixture.messages.at(-1)?.content ?? "", /boom/);
 });
 
@@ -441,25 +441,180 @@ test("judge spawn preserves a synchronous subagent model error", async () => {
   assert.match(fixture.messages.at(-1)?.content ?? "", /Model not found/);
 });
 
-test("panel completion uses event results when RPC status has no result details", async () => {
+test("stops a panel run when persisting its returned ID fails", async () => {
+  const fixture = makeFixture();
+  const update = fixture.runStore.updateRun.bind(fixture.runStore);
+  fixture.runStore.updateRun = (id, patch) => {
+    if (patch.panelRunId !== undefined) throw new Error("session write failed");
+    return update(id, patch);
+  };
+
+  const result = await fixture.orchestrator.startRun("compare", fixture.ctx);
+
+  assert.equal(result.status, "failed");
+  assert.deepEqual(fixture.rpc.stops, [{ id: "chain-1" }]);
+});
+
+test("stops a judge run when persisting its returned ID fails", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  const update = fixture.runStore.updateRun.bind(fixture.runStore);
+  fixture.runStore.updateRun = (id, patch) => {
+    if (patch.judgeRunId !== undefined) throw new Error("session write failed");
+    return update(id, patch);
+  };
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+
+  const result = await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+
+  assert.equal(result.status, "failed");
+  assert.deepEqual(fixture.rpc.stops, [{ id: "judge-1" }]);
+});
+
+test("explicit empty terminal status results override a complete panel event", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set(
     "chain-1",
-    completedStatusWithoutResults("chain-1"),
+    completedStatusWithEmptyResults("chain-1"),
   );
 
-  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
   const result = await fixture.orchestrator.handleSubagentComplete(
     successfulPanelStatus("chain-1"),
   );
 
-  assert.equal(result.status, "started");
-  assert.equal(fixture.rpc.spawns.length, 2);
-  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(result.status, "failed");
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(result.error, /status described 0 of 2 configured panel members/);
 });
 
-test("terminal workflow status restores failures and blocks incomplete quorum", async () => {
+test("compact completion events map reordered public panel slots", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", completedStatusWithoutResults("chain-1"));
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-2", success: true, output: "Tester answer." },
+      { agent: "panel-1", success: true, output: "Architect answer." },
+    ],
+  });
+
+  assert.equal(result.status, "started");
+  assert.deepEqual(
+    fixture.orchestrator.getActiveRun()?.panelOutputs?.map(({ index, output }) => ({ index, output })),
+    [
+      { index: 0, output: "Architect answer." },
+      { index: 1, output: "Tester answer." },
+    ],
+  );
+});
+
+test("compact completion events without public panel slots fail closed", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", completedStatusWithoutResults("chain-1"));
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "complete",
+    results: [{ agent: "panel-agent", success: true, output: "ambiguous" }],
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.error, /stable workflow slot identity/);
+});
+
+test("full result artifact beats a truncated completion event and reaches the judge", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-fusion-artifact-"));
+  const asyncDir = join(root, "async-subagent-runs", "chain-1");
+  try {
+    await mkdir(asyncDir, { recursive: true });
+    await mkdir(join(root, "async-subagent-results"), { recursive: true });
+    const longEndMarker = "END-MARKER-VERIFIED-OUTPUT";
+    await writeFile(
+      join(root, "async-subagent-results", "chain-1.json"),
+      JSON.stringify({
+        runId: "chain-1",
+        state: "complete",
+        results: [
+          { agent: "panel-agent", success: true, output: `Architect ${longEndMarker}` },
+          { agent: "panel-agent", success: true, output: "Tester complete output." },
+        ],
+      }),
+    );
+    const fixture = makeFixture();
+    fixture.rpc.spawnResults[0] = {
+      details: { runId: "chain-1", asyncDir },
+    };
+    fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+    await fixture.orchestrator.startRun("compare", fixture.ctx);
+
+    const result = await fixture.orchestrator.handleSubagentComplete({
+      runId: "chain-1",
+      state: "complete",
+      results: [{ agent: "panel-agent", success: true, output: "Architect trunc" }],
+    });
+
+    assert.equal(result.status, "started");
+    assert.match(judgeWorkflowTask(fixture.rpc.spawns[1]).task, new RegExp(longEndMarker));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workflow deadline preserves completed status output over a stale event failure", async () => {
+  const config = structuredClone(CONFIG);
+  config.profiles.quality!.minimumSuccessfulPanelists = "all";
+  const fixture = makeFixture({ config });
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    mode: "workflow",
+    state: "failed",
+    error: "Workflow script timed out after 300000ms.",
+    steps: [
+      {
+        key: "panel-1",
+        agent: "panel-agent",
+        status: "completed",
+        output: "Authoritative architect output.",
+      },
+      { key: "panel-2", agent: "panel-agent", status: "running" },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "failed",
+    error: "Workflow script timed out after 300000ms.",
+    results: [
+      { key: "panel-1", agent: "panel-agent", success: false, error: "Stale failure." },
+      { key: "panel-2", agent: "panel-agent", success: true, output: "Event tester output." },
+    ],
+  });
+
+  assert.equal(result.status, "started");
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.deepEqual(
+    fixture.orchestrator.getActiveRun()?.panelOutputs?.map(
+      ({ index, output }) => ({ index, output }),
+    ),
+    [
+      { index: 0, output: "Authoritative architect output." },
+      { index: 1, output: "Event tester output." },
+    ],
+  );
+  assert.deepEqual(fixture.orchestrator.getActiveRun()?.panelFailures, []);
+  assert.equal(fixture.rpc.spawns.length, 2);
+});
+
+test("terminal workflow status restores failures and synthesizes at majority quorum", async () => {
   const config = structuredClone(CONFIG);
   config.profiles.quality!.panel = [
     { id: "architect", label: "Architect", agent: "panel-agent" },
@@ -501,10 +656,30 @@ test("terminal workflow status restores failures and blocks incomplete quorum", 
     ],
   });
 
-  assert.equal(result.status, "failed");
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
-  assert.match(result.error, /Only 2 of 4 fusion panelists/);
-  assert.match(result.report ?? "", /Failed panelists: 2/);
+  assert.equal(result.status, "started");
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.equal(fixture.rpc.spawns.length, 2);
+  assert.deepEqual(
+    fixture.orchestrator.getActiveRun()?.panelFailures?.map((failure) => failure.index),
+    [0, 1],
+  );
+  fixture.rpc.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "complete",
+    results: [
+      {
+        agent: "judge-agent",
+        success: true,
+        output: "# Fusion Report\n\n## Recommendation\nProceed carefully.",
+      },
+    ],
+  });
+  const completed = await fixture.orchestrator.handleSubagentComplete({
+    runId: "judge-1",
+  });
+  assert.equal(completed.status, "done");
+  assert.match(completed.report, /Partial panel coverage/);
+  assert.match(completed.report, /Workflow script timed out/);
 });
 
 test("incomplete terminal lifecycle data fails closed", async () => {
@@ -608,7 +783,7 @@ test("complete terminal status takes precedence over conflicting event results",
   });
 
   assert.equal(result.status, "failed");
-  assert.match(result.error, /Only 1 of 2 fusion panelists completed/);
+  assert.match(result.error, /event and status disagree/);
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
 });
 
@@ -662,6 +837,10 @@ test("partial status results do not finish a running panel", async () => {
 
   assert.equal(fixture.rpc.spawns.length, 1);
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, "panel");
+  assert.deepEqual(
+    fixture.orchestrator.getActiveRun()?.panelOutputs?.map((output) => output.output),
+    ["Architect says A."],
+  );
 });
 
 test("matching events with partial results do not finish a running panel", async () => {
@@ -820,7 +999,46 @@ test("panel agreement stops unfinished work and still runs the judge", async () 
   );
 });
 
-test("workflow panel waits for the result artifact after terminal status is written", async () => {
+test("panel agreement does not stop work before an all quorum is met", async () => {
+  const config = structuredClone(CONFIG);
+  config.profiles.quality!.panel.push({
+    id: "skeptic",
+    label: "Skeptic",
+    agent: "panel-agent",
+  });
+  config.profiles.quality!.minimumSuccessfulPanelists = "all";
+  config.profiles.quality!.stopWhenPanelAgrees = true;
+  const fixture = makeFixture({ config });
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "running",
+    steps: [
+      {
+        agent: "panel-1",
+        status: "completed",
+        output: panelDecisionOutput("Choose A.").join("\n"),
+      },
+      {
+        agent: "panel-2",
+        status: "completed",
+        output: panelDecisionOutput("Choose A.").join("\n"),
+      },
+      { agent: "panel-3", status: "running" },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "running",
+  });
+
+  assert.equal(result.status, "ignored");
+  assert.deepEqual(fixture.rpc.stops, []);
+  assert.equal(fixture.orchestrator.getActiveRun()?.panelStopReason, undefined);
+});
+
+test("workflow panel waits for the result artifact instead of accepting a compact completion event", async () => {
   const fixture = makeFixture();
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
   await fixture.orchestrator.startRun("compare", fixture.ctx);
@@ -837,6 +1055,14 @@ test("workflow panel waits for the result artifact after terminal status is writ
 
   const pending = await fixture.orchestrator.handleSubagentComplete({
     runId: "chain-1",
+    state: "complete",
+    results: [
+      {
+        agent: "panel-agent",
+        success: true,
+        output: "Architect output truncated by completion event...",
+      },
+    ],
   });
 
   assert.equal(pending.status, "ignored");
@@ -901,12 +1127,12 @@ test("workflow agreement emit records skipped panelists and starts the judge", a
   );
 });
 
-test("panel completion fails closed when terminal status omits every result", async () => {
+test("panel completion fails closed when terminal status explicitly contains no results", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set(
     "chain-1",
-    completedStatusWithoutResults("chain-1"),
+    completedStatusWithEmptyResults("chain-1"),
   );
 
   const result = await fixture.orchestrator.handleSubagentComplete({
@@ -917,7 +1143,7 @@ test("panel completion fails closed when terminal status omits every result", as
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
   assert.match(
     fixture.messages.at(-1)?.content ?? "",
-    /Terminal subagents data described 0 of 2 configured panel members/,
+    /Terminal subagents status described 0 of 2 configured panel members/,
   );
 });
 
@@ -1182,7 +1408,7 @@ test("cancelActiveRun does not throw when completion wins during stop", async ()
   assert.equal(
     (await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" }))
       .status,
-    "failed",
+    "done",
   );
 
   resolveStop({ ok: true });
@@ -1240,8 +1466,14 @@ function successfulPanelStatus(runId = "panel-1"): unknown {
     runId,
     state: "complete",
     results: [
-      { agent: "panel-agent", success: true, output: "Architect says A." },
       {
+        key: "panel-1",
+        agent: "panel-agent",
+        success: true,
+        output: "Architect says A.",
+      },
+      {
+        key: "panel-2",
         agent: "panel-agent",
         success: true,
         output: "Tester says A is testable.",
@@ -1274,9 +1506,214 @@ function panelDecision(recommendation: string): Record<string, unknown> {
 function completedStatusWithoutResults(runId: string): unknown {
   return {
     text: `Run: ${runId}\nState: complete`,
+    details: { mode: "single" },
+  };
+}
+
+function completedStatusWithEmptyResults(runId: string): unknown {
+  return {
+    text: `Run: ${runId}\nState: complete`,
     details: { mode: "single", results: [] },
   };
 }
+
+test("restore fails closed when a panel spawn intent has no persisted remote ID", async () => {
+  const fixture = makeFixture();
+  fixture.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "panel",
+  });
+  fixture.runStore.updateRun("fusion-1", {
+    spawnIntent: { stage: "panel", requestedAt: 1 },
+  });
+
+  await fixture.orchestrator.restore(fixture.ctx);
+
+  assert.equal(fixture.rpc.spawns.length, 0);
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.runStore.getLastRunSummary()?.error ?? "", /will not be replayed/);
+
+  const judgeIntent = makeFixture();
+  judgeIntent.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "panel",
+  });
+  judgeIntent.runStore.updateRun("fusion-1", {
+    panelRunId: "panel-1",
+    spawnIntent: { stage: "judge", requestedAt: 1 },
+  });
+  await judgeIntent.orchestrator.restore(judgeIntent.ctx);
+  assert.equal(judgeIntent.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    judgeIntent.runStore.getLastRunSummary()?.error ?? "",
+    /judge spawn may have reached pi-subagents.*will not be replayed/,
+  );
+});
+
+test("restore terminalizes incomplete phases and legacy slots outside the resolved panel", async () => {
+  const missingJudgeId = makeFixture();
+  missingJudgeId.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "judge",
+  });
+  await missingJudgeId.orchestrator.restore(missingJudgeId.ctx);
+  assert.equal(missingJudgeId.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    missingJudgeId.runStore.getLastRunSummary()?.error ?? "",
+    /judge phase has no persisted judge run ID/,
+  );
+
+  const missingPanelId = makeFixture();
+  missingPanelId.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "panel",
+  });
+  await missingPanelId.orchestrator.restore(missingPanelId.ctx);
+  assert.equal(missingPanelId.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    missingPanelId.runStore.getLastRunSummary()?.error ?? "",
+    /panel phase has no persisted panel run ID/,
+  );
+
+  const invalidLegacySlot = makeFixture();
+  invalidLegacySlot.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "panel",
+  });
+  invalidLegacySlot.runStore.updateRun("fusion-1", {
+    panelRunId: "panel-1",
+    panelOutputs: [{ index: 2, agent: "panel-agent", output: "outside" }],
+  });
+  await invalidLegacySlot.orchestrator.restore(invalidLegacySlot.ctx);
+  assert.equal(invalidLegacySlot.orchestrator.getActiveRun(), undefined);
+  assert.match(
+    invalidLegacySlot.runStore.getLastRunSummary()?.error ?? "",
+    /outside the configured panel/,
+  );
+});
+
+test("deadline compact events with a running omitted slot fail without stable identity", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    mode: "workflow",
+    state: "failed",
+    error: "Workflow timed out",
+    steps: [
+      { agent: "panel-agent", status: "failed", error: "provider failed" },
+      { agent: "panel-agent", status: "running" },
+    ],
+  });
+
+  const result = await fixture.orchestrator.handleSubagentComplete({
+    runId: "chain-1",
+    state: "failed",
+    error: "Workflow timed out",
+    results: [{ agent: "panel-agent", success: true, output: "ambiguous" }],
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.error, /stable workflow slot identity/);
+  assert.equal(fixture.rpc.spawns.length, 1);
+});
+
+test("restored legacy fallback judge uses the persisted effective timeout", async () => {
+  const config = structuredClone(CONFIG);
+  config.profiles.quality!.judgeTimeoutMs = 999;
+  const fixture = makeFixture({ config });
+  fixture.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "chain",
+    effectiveTimeouts: {
+      panelistTimeoutMs: 10,
+      panelTimeoutMs: 20,
+      panelGraceMs: 5,
+      judgeTimeoutMs: 123_456,
+      usesLegacyTimeout: false,
+    },
+  });
+  fixture.runStore.updateRun("fusion-1", { chainRunId: "chain-1" });
+  fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+
+  await fixture.orchestrator.restore(fixture.ctx);
+
+  assert.equal((fixture.rpc.spawns[0] as { timeoutMs?: number }).timeoutMs, 123_456);
+});
+
+test("legacy embedded judge is ignored when current quorum requires a partial report", async () => {
+  const fixture = makeFixture();
+  fixture.runStore.startRun({
+    id: "fusion-1",
+    prompt: "compare",
+    profileName: "quality",
+    phase: "chain",
+    minimumSuccessfulPanelists: "all",
+  });
+  fixture.runStore.updateRun("fusion-1", { chainRunId: "chain-1" });
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-agent", success: true, output: "one answer" },
+      { agent: "panel-agent", success: false, error: "unavailable" },
+      { agent: "judge-agent", success: true, output: "# Fusion Report\n\n## Recommendation\nunsafe judge" },
+    ],
+  });
+
+  await fixture.orchestrator.restore(fixture.ctx);
+
+  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.match(fixture.messages.at(-1)?.content ?? "", /Partial panel coverage/);
+  assert.doesNotMatch(fixture.messages.at(-1)?.content ?? "", /unsafe judge/);
+});
+
+test("startRun rejects blank prompts, profiles, and empty panels without spawning", async () => {
+  const fixture = makeFixture();
+  const blankPrompt = await fixture.orchestrator.startRun(
+    { prompt: "   " },
+    fixture.ctx,
+  );
+  assert.equal(blankPrompt.status, "failed");
+  if (blankPrompt.status === "failed") assert.match(blankPrompt.error, /prompt must not be blank/);
+  const blankProfile = await fixture.orchestrator.startRun(
+    { prompt: "compare", profile: "   " },
+    fixture.ctx,
+  );
+  assert.equal(blankProfile.status, "failed");
+  const emptyPanel = await fixture.orchestrator.startRun(
+    { prompt: "compare", panel: [] },
+    fixture.ctx,
+  );
+  assert.equal(emptyPanel.status, "failed");
+  assert.equal(fixture.rpc.spawns.length, 0);
+});
+
+test("repeated lifecycle polls do not persist duplicate panel snapshots", async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun("compare", fixture.ctx);
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "running",
+    results: [{ agent: "panel-agent", success: true, output: "first answer" }],
+  });
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  const entriesAfterFirstPoll = fixture.entries.length;
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  assert.equal(fixture.entries.length, entriesAfterFirstPoll);
+});
 
 function makeFixture(seed?: {
   entries?: Array<{ type: "custom"; customType: string; data?: unknown }>;
@@ -1394,6 +1831,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+test("merge status labels the persisted judge phase as composer", async () => {
+  const fixture = makeFixture();
+  fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
+
+  await fixture.orchestrator.startRun(
+    { prompt: "review the release", profile: "merge" },
+    fixture.ctx,
+  );
+  fixture.rpc.statusResults.set("chain-1", {
+    runId: "chain-1",
+    state: "complete",
+    results: [
+      { agent: "panel-agent", success: true, output: "Security facet." },
+      { agent: "panel-agent", success: true, output: "Perf facet." },
+    ],
+  });
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  fixture.rpc.statusResults.set("judge-1", {
+    runId: "judge-1",
+    state: "running",
+    results: [{ agent: "pi-fusion.fusion-composer", status: "running" }],
+  });
+
+  const composerStatus = await fixture.orchestrator.showStatus(fixture.ctx);
+
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, "judge");
+  assert.match(composerStatus, /Phase: composer/);
+  assert.match(composerStatus, /Composer run: judge-1/);
+  assert.match(composerStatus, /\nComposer\n- Status: running/);
+  assert.match(fixture.ui.lastStatus("fusion") ?? "", /fusion: composer/);
+
+  fixture.runStore.updateRun("fusion-1", { chainRunId: "legacy-chain-1" });
+  const fallbackStatus = await fixture.orchestrator.showStatus(fixture.ctx);
+
+  assert.match(fallbackStatus, /Phase: fallback composer/);
+  assert.match(fallbackStatus, /Fallback composer run: judge-1/);
+  assert.match(fallbackStatus, /\nFallback composer\n- Status: running/);
+});
+
 test("merge run reaches done through the composer and emits no new phase", async () => {
   const fixture = makeFixture();
   const phases: string[] = [];
@@ -1460,7 +1936,7 @@ test("merge run reaches done through the composer and emits no new phase", async
   }
 });
 
-test("merge run with one failed panelist fails closed", async () => {
+test("merge run with one failed panelist posts partial coverage", async () => {
   const fixture = makeFixture();
   fixture.rpc.spawnResults.push({ details: { runId: "judge-1" } });
 
@@ -1481,9 +1957,10 @@ test("merge run with one failed panelist fails closed", async () => {
     runId: "chain-1",
   });
 
-  assert.equal(panelResult.status, "failed");
+  assert.equal(panelResult.status, "done");
   assert.equal(fixture.rpc.spawns.length, 1);
-  assert.match(panelResult.error, /Only 1 of 2 fusion panelists/);
+  assert.match(panelResult.report, /Partial panel coverage/);
+  assert.match(panelResult.report, /Security facet/);
 });
 
 test("select run is unchanged end to end", async () => {
@@ -1498,6 +1975,61 @@ test("select run is unchanged end to end", async () => {
   assert.equal(synthesisSpawn.agent, "judge-agent");
   assert.match(synthesisSpawn.task, /You are the fusion judge\./);
   assert.doesNotMatch(synthesisSpawn.task, /Facet assignments:/);
+});
+
+test("restore uses the durable start profile after panel and synthesis config drift", async () => {
+  const startConfig = structuredClone(CONFIG);
+  startConfig.profiles.quality!.panel = [
+    {
+      id: "architect",
+      label: "Original Architect",
+      agent: "panel-agent",
+      model: "original-model",
+      role: "original architecture role",
+    },
+    {
+      id: "tester",
+      label: "Original Tester",
+      agent: "panel-agent",
+      model: "original-test-model",
+      role: "original testing role",
+    },
+  ];
+  startConfig.profiles.quality!.judge = { agent: "judge-agent", model: "original-judge" };
+  const first = makeFixture({ config: startConfig });
+  await first.orchestrator.startRun("compare", first.ctx);
+
+  const persisted = first.orchestrator.getActiveRun();
+  assert.deepEqual(persisted?.profileSnapshot, {
+    panel: startConfig.profiles.quality!.panel,
+    judge: startConfig.profiles.quality!.judge,
+    minimumSuccessfulPanelists: 1,
+    context: "fresh",
+  });
+  assert.equal(persisted?.minimumSuccessfulPanelists, undefined);
+
+  const changedConfig = structuredClone(CONFIG);
+  changedConfig.profiles.quality!.panel = [
+    { id: "replacement", label: "Replacement", agent: "replacement-agent", question: "Different facet" },
+    { id: "other", label: "Other", agent: "replacement-agent", question: "Another facet" },
+    { id: "third", label: "Third", agent: "replacement-agent", question: "Last facet" },
+  ];
+  changedConfig.profiles.quality!.judge = { agent: "pi-fusion.fusion-judge", model: "changed-judge" };
+  changedConfig.profiles.quality!.synthesis = "merge";
+  changedConfig.profiles.quality!.minimumSuccessfulPanelists = "all";
+
+  const second = makeFixture({ entries: first.entries, config: changedConfig });
+  second.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+  second.rpc.spawnResults[0] = { details: { runId: "judge-1" } };
+  await second.orchestrator.restore(second.ctx);
+
+  const synthesisSpawn = judgeWorkflowTask(second.rpc.spawns[0]);
+  assert.equal(synthesisSpawn.agent, "judge-agent");
+  assert.match(synthesisSpawn.task, /You are the fusion judge\./);
+  assert.match(synthesisSpawn.task, /Original Architect/);
+  assert.doesNotMatch(synthesisSpawn.task, /Replacement/);
+  assert.doesNotMatch(synthesisSpawn.task, /Facet assignments:/);
+  assert.equal(second.orchestrator.getActiveRun()?.profileSnapshot?.minimumSuccessfulPanelists, 1);
 });
 
 test("an inline --panel run survives a restore", async () => {

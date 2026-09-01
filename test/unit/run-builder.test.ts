@@ -168,6 +168,32 @@ test("buildPanelSpawnParams adds a decision record only for agreement stopping",
   assert.match(params.workflowScript, /pi-fusion-panel-stop/);
 });
 
+test("agreement workflow uses the resolved all quorum for a four-member panel", () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    panel: [
+      ...PROFILE.panel,
+      { id: "operator", label: "Operator", agent: "pi-fusion.fusion-panelist" },
+    ],
+    concurrency: 4,
+    minimumSuccessfulPanelists: "all",
+    stopWhenPanelAgrees: true,
+  };
+
+  const params = buildPanelSpawnParams(profile, "Compare two API designs");
+
+  assert.match(params.workflowScript, /const concurrency = 4;/);
+  assert.match(
+    params.workflowScript,
+    /const requiredSuccessfulPanelists = 4;/,
+  );
+  assert.match(
+    params.workflowScript,
+    /decisions\.length >= requiredSuccessfulPanelists/,
+  );
+  assert.doesNotMatch(params.workflowScript, /decisions\.length >= 2/);
+});
+
 test("buildPanelSpawnParams includes role, prompt, contract, and read-only instruction", () => {
   const params = buildPanelSpawnParams(PROFILE, "Compare two API designs");
   const task = workflowTasks(params)[0]?.task ?? "";
@@ -414,7 +440,7 @@ test("buildPanelSpawnParams matches the pre-change task baseline apart from reli
   };
   assert.deepEqual(
     workflowTasks(actual).map(
-      ({ key: _key, toolBudget: _toolBudget, ...task }) => task,
+      ({ key: _key, toolBudget: _toolBudget, timeoutMs: _timeoutMs, ...task }) => task,
     ),
     expected.tasks,
   );
@@ -673,6 +699,35 @@ test("stage-specific timeouts override the legacy shared timeout", () => {
       runId: "run-timeouts",
     }).timeoutMs,
     900_000,
+  );
+});
+
+test("buildJudgeSpawnParams honors a persisted effective judge timeout", () => {
+  const spawn = buildJudgeWorkflowSpawnParams({
+    profile: PROFILE,
+    prompt: "compare",
+    panelOutputs: [],
+    failedPanelists: [],
+    runId: "run-1",
+    effectiveTimeouts: {
+      panelistTimeoutMs: 10,
+      panelTimeoutMs: 20,
+      panelGraceMs: 5,
+      judgeTimeoutMs: 123_456,
+      usesLegacyTimeout: false,
+    },
+  });
+  assert.equal(spawn.timeoutMs, 123_456);
+});
+
+test("rejects a panel grace interval that consumes the whole panel deadline", () => {
+  assert.throws(
+    () =>
+      buildPanelSpawnParams(
+        { ...PROFILE, panelTimeoutMs: 5_000, panelGraceMs: 5_000 },
+        "Compare two API designs",
+      ),
+    /panelGraceMs \(5000ms\) must be shorter than panelTimeoutMs \(5000ms\)/,
   );
 });
 

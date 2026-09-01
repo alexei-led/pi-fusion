@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   FusionPhase,
+  FusionProfileSnapshot,
+  FusionRecoveryState,
   FusionRun,
   ModelAttempt,
   PanelDecision,
@@ -25,6 +27,9 @@ export type FusionRunSummary = Omit<
     | "profileName"
     | "operationId"
     | "outputContract"
+    | "completionQuality"
+    | "effectiveTimeouts"
+    | "recovery"
     | "phase"
     | "createdAt"
     | "updatedAt"
@@ -45,6 +50,10 @@ export interface FusionRunStartInput {
   baseProfileName?: string;
   operationId?: string;
   outputContract?: FusionRun["outputContract"];
+  minimumSuccessfulPanelists?: FusionRun["minimumSuccessfulPanelists"];
+  profileSnapshot?: FusionRun["profileSnapshot"];
+  timeoutOverrides?: FusionRun["timeoutOverrides"];
+  effectiveTimeouts?: FusionRun["effectiveTimeouts"];
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
 }
@@ -60,8 +69,12 @@ export interface FusionRunPatch {
   judgeRunId?: string;
   judgeAsyncDir?: string;
   judgeObservation?: FusionRun["judgeObservation"];
+  completionQuality?: FusionRun["completionQuality"];
   panelOutputs?: FusionRun["panelOutputs"];
   panelFailures?: FusionRun["panelFailures"];
+  recovery?: FusionRun["recovery"];
+  /** `null` clears an intent once the RPC returned its durable remote ID. */
+  spawnIntent?: FusionRun["spawnIntent"] | null;
   report?: string;
   error?: string;
   updatedAt?: number;
@@ -71,6 +84,8 @@ export interface FusionRunTransitionPatch {
   chainRunId?: string;
   panelRunId?: string;
   judgeRunId?: string;
+  recovery?: FusionRun["recovery"];
+  spawnIntent?: FusionRun["spawnIntent"];
   report?: string;
   error?: string;
   updatedAt?: number;
@@ -107,6 +122,7 @@ export class FusionRunStore {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly persistence: FusionRunStorePersistence | undefined;
+  private restoreError: string | undefined;
 
   constructor(options: FusionRunStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -132,6 +148,11 @@ export class FusionRunStore {
   getRunByOperationId(operationId: string): FusionRun | undefined {
     const runId = this.runIdsByOperationId.get(operationId);
     return runId ? this.getRunById(runId) : undefined;
+  }
+
+  /** A corrupt newest snapshot must never revive an older active run. */
+  getRestoreError(): string | undefined {
+    return this.restoreError;
   }
 
   startRun(input: FusionRunStartInput): FusionRun {
@@ -167,13 +188,25 @@ export class FusionRunStore {
       ...(input.outputContract !== undefined
         ? { outputContract: input.outputContract }
         : {}),
+      ...(input.minimumSuccessfulPanelists !== undefined
+        ? { minimumSuccessfulPanelists: input.minimumSuccessfulPanelists }
+        : {}),
+      ...(input.profileSnapshot !== undefined
+        ? { profileSnapshot: cloneProfileSnapshot(input.profileSnapshot) }
+        : {}),
+      ...(input.timeoutOverrides !== undefined
+        ? { timeoutOverrides: { ...input.timeoutOverrides } }
+        : {}),
+      ...(input.effectiveTimeouts !== undefined
+        ? { effectiveTimeouts: { ...input.effectiveTimeouts } }
+        : {}),
       phase: input.phase ?? "chain",
       createdAt,
       updatedAt: createdAt,
     };
+    this.persistRun(run);
     this.activeRun = run;
     this.rememberRun(run);
-    this.persistRun(run);
     return cloneRun(run);
   }
 
@@ -221,11 +254,26 @@ export class FusionRunStore {
   restoreFromEntries(
     entries: readonly unknown[],
   ): FusionRunSummary | undefined {
-    const states = readFusionRunStates(entries);
+    this.restoreError = undefined;
     this.runsById.clear();
     this.runIdsByOperationId.clear();
-    for (const state of states) this.rememberRun(state);
 
+    const latestPersisted = lastFusionRunEnvelope(entries);
+    if (
+      latestPersisted &&
+      (!isFusionRunEntry(latestPersisted) || !isFusionRunState(latestPersisted.data))
+    ) {
+      // History readers may skip malformed entries, but restore must not adopt
+      // an older active state after a newer snapshot was corrupted.
+      this.activeRun = undefined;
+      this.lastRunSummary = undefined;
+      this.restoreError =
+        "Latest persisted fusion run snapshot is invalid; refusing stale active-run recovery.";
+      return undefined;
+    }
+
+    const states = readFusionRunStates(entries);
+    for (const state of states) this.rememberRun(state);
     const latestState = states.at(-1);
     const summary = readLastFusionRunSummary(entries);
     this.activeRun =
@@ -346,11 +394,19 @@ function applyPatch(
   if (patch.judgeObservation !== undefined) {
     updated.judgeObservation = cloneObservation(patch.judgeObservation);
   }
+  if (patch.completionQuality !== undefined) {
+    updated.completionQuality = patch.completionQuality;
+  }
   if (patch.panelOutputs !== undefined) {
     updated.panelOutputs = clonePanelOutputs(patch.panelOutputs);
   }
   if (patch.panelFailures !== undefined) {
     updated.panelFailures = clonePanelFailures(patch.panelFailures);
+  }
+  if (patch.recovery !== undefined) updated.recovery = cloneRecovery(patch.recovery);
+  if (patch.spawnIntent === null) delete updated.spawnIntent;
+  else if (patch.spawnIntent !== undefined) {
+    updated.spawnIntent = cloneSpawnIntent(patch.spawnIntent);
   }
   if (patch.report !== undefined) updated.report = patch.report;
   if (patch.error !== undefined) updated.error = patch.error;
@@ -371,6 +427,10 @@ function applyTransitionPatch(
   if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
+  if (patch.recovery !== undefined) updated.recovery = cloneRecovery(patch.recovery);
+  if (patch.spawnIntent !== undefined) {
+    updated.spawnIntent = cloneSpawnIntent(patch.spawnIntent);
+  }
   if (patch.report !== undefined) updated.report = patch.report;
   if (patch.error !== undefined) updated.error = patch.error;
   return updated;
@@ -387,6 +447,13 @@ function toRunSummary(
     ...(run.outputContract !== undefined
       ? { outputContract: run.outputContract }
       : {}),
+    ...(run.completionQuality !== undefined
+      ? { completionQuality: run.completionQuality }
+      : {}),
+    ...(run.effectiveTimeouts !== undefined
+      ? { effectiveTimeouts: { ...run.effectiveTimeouts } }
+      : {}),
+    ...(run.recovery !== undefined ? { recovery: cloneRecovery(run.recovery) } : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -414,6 +481,21 @@ function cloneRun(run: FusionRun): FusionRun {
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
     ...(run.outputContract !== undefined
       ? { outputContract: run.outputContract }
+      : {}),
+    ...(run.minimumSuccessfulPanelists !== undefined
+      ? { minimumSuccessfulPanelists: run.minimumSuccessfulPanelists }
+      : {}),
+    ...(run.profileSnapshot !== undefined
+      ? { profileSnapshot: cloneProfileSnapshot(run.profileSnapshot) }
+      : {}),
+    ...(run.timeoutOverrides !== undefined
+      ? { timeoutOverrides: { ...run.timeoutOverrides } }
+      : {}),
+    ...(run.effectiveTimeouts !== undefined
+      ? { effectiveTimeouts: { ...run.effectiveTimeouts } }
+      : {}),
+    ...(run.completionQuality !== undefined
+      ? { completionQuality: run.completionQuality }
       : {}),
     phase: run.phase,
     createdAt: run.createdAt,
@@ -445,6 +527,10 @@ function cloneRun(run: FusionRun): FusionRun {
     ...(run.panelFailures !== undefined
       ? { panelFailures: clonePanelFailures(run.panelFailures) }
       : {}),
+    ...(run.recovery !== undefined ? { recovery: cloneRecovery(run.recovery) } : {}),
+    ...(run.spawnIntent !== undefined
+      ? { spawnIntent: cloneSpawnIntent(run.spawnIntent) }
+      : {}),
     ...(run.report !== undefined ? { report: run.report } : {}),
     ...(run.error !== undefined ? { error: run.error } : {}),
   };
@@ -454,15 +540,28 @@ function cloneRunSummary(summary: FusionRunSummary): FusionRunSummary {
   return toRunSummary(summary);
 }
 
-function isFusionRunEntry(
-  value: unknown,
-): value is { type: "custom"; customType: string; data: unknown } {
+function lastFusionRunEnvelope(entries: readonly unknown[]): unknown {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    // Locate the newest entry by its envelope before inspecting data. A
+    // malformed data field (or its absence) must not revive an older run.
+    if (isFusionRunEnvelope(entry)) return entry;
+  }
+  return undefined;
+}
+
+function isFusionRunEnvelope(value: unknown): value is Record<string, unknown> {
   return (
     isRecord(value) &&
     value.type === "custom" &&
-    value.customType === FUSION_RUN_ENTRY_TYPE &&
-    "data" in value
+    value.customType === FUSION_RUN_ENTRY_TYPE
   );
+}
+
+function isFusionRunEntry(
+  value: unknown,
+): value is { type: "custom"; customType: string; data: unknown } {
+  return isFusionRunEnvelope(value) && "data" in value;
 }
 
 function isFusionRunState(value: unknown): value is FusionRun {
@@ -476,6 +575,47 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (
     value.outputContract !== undefined &&
     value.outputContract !== "plan-review-v1"
+  ) {
+    return false;
+  }
+  if (
+    value.minimumSuccessfulPanelists !== undefined &&
+    value.minimumSuccessfulPanelists !== "majority" &&
+    value.minimumSuccessfulPanelists !== "all" &&
+    (!isFiniteNumber(value.minimumSuccessfulPanelists) ||
+      !Number.isInteger(value.minimumSuccessfulPanelists) ||
+      value.minimumSuccessfulPanelists < 1)
+  ) {
+    return false;
+  }
+  if (
+    value.profileSnapshot !== undefined &&
+    !isProfileSnapshot(value.profileSnapshot)
+  ) {
+    return false;
+  }
+  // Snapshots are the canonical quorum record for new runs. Older records may
+  // also carry the run-level policy, but it must resolve to the same quorum.
+  if (
+    value.profileSnapshot !== undefined &&
+    value.minimumSuccessfulPanelists !== undefined &&
+    resolvePersistedQuorum(
+      value.minimumSuccessfulPanelists,
+      value.profileSnapshot.panel.length,
+    ) !== value.profileSnapshot.minimumSuccessfulPanelists
+  ) {
+    return false;
+  }
+  if (value.timeoutOverrides !== undefined && !isTimeoutOverrides(value.timeoutOverrides)) {
+    return false;
+  }
+  if (value.effectiveTimeouts !== undefined && !isEffectiveTimeouts(value.effectiveTimeouts)) {
+    return false;
+  }
+  if (
+    value.completionQuality !== undefined &&
+    value.completionQuality !== "complete" &&
+    value.completionQuality !== "partial"
   ) {
     return false;
   }
@@ -556,17 +696,49 @@ function isFusionRunState(value: unknown): value is FusionRun {
   ) {
     return false;
   }
+  if (value.recovery !== undefined && !isRecoveryState(value.recovery)) {
+    return false;
+  }
+  if (value.spawnIntent !== undefined && !isSpawnIntent(value.spawnIntent)) {
+    return false;
+  }
   if (value.report !== undefined && typeof value.report !== "string") {
     return false;
   }
   if (value.error !== undefined && typeof value.error !== "string") {
     return false;
   }
-  return true;
+  return (
+    value.profileSnapshot === undefined ||
+    validateFusionRunPanelSlots(value, value.profileSnapshot.panel.length) ===
+      undefined
+  );
 }
 
 function isFusionRunSummary(value: unknown): value is FusionRunSummary {
   return isFusionRunState(value) && isTerminalPhase(value.phase);
+}
+
+function isTimeoutOverrides(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return [
+    value.panelistTimeoutMs,
+    value.panelTimeoutMs,
+    value.panelGraceMs,
+    value.judgeTimeoutMs,
+  ].every((timeout) => timeout === undefined || (isFiniteNumber(timeout) && Number.isInteger(timeout) && timeout > 0));
+}
+
+function isEffectiveTimeouts(value: unknown): boolean {
+  return (
+    isTimeoutOverrides(value) &&
+    isRecord(value) &&
+    isFiniteNumber(value.panelistTimeoutMs) &&
+    isFiniteNumber(value.panelTimeoutMs) &&
+    isFiniteNumber(value.panelGraceMs) &&
+    isFiniteNumber(value.judgeTimeoutMs) &&
+    typeof value.usesLegacyTimeout === "boolean"
+  );
 }
 
 function isFusionPhase(value: unknown): value is FusionPhase {
@@ -584,6 +756,45 @@ function isTerminalPhase(value: unknown): value is FusionTerminalPhase {
   return value === "done" || value === "failed" || value === "cancelled";
 }
 
+/**
+ * Checks persisted slot references before they are restored or merged. Legacy
+ * runs omit a profile snapshot, so their caller supplies the safely resolved
+ * profile length during restore.
+ */
+export function validateFusionRunPanelSlots(
+  run: Pick<
+    FusionRun,
+    "panelOutputs" | "panelFailures" | "panelStoppedIndices" | "recovery"
+  >,
+  panelLength: number,
+): string | undefined {
+  const slotGroups: ReadonlyArray<readonly number[] | undefined> = [
+    run.panelOutputs?.map((output) => output.index),
+    run.panelFailures?.map((failure) => failure.index),
+    run.panelStoppedIndices,
+    run.recovery?.failedPanelIndices,
+  ];
+  for (const slots of slotGroups) {
+    for (const slot of slots ?? []) {
+      if (!isPanelSlotIndex(slot) || slot >= panelLength) {
+        return `Persisted panel slot ${String(slot)} is outside the configured panel.`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function resolvePersistedQuorum(
+  policy: NonNullable<FusionRun["minimumSuccessfulPanelists"]>,
+  panelLength: number,
+): number {
+  if (policy === "all") return panelLength;
+  if (typeof policy === "number") {
+    return panelLength > 1 ? Math.max(2, Math.min(policy, panelLength)) : 1;
+  }
+  return Math.ceil(panelLength / 2);
+}
+
 function isPanelOutputArray(
   value: unknown,
 ): value is NonNullable<FusionRun["panelOutputs"]> {
@@ -595,7 +806,7 @@ function isPanelOutput(
 ): value is NonNullable<FusionRun["panelOutputs"]>[number] {
   return (
     isRecord(value) &&
-    isFiniteNumber(value.index) &&
+    isPanelSlotIndex(value.index) &&
     isNonEmptyString(value.agent) &&
     typeof value.output === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
@@ -622,7 +833,7 @@ function isPanelFailure(
 ): value is NonNullable<FusionRun["panelFailures"]>[number] {
   return (
     isRecord(value) &&
-    isFiniteNumber(value.index) &&
+    isPanelSlotIndex(value.index) &&
     isNonEmptyString(value.agent) &&
     typeof value.summary === "string" &&
     (value.id === undefined || typeof value.id === "string") &&
@@ -636,6 +847,144 @@ function isPanelFailure(
     (value.reason === undefined || isPanelFailureReason(value.reason)) &&
     (value.observation === undefined || isRunObservation(value.observation))
   );
+}
+
+function isProfileSnapshot(value: unknown): value is FusionProfileSnapshot {
+  if (!isRecord(value) || !Array.isArray(value.panel) || value.panel.length === 0) {
+    return false;
+  }
+  if (!value.panel.every(isSnapshotPanelMember) || !isSnapshotJudge(value.judge)) {
+    return false;
+  }
+  if (
+    !isFiniteNumber(value.minimumSuccessfulPanelists) ||
+    !Number.isInteger(value.minimumSuccessfulPanelists) ||
+    value.minimumSuccessfulPanelists < 1 ||
+    value.minimumSuccessfulPanelists > value.panel.length
+  ) {
+    return false;
+  }
+  if (value.context !== undefined && value.context !== "fresh" && value.context !== "fork") {
+    return false;
+  }
+  if (value.stopWhenPanelAgrees !== undefined && typeof value.stopWhenPanelAgrees !== "boolean") {
+    return false;
+  }
+  if (value.blindPanelLabels !== undefined && typeof value.blindPanelLabels !== "boolean") {
+    return false;
+  }
+  if (value.synthesis !== undefined && value.synthesis !== "select" && value.synthesis !== "merge") {
+    return false;
+  }
+  return value.judgeToolBudget === undefined || isSnapshotToolBudget(value.judgeToolBudget);
+}
+
+function isSnapshotPanelMember(value: unknown): boolean {
+  if (!isRecord(value) || !isNonEmptyString(value.id) || !isSnapshotAgent(value.agent)) {
+    return false;
+  }
+  return (
+    (value.label === undefined || isNonEmptyString(value.label)) &&
+    (value.model === undefined || isNonEmptyString(value.model)) &&
+    (value.thinking === undefined || isThinkingLevel(value.thinking)) &&
+    (value.role === undefined || typeof value.role === "string") &&
+    (value.question === undefined || isNonEmptyString(value.question))
+  );
+}
+
+function isSnapshotJudge(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isSnapshotAgent(value.agent) &&
+    (value.model === undefined || isNonEmptyString(value.model)) &&
+    (value.thinking === undefined || isThinkingLevel(value.thinking))
+  );
+}
+
+function isSnapshotAgent(value: unknown): boolean {
+  return (
+    isNonEmptyString(value) &&
+    /^[^\s.]+(?:\.[^\s.]+)*$/.test(value.trim())
+  );
+}
+
+function isThinkingLevel(value: unknown): boolean {
+  return value === "off" || value === "minimal" || value === "low" ||
+    value === "medium" || value === "high" || value === "xhigh";
+}
+
+function isSnapshotToolBudget(value: unknown): boolean {
+  if (!isRecord(value) || (value.soft === undefined && value.hard === undefined)) {
+    return false;
+  }
+  if (value.soft !== undefined && (!isFiniteNumber(value.soft) || !Number.isInteger(value.soft) || value.soft < 1)) {
+    return false;
+  }
+  if (value.hard !== undefined && (!isFiniteNumber(value.hard) || !Number.isInteger(value.hard) || value.hard < 1)) {
+    return false;
+  }
+  if (typeof value.soft === "number" && typeof value.hard === "number" && value.soft > value.hard) {
+    return false;
+  }
+  return value.block === undefined || value.block === "*" ||
+    (Array.isArray(value.block) && value.block.length > 0 && value.block.every(isNonEmptyString));
+}
+
+function cloneProfileSnapshot(snapshot: FusionProfileSnapshot): FusionProfileSnapshot {
+  return {
+    panel: snapshot.panel.map((member) => ({ ...member })),
+    judge: { ...snapshot.judge },
+    minimumSuccessfulPanelists: snapshot.minimumSuccessfulPanelists,
+    ...(snapshot.context !== undefined ? { context: snapshot.context } : {}),
+    ...(snapshot.stopWhenPanelAgrees !== undefined
+      ? { stopWhenPanelAgrees: snapshot.stopWhenPanelAgrees }
+      : {}),
+    ...(snapshot.blindPanelLabels !== undefined
+      ? { blindPanelLabels: snapshot.blindPanelLabels }
+      : {}),
+    ...(snapshot.judgeToolBudget !== undefined
+      ? {
+          judgeToolBudget: {
+            ...snapshot.judgeToolBudget,
+            ...(Array.isArray(snapshot.judgeToolBudget.block)
+              ? { block: [...snapshot.judgeToolBudget.block] }
+              : {}),
+          },
+        }
+      : {}),
+    ...(snapshot.synthesis !== undefined ? { synthesis: snapshot.synthesis } : {}),
+  };
+}
+
+function isRecoveryState(value: unknown): value is FusionRecoveryState {
+  return (
+    isRecord(value) &&
+    value.retryDeferred === true &&
+    Array.isArray(value.failedPanelIndices) &&
+    value.failedPanelIndices.every(isPanelSlotIndex)
+  );
+}
+
+function isPanelSlotIndex(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0;
+}
+
+function cloneRecovery(recovery: FusionRecoveryState): FusionRecoveryState {
+  return { ...recovery, failedPanelIndices: [...recovery.failedPanelIndices] };
+}
+
+function isSpawnIntent(value: unknown): value is FusionRun["spawnIntent"] {
+  return (
+    isRecord(value) &&
+    (value.stage === "panel" || value.stage === "judge") &&
+    isFiniteNumber(value.requestedAt)
+  );
+}
+
+function cloneSpawnIntent(
+  intent: NonNullable<FusionRun["spawnIntent"]>,
+): NonNullable<FusionRun["spawnIntent"]> {
+  return { ...intent };
 }
 
 function clonePanelOutputs(

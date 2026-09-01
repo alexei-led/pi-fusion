@@ -12,6 +12,7 @@ import type {
   CallerOutputContract,
   FusionPhase,
   FusionRun,
+  FusionTimeoutOverrides,
   ParsedFusionArgs,
 } from "./types.js";
 import { isNonEmptyString, isRecord } from "./utils.js";
@@ -151,6 +152,7 @@ interface StartParams {
   profile?: string;
   operationId: string;
   outputContract?: CallerOutputContract;
+  timeoutOverrides?: FusionTimeoutOverrides;
 }
 
 interface RunParams {
@@ -425,6 +427,8 @@ function parseStartParams(input: unknown): StartParams {
     );
   }
 
+  const timeoutOverrides = parseTimeoutOverrides(input);
+
   const outputContract = input.outputContract;
   if (outputContract !== undefined && !isCallerOutputContract(outputContract)) {
     throw invalidParams(
@@ -437,7 +441,29 @@ function parseStartParams(input: unknown): StartParams {
     operationId,
     ...(profile === undefined ? {} : { profile }),
     ...(outputContract === undefined ? {} : { outputContract }),
+    ...(timeoutOverrides ? { timeoutOverrides } : {}),
   };
+}
+
+function parseTimeoutOverrides(
+  input: Record<string, unknown>,
+): FusionTimeoutOverrides | undefined {
+  const fields = [
+    ["panelistTimeoutMs", "panelistTimeoutMs"],
+    ["panelTimeoutMs", "panelTimeoutMs"],
+    ["panelGraceMs", "panelGraceMs"],
+    ["judgeTimeoutMs", "judgeTimeoutMs"],
+  ] as const;
+  const overrides: FusionTimeoutOverrides = {};
+  for (const [wireName, key] of fields) {
+    const value = input[wireName];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw invalidParams(`${wireName} must be a positive integer when provided.`);
+    }
+    overrides[key] = value;
+  }
+  return Object.keys(overrides).length ? overrides : undefined;
 }
 
 function toParsedFusionArgs(input: StartParams): ParsedFusionArgs {
@@ -448,6 +474,9 @@ function toParsedFusionArgs(input: StartParams): ParsedFusionArgs {
     ...(input.outputContract === undefined
       ? {}
       : { outputContract: input.outputContract }),
+    ...(input.timeoutOverrides === undefined
+      ? {}
+      : { timeoutOverrides: input.timeoutOverrides }),
   };
 }
 
