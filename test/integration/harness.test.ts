@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import {
   calls,
   createTestSession,
@@ -22,7 +22,22 @@ import { subagentsRpcReplyChannel } from "../../src/subagents-rpc.js";
 
 const EXTENSION_PATH = resolve(import.meta.dirname, "../../src/index.ts");
 
+// Neutralize PI_CODING_AGENT_DIR so fusion's loadFusionConfig (via pi's
+// getAgentDir) cannot pick up the host session overlay's fusion.json, whose
+// newer schema would fail this branch's validator and abort startRun before
+// any subagent spawn. Mirrors the provider-env isolation pattern.
+function isolateAgentDirEnv(t: TestContext): void {
+  const prev = process.env.PI_CODING_AGENT_DIR;
+  delete process.env.PI_CODING_AGENT_DIR;
+  t.after(() => {
+    if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = prev;
+  });
+}
+
 test("Harness Scenario 1: Extension discovers and registers start_fusion_review tool in real Pi session", async (t) => {
+  isolateAgentDirEnv(t);
+
   const session: TestSession = await createTestSession({
     extensions: [EXTENSION_PATH],
     mockTools: {},
@@ -47,6 +62,8 @@ test("Harness Scenario 1: Extension discovers and registers start_fusion_review 
 });
 
 test("Harness Scenario 2: Playbook-driven panel and judge under Tintinweb protocol", async (t) => {
+  isolateAgentDirEnv(t);
+
   const prev = process.env.PI_FUSION_SUBAGENT_PROVIDER;
   process.env.PI_FUSION_SUBAGENT_PROVIDER = "tintinweb";
   t.after(() => {
@@ -130,6 +147,8 @@ test("Harness Scenario 2: Playbook-driven panel and judge under Tintinweb protoc
 });
 
 test("Harness Scenario 3: Playbook-driven panel and judge under Nicopreme protocol", async (t) => {
+  isolateAgentDirEnv(t);
+
   const prev = process.env.PI_FUSION_SUBAGENT_PROVIDER;
   process.env.PI_FUSION_SUBAGENT_PROVIDER = "nicopreme";
   t.after(() => {
@@ -201,9 +220,9 @@ test("Harness Scenario 3: Playbook-driven panel and judge under Nicopreme protoc
     runId: panelWorkflowId,
     state: "complete",
     results: [
-      { agent: "pi-fusion.fusion-panelist", success: true, output: "Use Redis." },
-      { agent: "pi-fusion.fusion-panelist", success: true, output: "Use Redis cluster." },
-      { agent: "pi-fusion.fusion-panelist", success: true, output: "Redis handles load." },
+      { key: "panel-1", agent: "pi-fusion.fusion-panelist", success: true, output: "Use Redis." },
+      { key: "panel-2", agent: "pi-fusion.fusion-panelist", success: true, output: "Use Redis cluster." },
+      { key: "panel-3", agent: "pi-fusion.fusion-panelist", success: true, output: "Redis handles load." },
     ],
   });
 
@@ -229,6 +248,8 @@ test("Harness Scenario 3: Playbook-driven panel and judge under Nicopreme protoc
 });
 
 test("Harness Scenario 4: Auto-detection priority and fallback edge cases", async (t) => {
+  isolateAgentDirEnv(t);
+
   let nicoPingReceived = false;
 
   const mockBothExtension = (pi: ExtensionAPI) => {
