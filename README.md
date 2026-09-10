@@ -140,6 +140,8 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion -p <name> <prompt>
 /fusion status
 /fusion stop
+/fusion continue <fusion-run-id> <panelist-number>
+/fusion finish <fusion-run-id> <panelist-number>
 /fusion init
 ```
 
@@ -208,7 +210,9 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Project config lives at `.pi/fusion.json`. Global config lives at `~/.pi/agent/fusion.json`.
 - Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
 - Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events. Verified panel outputs survive a panel deadline; unavailable perspectives and timeout failures are disclosed in a partial report when quorum is not met or coverage is incomplete.
-- Timeouts end the current child or workflow attempt. Fusion never automatically retries panelists, restarts a panel, or extends a deadline; start a new run manually after the terminal report.
+- Normal panels refill free concurrency slots immediately. Agreement-stopping panels retain quorum-sized rounds. Default panel time covers the configured concurrency waves; explicit deadlines remain hard caps.
+- Optional `panelistSoftTimeoutMs` asks the parent for a deadline decision. The parent can approve one continuation within the existing hard budget or ask for current findings. No reply within one minute requests finalization. Fusion reserves one minute to finalize, never revives children or extends hard deadlines, and cannot guarantee a final answer from an unresponsive provider.
+- Incomplete terminal snapshots get a bounded five-second reconciliation window. Late errors are retained; at a confirmed workflow deadline, genuinely absent slots become explicit failures instead of discarding successful answers.
 - `pi-fusion` does not own the footer.
 - Fusion sends your prompt and any inspected snippets to every panel model, and to the judge, through `pi-subagents`.
 - Reports include available per-panel and judge time, aggregate model time, usage, estimated cost, and model failure details. Missing provider usage is shown as unknown. `$0.0000` is a known zero cost.

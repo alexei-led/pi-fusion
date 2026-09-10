@@ -69,7 +69,7 @@ function registerFusionTool(
       );
       const text =
         result.status === "started"
-          ? "Fusion panel review started. The report will be posted when the panel and judge finish."
+          ? "Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum."
           : result.status === "conflict"
             ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
             : `Fusion review failed to start: ${result.status === "failed" ? result.error : result.status}`;
@@ -98,11 +98,26 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   const orchestrator = new FusionOrchestrator({
     rpc: new SubagentsRpcClient({ events: pi.events }),
     runStore: store,
-    sendMessage: (message) => pi.sendMessage(message),
+    sendMessage: (message, options) => pi.sendMessage(message, options),
   });
 
   registerFusionCommands(pi, orchestrator);
   registerFusionTool(pi, orchestrator);
+  pi.registerTool({
+    name: "resolve_fusion_deadline",
+    label: "Fusion Deadline Decision",
+    description: "Answer a pending Fusion soft-deadline request. Continue once within the existing hard budget, or ask the panelist to finish with current findings. Does not restart runs or extend hard deadlines. Delivery receipt is not proof the model complied.",
+    parameters: Type.Object({
+      runId: Type.String({ minLength: 1 }),
+      panelist: Type.Integer({ minimum: 1, description: "One-based panelist number from the deadline notice" }),
+      decision: Type.String({ enum: ["continue", "finish"] }),
+    }),
+    async execute(_id, params) {
+      if (params.decision !== "continue" && params.decision !== "finish") throw new Error("Expected continue or finish.");
+      const details = await orchestrator.resolvePanelDeadline(params.runId, params.panelist, params.decision);
+      return { content: [{ type: "text", text: "Decision recorded and guidance requested. The hard deadline is unchanged; the receipt does not prove model compliance." }], details };
+    },
+  });
 
   const unsubscribeComplete = pi.events.on(
     SUBAGENT_ASYNC_COMPLETE_EVENT,

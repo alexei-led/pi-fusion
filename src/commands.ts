@@ -19,6 +19,8 @@ const FUSION_HELP = [
   "/fusion --panel <models> <prompt>",
   "/fusion status",
   "/fusion stop",
+  "/fusion continue <fusion-run-id> <panelist-number>",
+  "/fusion finish <fusion-run-id> <panelist-number>",
   "/fusion init",
 ].join("\n");
 
@@ -29,6 +31,7 @@ export interface FusionRuntimeCommandHandler {
   ): Promise<unknown>;
   showStatus(ctx: ExtensionCommandContext): Promise<unknown>;
   cancelActiveRun(ctx: ExtensionCommandContext): Promise<unknown>;
+  resolvePanelDeadline?(runId: string, panelist: number, decision: "continue" | "finish"): Promise<unknown>;
 }
 
 export function registerFusionCommands(
@@ -43,6 +46,20 @@ export function registerFusionCommands(
         return;
       }
 
+      const decision = args.trim().match(/^(continue|finish)\s+(\S+)\s+([1-9]\d*)$/);
+      if (decision && handler.resolvePanelDeadline) {
+        try {
+          await handler.resolvePanelDeadline(decision[2]!, Number(decision[3]), decision[1] === "continue" ? "continue" : "finish");
+          ctx.ui.notify("Deadline decision recorded; guidance requested. Hard deadline unchanged.", "info");
+        } catch (error: unknown) {
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        }
+        return;
+      }
+      if (/^(continue|finish)(?:\s|$)/.test(args.trim())) {
+        ctx.ui.notify("Use /fusion continue|finish <fusion-run-id> <panelist-number>.", "error");
+        return;
+      }
       const inlineCommand = parseFusionInlineCommand(args);
       if (inlineCommand === "init") {
         await runFusionInit(ctx);

@@ -10,7 +10,7 @@ import {
 import type { PanelMemberConfig } from "./types.js";
 
 export type ResultExtractErrorCode =
-  "missing-results" | "unknown-result-shape" | "missing-result-field";
+  "missing-results" | "unknown-result-shape" | "missing-result-field" | "incomplete-lifecycle";
 
 export interface ResultExtractError {
   code: ResultExtractErrorCode;

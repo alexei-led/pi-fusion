@@ -66,6 +66,7 @@ export interface FusionRunPatch {
   panelAsyncDir?: string;
   panelStopReason?: FusionRun["panelStopReason"];
   panelStoppedIndices?: FusionRun["panelStoppedIndices"];
+  panelDeadlines?: FusionRun["panelDeadlines"];
   judgeRunId?: string;
   judgeAsyncDir?: string;
   judgeObservation?: FusionRun["judgeObservation"];
@@ -387,6 +388,7 @@ function applyPatch(
   if (patch.panelStoppedIndices !== undefined) {
     updated.panelStoppedIndices = [...patch.panelStoppedIndices];
   }
+  if (patch.panelDeadlines !== undefined) updated.panelDeadlines = patch.panelDeadlines.map((item) => ({ ...item }));
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
   if (patch.judgeAsyncDir !== undefined) {
     updated.judgeAsyncDir = patch.judgeAsyncDir;
@@ -513,6 +515,9 @@ function cloneRun(run: FusionRun): FusionRun {
       : {}),
     ...(run.panelStoppedIndices !== undefined
       ? { panelStoppedIndices: [...run.panelStoppedIndices] }
+      : {}),
+    ...(run.panelDeadlines !== undefined
+      ? { panelDeadlines: run.panelDeadlines.map((item) => ({ ...item })) }
       : {}),
     ...(run.judgeRunId !== undefined ? { judgeRunId: run.judgeRunId } : {}),
     ...(run.judgeAsyncDir !== undefined
@@ -669,6 +674,7 @@ function isFusionRunState(value: unknown): value is FusionRun {
   ) {
     return false;
   }
+  if (value.panelDeadlines !== undefined && !isPanelDeadlines(value.panelDeadlines)) return false;
   if (value.judgeRunId !== undefined && typeof value.judgeRunId !== "string") {
     return false;
   }
@@ -719,9 +725,27 @@ function isFusionRunSummary(value: unknown): value is FusionRunSummary {
   return isFusionRunState(value) && isTerminalPhase(value.phase);
 }
 
+function isPanelDeadlines(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const slots = new Set<number>();
+  const children = new Set<string>();
+  return value.every((item: unknown) => {
+    if (!isRecord(item) || !isPanelSlotIndex(item.index) || !isNonEmptyString(item.childRunId) ||
+      !isFiniteNumber(item.requestedAt) || !isFiniteNumber(item.finalizeAt) || !isFiniteNumber(item.hardDeadlineAt) ||
+      item.finalizeAt >= item.hardDeadlineAt ||
+      !["pending", "continued", "finishing"].includes(String(item.status)) ||
+      (item.deliveryError !== undefined && typeof item.deliveryError !== "string") ||
+      slots.has(item.index) || children.has(item.childRunId)) return false;
+    slots.add(item.index);
+    children.add(item.childRunId);
+    return true;
+  });
+}
+
 function isTimeoutOverrides(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return [
+    value.panelistSoftTimeoutMs,
     value.panelistTimeoutMs,
     value.panelTimeoutMs,
     value.panelGraceMs,
@@ -764,7 +788,7 @@ function isTerminalPhase(value: unknown): value is FusionTerminalPhase {
 export function validateFusionRunPanelSlots(
   run: Pick<
     FusionRun,
-    "panelOutputs" | "panelFailures" | "panelStoppedIndices" | "recovery"
+    "panelOutputs" | "panelFailures" | "panelStoppedIndices" | "panelDeadlines" | "recovery"
   >,
   panelLength: number,
 ): string | undefined {
@@ -772,6 +796,7 @@ export function validateFusionRunPanelSlots(
     run.panelOutputs?.map((output) => output.index),
     run.panelFailures?.map((failure) => failure.index),
     run.panelStoppedIndices,
+    run.panelDeadlines?.map((item) => item.index),
     run.recovery?.failedPanelIndices,
   ];
   for (const slots of slotGroups) {

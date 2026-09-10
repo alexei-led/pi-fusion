@@ -302,6 +302,7 @@ test("start_fusion_review forwards an inline panel and omits it when absent", as
     state: "complete",
     results: [
       { agent: "pi-fusion.fusion-panelist", success: true, output: "A." },
+      { agent: "pi-fusion.fusion-panelist", success: false, error: "Second panelist unavailable." },
     ],
   });
   pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });

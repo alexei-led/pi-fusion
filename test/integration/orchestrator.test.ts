@@ -682,7 +682,9 @@ test("terminal workflow status restores failures and synthesizes at majority quo
   assert.match(completed.report, /Workflow script timed out/);
 });
 
-test("incomplete terminal lifecycle data fails closed", async () => {
+test("incomplete successful lifecycle data fails closed after bounded grace", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("chain-1", {
@@ -702,14 +704,16 @@ test("incomplete terminal lifecycle data fails closed", async () => {
     ],
   });
 
-  assert.equal(result.status, "failed");
-  assert.match(
-    result.error,
-    /Terminal subagents status described 1 of 2 configured panel members/,
-  );
+  assert.equal(result.status, "ignored");
+  now += 5_001;
+  const settled = await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  assert.equal(settled.status, "failed");
+  assert.match(settled.error, /Terminal subagents status described 1 of 2 configured panel members/);
 });
 
-test("partial terminal status cannot be overridden by complete event results", async () => {
+test("partial terminal status cannot be overridden by complete event results", async (t) => {
+  let now = 100_000;
+  t.mock.method(Date, "now", () => now);
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
   fixture.rpc.statusResults.set("chain-1", {
@@ -731,12 +735,41 @@ test("partial terminal status cannot be overridden by complete event results", a
     ],
   });
 
-  assert.equal(result.status, "failed");
-  assert.match(
-    result.error,
-    /Terminal subagents status described 1 of 2 configured panel members/,
-  );
+  assert.equal(result.status, "ignored");
+  now += 5_001;
+  const settled = await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  assert.equal(settled.status, "failed");
+  assert.match(settled.error, /Terminal subagents status described 1 of 2 configured panel members/);
 });
+
+for (const lateResult of [true, false]) {
+  test(`deadline reconciliation preserves partial output; late result=${lateResult}`, async (t) => {
+    let now = 100_000;
+    t.mock.method(Date, "now", () => now);
+    const config = structuredClone(CONFIG);
+    config.profiles.quality!.minimumSuccessfulPanelists = "all";
+    const fixture = makeFixture({ config });
+    await fixture.orchestrator.startRun("compare", fixture.ctx);
+    const steps: object[] = [{ agent: "panel-1", status: "completed", output: "Verified answer." }];
+    const status = { runId: "chain-1", state: "failed", error: "Workflow script timed out.", steps };
+    fixture.rpc.statusResults.set("chain-1", status);
+    const pending = await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    assert.equal(pending.status, "ignored");
+    assert.equal(fixture.rpc.spawns.length, 1);
+    if (lateResult) {
+      steps.push({ agent: "panel-2", status: "failed", error: "Unknown subagent model" });
+      now += 1_000;
+    } else {
+      now += 5_001;
+    }
+    const result = await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    assert.equal(result.status, "done");
+    assert.match(result.report, /Verified answer/);
+    assert.match(result.report, lateResult ? /Unknown subagent model/ : /No terminal result was reported/);
+    assert.equal(fixture.rpc.spawns.length, 1);
+    assert.equal(fixture.runStore.getLastRunSummary()?.completionQuality, "partial");
+  });
+}
 
 test("extra terminal event results fail closed", async () => {
   const fixture = makeFixture();
@@ -1715,6 +1748,74 @@ test("repeated lifecycle polls do not persist duplicate panel snapshots", async 
   assert.equal(fixture.entries.length, entriesAfterFirstPoll);
 });
 
+for (const decision of ["continue", "finish", "no-reply"] as const) {
+  test(`soft deadline ${decision} preserves hard budget and does not respawn`, async (t) => {
+    let now = 610_000;
+    t.mock.method(Date, "now", () => now);
+    const config = structuredClone(CONFIG);
+    Object.assign(config.profiles.quality!, { panelistSoftTimeoutMs: 600_000, panelistTimeoutMs: 960_000, panelTimeoutMs: 2_100_000 });
+    const fixture = makeFixture({ config });
+    t.after(() => fixture.orchestrator.dispose());
+    await fixture.orchestrator.startRun("review", fixture.ctx);
+    const status = { runId: "chain-1", state: "running", steps: [
+      { agent: "panel-1", runId: "child-1", status: "running", startedAt: 10_000 },
+      { agent: "panel-2", runId: "child-2", status: "running", startedAt: 600_000 },
+    ] };
+    fixture.rpc.statusResults.set("chain-1", status);
+    await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    assert.equal(fixture.rpc.steers.length, 1);
+    assert.match(fixture.messages.at(-1)?.content ?? "", /resolve_fusion_deadline/);
+    const entries = fixture.entries.length;
+    await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    assert.equal(fixture.entries.length, entries);
+    assert.equal(fixture.rpc.steers.length, 1);
+    await assert.rejects(fixture.orchestrator.resolvePanelDeadline("wrong-run", 1, "continue"), /no longer active/);
+    if (decision === "no-reply") {
+      now = 670_001;
+    } else {
+      await fixture.orchestrator.resolvePanelDeadline("fusion-1", 1, decision);
+      await assert.rejects(fixture.orchestrator.resolvePanelDeadline("fusion-1", 1, "continue"), /No pending/);
+      if (decision === "continue") now = 910_000;
+    }
+    await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    assert.equal(fixture.orchestrator.getActiveRun()?.panelDeadlines?.[0]?.status, "finishing");
+    assert.match(JSON.stringify(fixture.rpc.steers.at(-1)), /return your best current answer now/);
+    assert.equal(fixture.orchestrator.getActiveRun()?.effectiveTimeouts?.panelistTimeoutMs, 960_000);
+    assert.equal(fixture.rpc.spawns.length, 1);
+    assert.equal(fixture.rpc.stops.length, 0);
+    assert.equal(fixture.rpc.interrupts.length, 0);
+  });
+}
+
+test("soft deadline preflight rejects a runtime without non-recovering steering", async () => {
+  const config = structuredClone(CONFIG);
+  Object.assign(config.profiles.quality!, { panelistSoftTimeoutMs: 600_000, panelistTimeoutMs: 960_000, panelTimeoutMs: 2_100_000 });
+  const fixture = makeFixture({ config });
+  fixture.rpc.pingPromise = Promise.resolve({ capabilities: {} });
+  const result = await fixture.orchestrator.startRun("review", fixture.ctx);
+  assert.equal(result.status, "failed");
+  assert.match(result.error, /nonRecoveringSteer/);
+  assert.equal(fixture.rpc.spawns.length, 0);
+});
+
+test("deadline steering failure is visible and cannot claim successful delivery", async (t) => {
+  t.mock.method(Date, "now", () => 610_000);
+  const config = structuredClone(CONFIG);
+  Object.assign(config.profiles.quality!, { panelistSoftTimeoutMs: 600_000, panelistTimeoutMs: 960_000, panelTimeoutMs: 2_100_000 });
+  const fixture = makeFixture({ config });
+  t.after(() => fixture.orchestrator.dispose());
+  await fixture.orchestrator.startRun("review", fixture.ctx);
+  fixture.rpc.steerError = new Error("missing child route");
+  fixture.rpc.statusResults.set("chain-1", { runId: "chain-1", state: "running", steps: [
+    { agent: "panel-1", runId: "child-1", status: "running", startedAt: 10_000 },
+  ] });
+  await fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+  assert.match(fixture.orchestrator.getActiveRun()?.panelDeadlines?.[0]?.deliveryError ?? "", /missing child route/);
+  await assert.rejects(fixture.orchestrator.resolvePanelDeadline("fusion-1", 1, "continue"), /missing child route/);
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.equal(fixture.rpc.interrupts.length, 0);
+});
+
 function makeFixture(seed?: {
   entries?: Array<{ type: "custom"; customType: string; data?: unknown }>;
   config?: FusionConfig;
@@ -1762,6 +1863,8 @@ class FakeRpc implements FusionRpcClientLike {
   readonly statuses: Array<unknown> = [];
   readonly stops: Array<unknown> = [];
   readonly interrupts: Array<unknown> = [];
+  readonly steers: Array<unknown> = [];
+  steerError: Error | undefined;
   readonly spawnResults: unknown[] = [{ details: { runId: "chain-1" } }];
   readonly statusResults = new Map<string, unknown>();
   pingPromise: Promise<unknown> | undefined;
@@ -1773,7 +1876,7 @@ class FakeRpc implements FusionRpcClientLike {
 
   async ping(): Promise<unknown> {
     this.pings++;
-    return this.pingPromise ?? { ok: true };
+    return this.pingPromise ?? { ok: true, capabilities: { nonRecoveringSteer: true } };
   }
 
   async spawn(params: object): Promise<unknown> {
@@ -1800,6 +1903,12 @@ class FakeRpc implements FusionRpcClientLike {
     if (this.stopPromise) return this.stopPromise;
     if (this.stopError) throw this.stopError;
     return { ok: true };
+  }
+
+  async steer(params: object): Promise<unknown> {
+    this.steers.push(params);
+    if (this.steerError) throw this.steerError;
+    return { status: "delivered" };
   }
 
   async interrupt(params: object): Promise<unknown> {

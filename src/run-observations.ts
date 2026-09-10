@@ -151,7 +151,9 @@ export function extractRunObservation(value: unknown): RunObservation {
   const providerFailures = summarizeProviderFailures(
     rawError &&
       attemptFailures.length === 0 &&
-      (value.success === false || value.state === "failed")
+      (value.success === false ||
+        value.state === "failed" ||
+        value.status === "failed")
       ? [
           {
             provider: model ? providerFromModel(model) : "unknown provider",

@@ -43,6 +43,8 @@ export interface ReconcilePanelResultsOptions {
   stoppedPanelIndices?: readonly number[];
   /** A workflow deadline terminalized running child slots as timeout failures. */
   terminalizeRunning?: boolean;
+  /** Only after the terminal-snapshot grace period, and only at a deadline. */
+  allowMissingAtDeadline?: boolean;
 }
 
 /**
@@ -82,6 +84,7 @@ export function reconcilePanelResults(
       return error(
         `Terminal subagents data described ${eventResults.outputs.length + eventResults.failures.length} of ${expectedCount} configured panel members.`,
         "$.results",
+        "incomplete-lifecycle",
       );
     }
     return eventResults;
@@ -100,6 +103,7 @@ export function reconcilePanelResults(
       ? { terminalizeRunning: true }
       : { completedOnly: true }),
     limit: expectedCount,
+    ...(options.allowMissingAtDeadline ? { requireStableSlotIdentity: true } : {}),
     ...(options.stoppedPanelIndices
       ? { stoppedPanelIndices: options.stoppedPanelIndices }
       : {}),
@@ -160,9 +164,34 @@ export function reconcilePanelResults(
     missingStatusIndices.length > 0 &&
     missingStatusIndices.every((index) => stopped.has(index));
   if (!missingWereStopped) {
+    if (options.terminalizeRunning && options.allowMissingAtDeadline) {
+      const reconciled = mergeTerminalDeadlineResults(
+        eventResults, statusResults, statusPayload, resultPayload,
+      );
+      for (const index of missingStatusIndices) {
+        const output = eventResults.outputs.find((item) => item.index === index);
+        const failure = eventResults.failures.find((item) => item.index === index);
+        if (output) reconciled.outputs.push(output);
+        else if (failure) reconciled.failures.push(failure);
+        else {
+          const member = profile.panel[index]!;
+          reconciled.failures.push({
+            index, agent: member.agent, id: member.id,
+            ...(member.label ? { label: member.label } : {}),
+            ...(member.model ? { configuredModel: member.model } : {}),
+            summary: "No terminal result was reported before the workflow deadline.",
+            reason: "timeout",
+          });
+        }
+      }
+      reconciled.outputs.sort((a, b) => a.index - b.index);
+      reconciled.failures.sort((a, b) => a.index - b.index);
+      return reconciled;
+    }
     return error(
       `Terminal subagents status described ${statusCount} of ${expectedCount} configured panel members.`,
       "$.steps",
+      statusCount === 0 && !options.terminalizeRunning ? "unknown-result-shape" : "incomplete-lifecycle",
     );
   }
 
@@ -433,11 +462,12 @@ function unknownArray(value: unknown): readonly unknown[] | undefined {
 function error(
   message: string,
   path: string,
+  code: "unknown-result-shape" | "incomplete-lifecycle" = "unknown-result-shape",
 ): ExtractPanelResultsResult {
   return {
     ok: false,
     error: {
-      code: "unknown-result-shape",
+      code,
       message,
       path,
     },

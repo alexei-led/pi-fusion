@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- Refill available panel slots immediately rather than waiting for the slowest member of a batch. Agreement-stopping panels retain quorum-sized rounds.
+- Size default panel deadlines for all concurrency waves.
+- Add opt-in soft panelist deadlines with parent/user decisions, one continuation inside the existing hard budget, and a finalization reserve. Persist decisions across reload and expose non-recovering steering failures.
+- Reconcile late terminal status updates before declaring slots missing. Preserve specific child errors and partial reports at workflow deadlines; keep contradictory identities fail-closed.
+- Include `status: "failed"` provider/model errors in aggregate reporting without double-counting model attempts.
+
 ## 0.7.0 - 2026-08-10
 
 ### Added

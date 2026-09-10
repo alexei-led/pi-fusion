@@ -170,28 +170,28 @@ test("extractRunObservation reads lifecycle timing, usage, model, and attempts",
   });
 });
 
-test("extractRunObservation reports a direct provider error when attempts are absent", () => {
-  assert.deepEqual(
-    extractRunObservation({
-      model: "openai/gpt-mini",
-      state: "failed",
-      error: "authentication failed",
-    }).providerFailures,
-    [
-      {
-        provider: "openai",
+for (const failure of [{ state: "failed" }, { status: "failed" }, { success: false }]) {
+  test(`extractRunObservation reports direct errors for ${JSON.stringify(failure)}`, () => {
+    assert.deepEqual(
+      extractRunObservation({
         model: "openai/gpt-mini",
-        message: "authentication failed",
-      },
-    ],
-  );
+        ...failure,
+        error: "authentication failed",
+      }).providerFailures,
+      [{ provider: "openai", model: "openai/gpt-mini", message: "authentication failed" }],
+    );
+  });
+}
+
+test("extractRunObservation ignores stale error text on a successful record", () => {
+  assert.equal(extractRunObservation({ status: "complete", error: "old error" }).providerFailures, undefined);
 });
 
 test("extractRunObservation does not double-count the final attempt error", () => {
   assert.deepEqual(
     extractRunObservation({
       model: "deepseek/model",
-      state: "failed",
+      status: "failed",
       error: "rate limited",
       modelAttempts: [
         { model: "deepseek/model", success: false, error: "rate limited" },

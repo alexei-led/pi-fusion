@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
+import { setImmediate } from "node:timers/promises";
 import {
   appendThinkingSuffix,
   buildBlindLabelMap,
@@ -117,7 +119,7 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
   assert.equal("worktree" in params, false);
   assert.match(
     params.workflowScript,
-    /runs\.all\(tasks\.slice\(index, index \+ concurrency\)\)/,
+    /await Promise\.race\(pending\.values\(\)\)/,
   );
 
   const tasks = workflowTasks(params);
@@ -140,6 +142,50 @@ test("buildPanelSpawnParams creates async parallel panel tasks", () => {
     hard: 12,
     block: "*",
   });
+});
+
+test("rolling panel refills a failed slot before a slower panelist completes", async () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    concurrency: 4,
+    panel: Array.from({ length: 6 }, (_, index) => ({ id: `p${index}`, agent: "panel" })),
+  };
+  const started: string[] = [];
+  const finishes = new Map<string, (value: unknown) => void>();
+  const script = buildPanelSpawnParams(profile, "review").workflowScript;
+  const completion = runInNewContext(`(async () => { ${script} })()`, {
+    runs: {
+      run(key: string) {
+        started.push(key);
+        return new Promise((resolve) => finishes.set(key, resolve));
+      },
+    },
+  }) as Promise<unknown[]>;
+  assert.deepEqual(started, ["panel-1", "panel-2", "panel-3", "panel-4"]);
+  finishes.get("panel-2")!({ ok: false, output: "auth failed" });
+  await setImmediate();
+  assert.deepEqual(started, ["panel-1", "panel-2", "panel-3", "panel-4", "panel-5"]);
+  finishes.get("panel-3")!({ ok: true, output: "third" });
+  await setImmediate();
+  assert.equal(started.at(-1), "panel-6");
+  for (const key of ["panel-6", "panel-5", "panel-4", "panel-1"]) {
+    finishes.get(key)!({ ok: true, output: key });
+  }
+  const results = await completion;
+  assert.deepEqual(JSON.parse(JSON.stringify(results)), [
+    { ok: true, output: "panel-1" },
+    { ok: false, output: "auth failed" },
+    { ok: true, output: "third" },
+    { ok: true, output: "panel-4" },
+    { ok: true, output: "panel-5" },
+    { ok: true, output: "panel-6" },
+  ]);
+});
+
+test("default panel deadline covers every concurrency wave", () => {
+  const profile: FusionProfile = { ...PROFILE };
+  delete profile.timeoutMs;
+  assert.equal(buildPanelSpawnParams(profile, "review").timeoutMs, 1_800_000);
 });
 
 test("exact caller contracts replace panel headings and agreement records", () => {

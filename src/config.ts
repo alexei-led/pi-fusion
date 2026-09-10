@@ -325,6 +325,7 @@ function isFusionProfile(value: unknown): value is FusionProfile {
     return false;
   if (value.timeoutMs !== undefined && !isPositiveInteger(value.timeoutMs))
     return false;
+  if (value.panelistSoftTimeoutMs !== undefined && !isPositiveInteger(value.panelistSoftTimeoutMs)) return false;
   if (
     value.panelistTimeoutMs !== undefined &&
     !isPositiveInteger(value.panelistTimeoutMs)

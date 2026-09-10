@@ -3,6 +3,7 @@ import {
   detectCallerOutputContract,
 } from "./caller-contract.js";
 import { FusionArgsError } from "./errors.js";
+import { PANEL_FINALIZE_RESERVE_MS } from "./panel-deadlines.js";
 import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
 import {
   PANEL_DECISION_CLOSE,
@@ -193,6 +194,7 @@ export function buildPanelSpawnParams(
         profile.panelToolBudget ?? DEFAULT_TOOL_BUDGET,
         callerContract,
         timeouts.panelistTimeoutMs,
+        timeouts.panelistSoftTimeoutMs !== undefined,
       ),
     }),
   );
@@ -256,6 +258,29 @@ function buildPanelWorkflowScript(
   requiredSuccessfulPanelists: number,
 ): string {
   const serializedTasks = JSON.stringify(tasks);
+  if (!stopWhenAgrees) {
+    return [
+      `const tasks = ${serializedTasks};`,
+      `const concurrency = ${concurrency};`,
+      "const results = new Array(tasks.length);",
+      "const pending = new Map();",
+      "let next = 0;",
+      "while (next < tasks.length || pending.size > 0) {",
+      "  while (next < tasks.length && pending.size < concurrency) {",
+      "    const index = next++;",
+      "    const { key, ...task } = tasks[index];",
+      "    const pendingRun = runs.run(key, task);",
+      "    pending.set(index, Promise.all([pendingRun]).then(([result]) => ({ index, result })));",
+      "  }",
+      "  const { index, result } = await Promise.race(pending.values());",
+      "  results[index] = result;",
+      "  pending.delete(index);",
+      "}",
+      "return results;",
+    ].join("\n");
+  }
+  // Agreement panels deliberately use quorum-sized rounds: starting speculative
+  // replacements would spend more calls before the current votes can agree.
   // Start no more work than the resolved quorum requires. This preserves the
   // two-at-a-time majority behavior while allowing a larger configured quorum
   // to be observed before agreement can stop the remaining panelists.
@@ -312,9 +337,12 @@ export function resolveEffectiveTimeouts(
   profile: FusionProfile,
   overrides: FusionTimeoutOverrides | undefined = undefined,
 ): EffectiveFusionTimeouts {
+  const concurrency = profile.concurrency ?? profile.panel.length;
+  const waves = Math.ceil(profile.panel.length / concurrency);
   const panelTimeoutMs = resolveStageTimeout(
     overrides?.panelTimeoutMs ?? profile.panelTimeoutMs,
     profile.timeoutMs,
+    DEFAULT_STAGE_TIMEOUT_MS * waves,
   );
   const panelGraceMs = resolveStageTimeout(
     overrides?.panelGraceMs ?? profile.panelGraceMs,
@@ -337,7 +365,18 @@ export function resolveEffectiveTimeouts(
     requestedPanelistTimeoutMs,
     panelTimeoutMs - panelGraceMs,
   );
+  const softTimeoutMs = profile.panelistSoftTimeoutMs;
+  if (softTimeoutMs !== undefined && (!Number.isInteger(softTimeoutMs) || softTimeoutMs <= 0)) {
+    throw new FusionArgsError("panelistSoftTimeoutMs must be a positive integer.");
+  }
+  if (softTimeoutMs !== undefined && panelTimeoutMs < waves * panelistTimeoutMs + panelGraceMs) {
+    throw new FusionArgsError("The panel deadline must cover every concurrency wave plus grace when soft deadlines are enabled.");
+  }
+  if (softTimeoutMs !== undefined && softTimeoutMs >= panelistTimeoutMs - PANEL_FINALIZE_RESERVE_MS) {
+    throw new FusionArgsError("panelistSoftTimeoutMs must leave more than one minute before the effective panelist hard deadline.");
+  }
   return {
+    ...(softTimeoutMs !== undefined ? { panelistSoftTimeoutMs: softTimeoutMs } : {}),
     panelistTimeoutMs,
     panelTimeoutMs,
     panelGraceMs,
@@ -363,6 +402,7 @@ function buildPanelTaskParams(
   toolBudget: ToolBudget,
   callerContract?: CallerOutputContract,
   timeoutMs?: number,
+  allowSupervisor = false,
 ): PanelSubagentTaskParams {
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
@@ -372,6 +412,7 @@ function buildPanelTaskParams(
       prompt,
       includeDecisionRecord,
       callerContract,
+      allowSupervisor,
     ),
     output: true,
     outputMode: "inline",
@@ -389,6 +430,7 @@ function buildPanelTask(
   prompt: string,
   includeDecisionRecord: boolean,
   callerContractOverride?: CallerOutputContract,
+  allowSupervisor = false,
 ): string {
   const role = member.role?.trim() || "independent analysis and critique";
   const callerContract =
@@ -402,7 +444,9 @@ function buildPanelTask(
     "Instructions:",
     "- Work independently from the other panelists.",
     "- Read-only: inspect only; leave files, git state, and the workspace untouched.",
-    "- Do not ask other agents.",
+    allowSupervisor
+      ? "- Do not consult other panelists. Parent supervisor coordination is allowed only for progress updates and deadline decisions."
+      : "- Do not ask other agents.",
     "- Do not run subagents.",
     "- Use local inspection only when code evidence is needed.",
     "- Be concise and cite evidence when you inspect files.",

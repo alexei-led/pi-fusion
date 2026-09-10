@@ -1,3 +1,4 @@
+import { deadlineSteerMessage, planPanelDeadlines, PANEL_DECISION_WAIT_MS } from "./panel-deadlines.js";
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import {
   detectCallerOutputContract,
@@ -23,10 +24,12 @@ import {
 import {
   extractPanelResults,
   type ExtractPanelResultsSuccess,
+  type ExtractPanelResultsResult,
 } from "./result-extract.js";
 import {
   reconcileIndexedLifecycleResult,
   reconcilePanelResults,
+  type ReconcilePanelResultsOptions,
 } from "./lifecycle-reconcile.js";
 import {
   appendThinkingSuffix,
@@ -59,6 +62,7 @@ import {
   type FusionProfileSnapshot,
   type FusionRun,
   type PanelOutput,
+  type PanelDeadlineState,
   type ParsedFusionArgs,
 } from "./types.js";
 import {
@@ -66,7 +70,7 @@ import {
   hasStrongPanelAgreement,
   mergeRunObservations,
 } from "./run-observations.js";
-import type { SubagentsTargetParams } from "./subagents-rpc.js";
+import type { SubagentsTargetParams, SubagentsSteerParams } from "./subagents-rpc.js";
 
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
@@ -95,6 +99,7 @@ export interface FusionRpcClientLike {
   status(params?: SubagentsTargetParams): Promise<unknown>;
   stop(params: SubagentsTargetParams): Promise<unknown>;
   interrupt(params: SubagentsTargetParams): Promise<unknown>;
+  steer?(params: SubagentsSteerParams): Promise<unknown>;
 }
 
 export interface FusionMessageSink {
@@ -103,7 +108,7 @@ export interface FusionMessageSink {
     content: string;
     display: boolean;
     details?: unknown;
-  }): void;
+  }, options?: { triggerTurn: boolean; deliverAs: "steer" }): void;
 }
 
 export interface FusionOrchestratorDeps {
@@ -144,6 +149,7 @@ export class FusionOrchestrator {
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconciling = false;
   private pendingCompletionPayload: unknown;
+  private readonly incompleteTerminalSince = new Map<string, number>();
 
   constructor(deps: FusionOrchestratorDeps) {
     this.rpc = deps.rpc;
@@ -172,8 +178,9 @@ export class FusionOrchestrator {
       return { status: "conflict", activeRunId: existing.id };
     }
 
+    let subagentsInfo: unknown;
     try {
-      await this.rpc.ping();
+      subagentsInfo = await this.rpc.ping();
       this.installWarning = undefined;
     } catch (error: unknown) {
       const message = `pi-subagents RPC is unavailable: ${errorMessage(error)}`;
@@ -206,6 +213,11 @@ export class FusionOrchestrator {
           ctx,
         );
         resolved = this.resolveProfile(aliased, inlineName);
+      }
+      if (resolved.profile.panelistSoftTimeoutMs !== undefined &&
+        (!this.rpc.steer || !isRecord(subagentsInfo) || !isRecord(subagentsInfo.capabilities) ||
+          subagentsInfo.capabilities.nonRecoveringSteer !== true)) {
+        throw new FusionArgsError("Soft deadlines require pi-subagents RPC with nonRecoveringSteer. Update pi-subagents and reload Pi, or omit panelistSoftTimeoutMs.");
       }
       this.configWarning = undefined;
     } catch (error: unknown) {
@@ -608,6 +620,109 @@ export class FusionOrchestrator {
     return this.runStore.getActiveRun();
   }
 
+  async resolvePanelDeadline(
+    runId: string,
+    panelist: number,
+    decision: "continue" | "finish",
+  ): Promise<{ decision: string; receipt: unknown }> {
+    const active = this.runStore.getActiveRun();
+    if (!active || active.id !== runId || active.phase !== "panel" || !active.panelRunId) {
+      throw new FusionArgsError("The requested Fusion panel is no longer active.");
+    }
+    if (!Number.isInteger(panelist) || panelist < 1 || (decision !== "continue" && decision !== "finish")) {
+      throw new FusionArgsError("Expected a one-based panelist number and continue or finish.");
+    }
+    const state = active.panelDeadlines?.find((item) => item.index === panelist - 1);
+    if (!state || state.status !== "pending") throw new FusionArgsError("No pending deadline decision for that panelist.");
+    const payload = await this.rpc.status({ id: active.panelRunId });
+    const matches = findStepsArray(payload).filter((step) => isRecord(step) &&
+      step.runId === state.childRunId && (step.status ?? step.state) === "running" &&
+      (step.workflowKey ?? step.key ?? step.agent) === `panel-${panelist}`);
+    const latest = this.runStore.getActiveRun();
+    if (latest?.id !== runId || latest.phase !== "panel" ||
+      latest.panelDeadlines?.find((item) => item.index === state.index)?.status !== "pending" ||
+      isTerminalSubagentState(extractSubagentState(payload)) || matches.length !== 1 ||
+      Date.now() >= Math.min(state.requestedAt + PANEL_DECISION_WAIT_MS, state.finalizeAt)) {
+      throw new FusionArgsError("Deadline decision expired or the panelist is no longer running.");
+    }
+    const updated: PanelDeadlineState = { ...state, status: decision === "continue" ? "continued" : "finishing" };
+    this.savePanelDeadline(runId, updated);
+    const receipt = await this.steerPanelDeadline(runId, updated);
+    return { decision, receipt };
+  }
+
+  private savePanelDeadline(runId: string, state: PanelDeadlineState): void {
+    const active = this.runStore.getActiveRun();
+    if (active?.id !== runId || active.phase !== "panel") return;
+    this.runStore.updateRun(runId, {
+      panelDeadlines: [...(active.panelDeadlines ?? []).filter((item) => item.index !== state.index), state],
+    });
+  }
+
+  private async steerPanelDeadline(runId: string, state: PanelDeadlineState): Promise<unknown> {
+    try {
+      if (!this.rpc.steer) throw new Error("pi-subagents steer RPC is unavailable.");
+      return await this.rpc.steer({ id: state.childRunId, message: deadlineSteerMessage(state), mode: "auto" });
+    } catch (error: unknown) {
+      const message = `Could not send deadline guidance to panel-${state.index + 1}: ${errorMessage(error)}`;
+      const latest = this.runStore.getActiveRun();
+      if (latest?.id === runId && latest.panelDeadlines?.find((item) => item.index === state.index)?.status === state.status) {
+        this.savePanelDeadline(runId, { ...state, deliveryError: message });
+      }
+      this.notify(this.context, message, "warning");
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  private async handlePanelDeadlines(active: FusionRun, statusPayload: unknown): Promise<void> {
+    const actions = planPanelDeadlines(this.runStore.getActiveRun() ?? active, findStepsArray(statusPayload), Date.now());
+    for (const action of actions) {
+      if (this.runStore.getActiveRun()?.id !== active.id) return;
+      this.savePanelDeadline(active.id, action.state);
+      if (action.kind === "ask") {
+        const panelist = action.state.index + 1;
+        const member = active.profileSnapshot?.panel[action.state.index];
+        const step = findStepsArray(statusPayload).find((item) => isRecord(item) && item.runId === action.state.childRunId);
+        const content = [
+          `Fusion soft deadline: ${member ? memberLabel(member) : `panel-${panelist}`}.`,
+          `Fusion run: ${active.id}. Child run: ${action.state.childRunId}.`,
+          `Last observed activity (not verified findings): ${describeStepActivity(step)?.slice(0,500) ?? "unknown"}.`,
+          `Call resolve_fusion_deadline with runId=${active.id}, panelist=${panelist}, decision=continue or finish. Ask the user if the extra work needs their decision.`,
+          `Without a decision within ${PANEL_DECISION_WAIT_MS / 1000}s, the panelist will be asked to return its current answer. One continuation is allowed, only within the existing hard deadline.`,
+          `User command: /fusion continue ${active.id} ${panelist} or /fusion finish ${active.id} ${panelist}.`,
+        ].join("\n");
+        this.sendMessage?.({ customType: "fusion-deadline", content, display: true }, { triggerTurn: true, deliverAs: "steer" });
+      }
+      try {
+        await this.steerPanelDeadline(active.id, action.state);
+      } catch {
+        // The recorded delivery error is visible; never revive a child or reset its budget.
+      }
+    }
+  }
+
+  private reconcileTerminalPanel(
+    active: FusionRun,
+    extracted: ExtractPanelResultsSuccess,
+    statusPayload: unknown,
+    profile: FusionProfile,
+    lifecyclePayload: unknown,
+    options: ReconcilePanelResultsOptions,
+  ): ExtractPanelResultsResult | undefined {
+    const since = this.incompleteTerminalSince.get(active.id);
+    const graceExpired = since !== undefined && Date.now() - since >= WORKFLOW_RESULT_ARTIFACT_GRACE_MS;
+    const result = reconcilePanelResults(extracted, statusPayload, profile, lifecyclePayload, {
+      ...options,
+      ...(graceExpired && options.terminalizeRunning ? { allowMissingAtDeadline: true } : {}),
+    });
+    if (!result.ok && result.error.code === "incomplete-lifecycle" && !graceExpired) {
+      if (since === undefined) this.incompleteTerminalSince.set(active.id, Date.now());
+      return undefined;
+    }
+    this.incompleteTerminalSince.delete(active.id);
+    return result;
+  }
+
   private async reconcileActiveRun(
     eventPayload?: unknown,
   ): Promise<FusionCommandResult> {
@@ -623,13 +738,13 @@ export class FusionOrchestrator {
     this.reconciling = true;
     try {
       if (active.phase === "panel") {
-        return this.handleLegacyPanelComplete(active, eventPayload);
+        return await this.handleLegacyPanelComplete(active, eventPayload);
       }
       if (active.phase === "chain") {
-        return this.handleChainComplete(active, eventPayload);
+        return await this.handleChainComplete(active, eventPayload);
       }
       if (active.phase === "judge") {
-        return this.handleJudgeComplete(active, eventPayload);
+        return await this.handleJudgeComplete(active, eventPayload);
       }
       return { status: "ignored" };
     } finally {
@@ -694,7 +809,8 @@ export class FusionOrchestrator {
       );
     }
 
-    const observedPanels = reconcilePanelResults(
+    const observedPanels = this.reconcileTerminalPanel(
+      active,
       extracted,
       snapshot.statusPayload,
       profile,
@@ -707,6 +823,7 @@ export class FusionOrchestrator {
           : {}),
       },
     );
+    if (!observedPanels) return { status: "ignored" };
     if (!observedPanels.ok) {
       return this.failActiveRun(
         `${observedPanels.error.message} (${observedPanels.error.path})`,
@@ -827,6 +944,7 @@ export class FusionOrchestrator {
     const panelIsTerminal =
       snapshot.resultIsTerminal ||
       isTerminalSubagentState(extractSubagentState(snapshot.statusPayload));
+    if (!panelIsTerminal) await this.handlePanelDeadlines(active, snapshot.statusPayload);
     if (!active.panelStopReason && !panelIsTerminal) {
       if (
         partial &&
@@ -886,7 +1004,8 @@ export class FusionOrchestrator {
       );
     }
 
-    const observedPanels = reconcilePanelResults(
+    const observedPanels = this.reconcileTerminalPanel(
+      active,
       extracted,
       snapshot.statusPayload,
       profile,
@@ -899,6 +1018,7 @@ export class FusionOrchestrator {
           : {}),
       },
     );
+    if (!observedPanels) return { status: "ignored" };
     if (!observedPanels.ok) {
       return this.failActiveRun(
         `${observedPanels.error.message} (${observedPanels.error.path})`,
@@ -1381,6 +1501,7 @@ export class FusionOrchestrator {
   }
 
   private clearActiveRuntime(): void {
+    this.incompleteTerminalSince.clear();
     this.activeProfile = undefined;
     this.stopReconcileLoop();
   }
@@ -1654,6 +1775,9 @@ function formatFusionStatusReport(input: {
     lines.push(`Profile: ${input.active.profileName}`);
     lines.push(`Phase: ${input.details?.phaseLabel ?? input.active.phase}`);
     appendEffectiveTimeouts(lines, input.active);
+    for (const deadline of input.active.panelDeadlines ?? []) {
+      lines.push(`Panel-${deadline.index + 1} deadline: ${deadline.status}${deadline.deliveryError ? ` (${deadline.deliveryError})` : ""}`);
+    }
     if (input.active.chainRunId)
       lines.push(`Chain run: ${input.active.chainRunId}`);
     else if (input.active.panelRunId)
@@ -1706,6 +1830,9 @@ function appendEffectiveTimeouts(
   lines.push(
     `Deadlines: panelist ${timeouts.panelistTimeoutMs}ms, panel ${timeouts.panelTimeoutMs}ms (+${timeouts.panelGraceMs}ms grace), judge ${timeouts.judgeTimeoutMs}ms`,
   );
+  if (timeouts.panelistSoftTimeoutMs !== undefined) {
+    lines.push(`Soft deadline: ${timeouts.panelistSoftTimeoutMs}ms per child; decision wait ${PANEL_DECISION_WAIT_MS}ms; hard deadlines are unchanged.`);
+  }
   if (timeouts.usesLegacyTimeout) {
     lines.push("Warning: legacy timeoutMs supplied one or more effective deadlines.");
   }
@@ -2139,7 +2266,7 @@ function withWorkflowDeadlineFailures(
     ...failure,
     summary: failure.summary.includes(deadlineError)
       ? failure.summary
-      : `${deadlineError}\n${failure.summary}`,
+      : `${deadlineError} ${failure.summary}`,
     reason: failure.reason ?? "timeout",
   }));
 }

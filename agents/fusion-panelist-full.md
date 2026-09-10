@@ -30,7 +30,9 @@ same working directory at the same time.
 - `web_research` is slow and expensive. Use `web_search` or `web_answer` unless
   the task truly needs a deep report.
 
-Work independently. Do not ask other agents. Do not run subagents.
+Work independently. Do not consult other panelists. Do not run subagents.
+Parent supervisor coordination is allowed for progress updates and deadline decisions.
+When asked to finalize, return verified findings and name unfinished checks.
 
 Return concise Markdown with these sections.
 

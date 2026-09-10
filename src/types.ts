@@ -56,6 +56,7 @@ export interface FusionTimeoutOverrides {
 }
 
 export interface EffectiveFusionTimeouts {
+  panelistSoftTimeoutMs?: number;
   panelistTimeoutMs: number;
   panelTimeoutMs: number;
   panelGraceMs: number;
@@ -70,6 +71,8 @@ export interface FusionProfile {
   concurrency?: number;
   /** Legacy shared wall-clock timeout used when a stage timeout is absent. */
   timeoutMs?: number;
+  /** Opt-in parent decision before the hard child deadline; reserves one minute to finalize. */
+  panelistSoftTimeoutMs?: number;
   /** Per-child deadline. It is capped below the enclosing panel deadline. */
   panelistTimeoutMs?: number;
   /** Wall-clock timeout for the complete panel workflow. */
@@ -273,6 +276,16 @@ export interface FusionSpawnIntent {
   requestedAt: number;
 }
 
+export interface PanelDeadlineState {
+  index: number;
+  childRunId: string;
+  requestedAt: number;
+  finalizeAt: number;
+  hardDeadlineAt: number;
+  status: "pending" | "continued" | "finishing";
+  deliveryError?: string;
+}
+
 export interface FusionRun {
   id: string;
   prompt: string;
@@ -306,6 +319,7 @@ export interface FusionRun {
   panelAsyncDir?: string;
   panelStopReason?: "agreement";
   panelStoppedIndices?: number[];
+  panelDeadlines?: PanelDeadlineState[];
   judgeRunId?: string;
   judgeAsyncDir?: string;
   judgeObservation?: RunObservation;

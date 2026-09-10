@@ -45,6 +45,8 @@ Preferred command shape:
 /fusion --panel <entries> <prompt>
 /fusion status
 /fusion stop
+/fusion continue <fusion-run-id> <panelist-number>
+/fusion finish <fusion-run-id> <panelist-number>
 /fusion init
 ```
 
@@ -152,10 +154,11 @@ Profile:
 
 - `panel`: one or more panel members
 - `judge`: judge agent config
-- `concurrency`: max parallel panelists. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
+- `concurrency`: max parallel panelists. Ordinary panels immediately start the next queued member when a slot finishes or fails, while retaining configured result order. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
 - `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It is a fallback only; `/fusion status` warns when it supplied an effective deadline.
+- `panelistSoftTimeoutMs`: optional soft deadline, measured from each child's actual start, not its queue time. Requires `pi-subagents` RPC advertising `nonRecoveringSteer`. It must leave more than one minute before the effective hard child deadline, and the panel budget must cover every concurrency wave plus grace.
 - `panelistTimeoutMs`: per-panelist deadline. Fusion caps it below the enclosing panel deadline.
-- `panelTimeoutMs`: panel workflow wall-clock deadline.
+- `panelTimeoutMs`: panel workflow wall-clock deadline. When neither it nor legacy `timeoutMs` is set, the default is 15 minutes multiplied by `ceil(panel size / concurrency)`. An explicit short deadline can still cut queued work off; soft-deadline profiles reject insufficient wave budgets.
 - `panelGraceMs`: reserved time between a child deadline and the enclosing panel deadline (default 5 seconds).
 - `judgeTimeoutMs`: synthesis workflow deadline. For every deadline the precedence is per-run CLI/tool/RPC override, stage profile field, legacy `timeoutMs`, then the built-in default.
 - `minimumSuccessfulPanelists`: `"majority"` (default), `"all"`, or a positive number. It is the panel quorum for synthesis. For a multi-member panel, numeric `1` is effectively `2`: synthesis needs two candidate answers. A one-member panel remains a direct single-panel result.
@@ -167,6 +170,44 @@ Profile:
 - `judgeToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` for the judge or composer. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. `soft` is a nudge. After `hard`, the selected tools are blocked so synthesis can still finalise. `soft` or `hard` must be positive integers when present, and `soft` must not be larger than `hard` when both are present. Legacy soft-only budgets remain valid.
 
 Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion durably keeps verified completed slots, turns terminal running/interrupted slots into typed failures, and fails closed when lifecycle sources genuinely disagree. A timed-out judge never becomes a panel-only success. When at least one valid panel result exists, Fusion produces either synthesis at quorum or an explicitly unsynthesized partial report below quorum; failures and timeouts are disclosed as missing coverage. Only zero successful outputs fail outright. Fusion never automatically retries a failed panelist, restarts a panel, or extends a deadline.
+
+### Soft deadline decisions
+
+For a six-member panel with concurrency four, a bounded review budget can be:
+
+```json
+{
+  "panelistSoftTimeoutMs": 600000,
+  "panelistTimeoutMs": 960000,
+  "panelTimeoutMs": 2100000,
+  "panelGraceMs": 30000,
+  "judgeTimeoutMs": 600000
+}
+```
+
+After ten minutes of actual child runtime, Fusion asks the parent agent to decide
+and requests a progress update from that panelist. The parent may ask the user,
+then call `resolve_fusion_deadline` with the Fusion `runId`, one-based `panelist`
+number, and `decision: "continue"` or `"finish"`. Users can use the corresponding
+`/fusion continue` or `/fusion finish` command. The judge is not involved.
+
+A decision is accepted only for the same live child in a pending request. No
+reply within one minute requests finalization. A continuation uses the already
+reserved budget: in this example, investigation ends at minute 15 and the hard
+stop remains minute 16. There is no second extension. Decisions survive reload;
+expired requests and completed/replaced children cannot receive a new grant.
+
+Guidance is sent through non-recovering `steer` RPC. Receipts are not proof of
+model compliance. Missing routes are visible in `/fusion status`; Fusion does
+not revive a child, reset a timer, or retry inference. A blocked provider or tool
+may not produce a final answer before the hard stop. Verified completed answers
+remain available for partial reporting.
+
+At a terminal workflow deadline, incomplete lifecycle snapshots get up to five
+seconds to settle. A late child error keeps its actual cause. After that window,
+slots still absent with unambiguous identities become deadline failures. Duplicate
+or conflicting identities still fail closed. Incomplete *successful* workflows
+are not silently repaired into successes.
 
 Panel member:
 

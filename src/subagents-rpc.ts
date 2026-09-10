@@ -11,6 +11,7 @@ export const SUBAGENTS_RPC_METHODS = [
   "status",
   "stop",
   "interrupt",
+  "steer",
 ] as const;
 
 export type SubagentsRpcMethod = (typeof SUBAGENTS_RPC_METHODS)[number];
@@ -40,6 +41,11 @@ export interface SubagentsTargetParams {
   runId?: string;
   dir?: string;
   index?: number;
+}
+
+export interface SubagentsSteerParams extends SubagentsTargetParams {
+  message: string;
+  mode: "auto";
 }
 
 export type SubagentsSpawnParams = object;
@@ -143,6 +149,10 @@ export class SubagentsRpcClient {
     );
     this.createRequestId = options.requestId ?? randomUUID;
     this.source = options.source ?? { extension: "pi-fusion" };
+  }
+
+  steer(params: SubagentsSteerParams): Promise<unknown> {
+    return this.request("steer", params);
   }
 
   request<T = unknown>(
