@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runFusionInit } from "../../src/commands.js";
+import { FusionConfigError } from "../../src/errors.js";
 import {
   buildInlinePanelProfile,
   createDefaultFusionConfig,
@@ -18,6 +19,7 @@ import {
   splitInlinePanelEntry,
 } from "../../src/config.js";
 import type { FusionConfig } from "../../src/types.js";
+import { isThinkingLevel, resetExtraThinkingLevels } from "../../src/thinking-levels.js";
 
 const PANEL_MEMBER = {
   id: "one",
@@ -901,3 +903,84 @@ test("buildInlinePanelProfile drops merge synthesis: inline members have no face
     true,
   );
 });
+
+test("parseFusionConfig registers extraThinkingLevels for the run", () => {
+  resetExtraThinkingLevels();
+  const config = parseFusionConfig(
+    JSON.stringify({
+      defaultProfile: "quality",
+      profiles: { quality: { panel: [PANEL_MEMBER], judge: JUDGE } },
+      extraThinkingLevels: ["ultra", "pro"],
+    }),
+    "test.json",
+  );
+
+  assert.deepEqual(config.extraThinkingLevels, ["ultra", "pro"]);
+  assert.equal(isThinkingLevel("ultra"), true);
+  assert.equal(isThinkingLevel("pro"), true);
+  // Custom suffixes parse as model + thinking once registered.
+  assert.deepEqual(splitInlinePanelEntry("openai/gpt-5.5:ultra"), {
+    agent: "pi-fusion.fusion-panelist",
+    model: "openai/gpt-5.5:ultra",
+  });
+
+  resetExtraThinkingLevels();
+  assert.equal(isThinkingLevel("ultra"), false);
+});
+
+test("parseFusionConfig rejects duplicate, shadowing, and invalid levels", () => {
+  resetExtraThinkingLevels();
+  const profiles = { quality: { panel: [PANEL_MEMBER], judge: JUDGE } };
+
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles,
+          extraThinkingLevels: ["ultra", "ultra"],
+        }),
+        "test.json",
+      ),
+    FusionConfigError,
+  );
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles,
+          extraThinkingLevels: ["high"],
+        }),
+        "test.json",
+      ),
+    FusionConfigError,
+  );
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles,
+          extraThinkingLevels: [""],
+        }),
+        "test.json",
+      ),
+    FusionConfigError,
+  );
+  assert.throws(
+    () =>
+      parseFusionConfig(
+        JSON.stringify({
+          defaultProfile: "quality",
+          profiles,
+          extraThinkingLevels: "ultra",
+        }),
+        "test.json",
+      ),
+    FusionConfigError,
+  );
+
+  resetExtraThinkingLevels();
+});
+

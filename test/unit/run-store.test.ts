@@ -10,6 +10,11 @@ import {
   readLastFusionRunSummary,
   type FusionTerminalPhase,
 } from "../../src/run-store.js";
+import {
+  resetExtraThinkingLevels,
+  setExtraThinkingLevels,
+} from "../../src/thinking-levels.js";
+import type { ThinkingLevel } from "../../src/types.js";
 
 test("FusionRunStore starts one active run at a time", () => {
   const store = new FusionRunStore({
@@ -117,6 +122,63 @@ test("FusionRunStore persists done, failed, and cancelled transitions", () => {
     assert.equal(entries[0]?.customType, FUSION_RUN_ENTRY_TYPE);
     assert.equal(entries[1]?.customType, FUSION_RUN_ENTRY_TYPE);
     assert.deepEqual(entries[1]?.data, store.getLastRunSummary());
+  }
+});
+
+test("FusionRunStore restores snapshots carrying extra thinking levels", () => {
+  setExtraThinkingLevels(["ultra"]);
+  try {
+    const entries: Array<{ type: "custom"; customType: string; data?: unknown }> =
+      [];
+    const store = new FusionRunStore({
+      idFactory: () => "run-ultra",
+      now: () => 10,
+      persistence: {
+        appendEntry: (customType, data) =>
+          entries.push({ type: "custom", customType, data }),
+      },
+    });
+
+    // Seed a terminal run so restoreFromEntries returns a summary while the
+    // newest persisted snapshot (the active run below) still exercises the
+    // isFusionRunState path under test.
+    const seed = store.startRun({ prompt: "seed", profileName: "quality" });
+    store.completeRun(seed.id, { report: "seed report" });
+
+    // The runtime registry extends the built-in ThinkingLevel union; see
+    // isThinkingLevel's doc in thinking-levels.ts.
+    const thinking = "ultra" as ThinkingLevel;
+    store.startRun({
+      prompt: "compare",
+      profileName: "quality",
+      phase: "panel",
+      profileSnapshot: {
+        panel: [
+          {
+            id: "p0",
+            agent: "pi-fusion.fusion-panelist",
+            model: "openai/gpt-5.5",
+            thinking,
+          },
+        ],
+        judge: {
+          agent: "pi-fusion.fusion-judge",
+          model: "ollama/qwen",
+          thinking,
+        },
+        minimumSuccessfulPanelists: 1,
+      },
+    });
+
+    // Fresh store with NO extras seeded: read-time snapshot validation must
+    // not consult the extras registry (restore runs before config load).
+    const restored = new FusionRunStore();
+    assert.notEqual(restored.restoreFromEntries(entries), undefined);
+    const active = restored.getActiveRun();
+    assert.equal(active?.profileSnapshot?.panel[0]?.thinking, "ultra");
+    assert.equal(active?.profileSnapshot?.judge.thinking, "ultra");
+  } finally {
+    resetExtraThinkingLevels();
   }
 });
 
