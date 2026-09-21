@@ -158,6 +158,7 @@ export class FusionOrchestrator {
   private preflightRecoveryEnabled = false;
   private pendingCompletionPayload: unknown;
   private readonly incompleteTerminalSince = new Map<string, number>();
+  private readonly pendingCancellations = new Map<string, Promise<FusionCommandResult>>();
 
   constructor(deps: FusionOrchestratorDeps) {
     this.rpc = deps.rpc;
@@ -510,7 +511,17 @@ export class FusionOrchestrator {
     });
   }
 
-  private async reconcileContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
+  private reconcileContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
+    const pending = this.pendingCancellations.get(run.id);
+    if (pending) return pending;
+    const cancellation = this.observeContractCancellation(run).finally(() => {
+      this.pendingCancellations.delete(run.id);
+    });
+    this.pendingCancellations.set(run.id, cancellation);
+    return cancellation;
+  }
+
+  private async observeContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
     const admission = run.operationId ? this.operationJournal().lookup(run.operationId) : undefined;
     if (admission?.state === "cancelled" && admission.neverStarted === true) {
       const proof = { version: 1, kind: "workflow", state: "observed", runId: run.id, dispatchClosed: true, observedAt: Date.now(), children: [] };
@@ -981,6 +992,8 @@ export class FusionOrchestrator {
         const target = activeRunId(active);
         if (!target) return { status: "ignored" };
         const payload = await this.nativeStatus(active, target);
+        const interruption = this.completionInterruption(active);
+        if (interruption) return interruption;
         const proof = this.stageTerminalProof(active, payload, target);
         this.persistNativeObservation(active, payload);
         if (!proof) return { status: "ignored" };
@@ -1029,6 +1042,8 @@ export class FusionOrchestrator {
       ...(active.chainAsyncDir ? { asyncDir: active.chainAsyncDir } : {}),
       eventPayload: payload,
     });
+    const interruption = this.completionInterruption(active);
+    if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: "ignored" };
     this.persistVerifiedPanelResults(active, profile, snapshot.statusPayload);
     const terminalPayload =
@@ -1185,6 +1200,8 @@ export class FusionOrchestrator {
           : {}),
       eventPayload: payload,
     });
+    const interruption = this.completionInterruption(active);
+    if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: "ignored" };
 
     const partial = this.persistVerifiedPanelResults(
@@ -1437,6 +1454,8 @@ export class FusionOrchestrator {
       ...(active.judgeAsyncDir ? { asyncDir: active.judgeAsyncDir } : {}),
       eventPayload: payload,
     });
+    const interruption = this.completionInterruption(active);
+    if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: "ignored" };
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
@@ -1680,9 +1699,28 @@ export class FusionOrchestrator {
     });
   }
 
-  private completeActiveRun(report: string): FusionCommandResult {
+  private completionInterruption(run: FusionRun): FusionCommandResult | Promise<FusionCommandResult> | undefined {
+    if (!run.executionLifetime) return undefined;
+    this.runStore.refreshDurable();
+    const active = this.runStore.getActiveRun();
+    if (active?.id !== run.id) {
+      const saved = this.runStore.getRunById(run.id);
+      return saved?.phase === "cancelled" && saved.report
+        ? { status: "cancelled", run: saved, report: saved.report }
+        : { status: "ignored" };
+    }
+    if (active.cancellationRequested || (active.operationId && this.operationCancelled(active.operationId))) {
+      const cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true });
+      return this.reconcileContractCancellation(cancelling);
+    }
+    return undefined;
+  }
+
+  private async completeActiveRun(report: string): Promise<FusionCommandResult> {
     const active = this.runStore.getActiveRun();
     if (!active) return { status: "failed", error: "No active fusion run." };
+    const interruption = this.completionInterruption(active);
+    if (interruption) return interruption;
     const done = this.runStore.completeRun(active.id, {
       ...(active.chainRunId ? { chainRunId: active.chainRunId } : {}),
       ...(active.panelRunId ? { panelRunId: active.panelRunId } : {}),

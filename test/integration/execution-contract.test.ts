@@ -135,6 +135,77 @@ test("wrapper terminal and cancel receipt are not native tree exit", async (t) =
   assert.equal((store.getLastRunSummary()?.processTerminalProof as { runId: string }).runId, store.getLastRunSummary()?.id);
 });
 
+test("cancellation during deferred completion status wins the terminal transition", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-completion-cancel-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const fixture = rpcHarness(t, cwd);
+  const input = { operationId: "completion-cancel", prompt: "Review", digest: "caller", executionLifetime: lifetime };
+  assert.equal((await fixture.request("start", input)).success, true);
+  fixture.rpc.statusValue = "completed";
+  fixture.rpc.proof = proof(fixture.rpc);
+  const lookup = fixture.rpc.lookup.bind(fixture.rpc);
+  let releaseCompletion!: (value: unknown) => void;
+  let releaseCancellation!: (value: unknown) => void;
+  let completionEntered!: () => void;
+  let cancellationEntered!: () => void;
+  const completionWaiting = new Promise<void>((resolve) => { completionEntered = resolve; });
+  const cancellationWaiting = new Promise<void>((resolve) => { cancellationEntered = resolve; });
+  let reads = 0;
+  fixture.rpc.lookup = async () => {
+    reads += 1;
+    if (reads === 2) return new Promise((resolve) => { releaseCompletion = resolve; completionEntered(); });
+    if (reads === 3) return new Promise((resolve) => { releaseCancellation = resolve; cancellationEntered(); });
+    return lookup();
+  };
+  const completing = fixture.orchestrator.getStatusReport();
+  await completionWaiting;
+  const cancelling = fixture.orchestrator.cancelActiveRun(new FakePi().createContext(cwd));
+  await cancellationWaiting;
+  releaseCompletion(await lookup());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const phaseBeforeCancellationProof = fixture.store.getLastRunSummary()?.phase;
+  releaseCancellation(await lookup());
+  const [, cancelled] = await Promise.all([completing, cancelling]);
+  assert.notEqual(phaseBeforeCancellationProof, "done");
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(fixture.store.getLastRunSummary()?.phase, "cancelled");
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.equal(new FusionRunStore({ directory: join(cwd, "runs") }).getLastRunSummary()?.phase, "cancelled");
+});
+
+for (const cancellation of ["terminal", "durable-marker"] as const) {
+  test(`${cancellation} cancellation is honored after completion status resumes`, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-late-completion-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const fixture = rpcHarness(t, cwd);
+    const operationId = `late-completion-${cancellation}`;
+    assert.equal((await fixture.request("start", { operationId, prompt: "Review", digest: "caller", executionLifetime: lifetime })).success, true);
+    fixture.rpc.statusValue = "completed";
+    fixture.rpc.proof = proof(fixture.rpc);
+    const lookup = fixture.rpc.lookup.bind(fixture.rpc);
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    let reads = 0;
+    fixture.rpc.lookup = async () => ++reads === 2
+      ? new Promise((resolve) => { release = resolve; entered(); })
+      : lookup();
+    const completing = fixture.orchestrator.getStatusReport();
+    await waiting;
+    if (cancellation === "terminal") {
+      const result = await fixture.orchestrator.cancelActiveRun(new FakePi().createContext(cwd));
+      assert.equal(result.status, "cancelled");
+    } else {
+      new FusionOperationJournal(join(cwd, ".pi", "fusion", "operations")).cancel(operationId, true);
+      assert.equal(fixture.store.getActiveRun()?.cancellationRequested, undefined);
+    }
+    release(await lookup());
+    await completing;
+    assert.equal(fixture.store.getLastRunSummary()?.phase, "cancelled");
+    assert.equal(fixture.rpc.spawns.length, 1);
+  });
+}
+
 test("unbounded preflight refuses a runtime that only advertises lifetime", async (t) => {
   const rpc = new NativeRuntime();
   rpc.ping = async () => ({ capabilities: { executionLifetime: capabilities.executionLifetime } });
