@@ -1,5 +1,6 @@
 import { deadlineSteerMessage, planPanelDeadlines, PANEL_DECISION_WAIT_MS } from "./panel-deadlines.js";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { FusionOperationJournal } from "./operation-journal.js";
 import { isReviewContext, verifyReviewContext } from "./review-context.js";
 import { aggregateTerminalProof, expectedExecutionRoute, isExecutionLifetime, nativeTerminalProof, requestDigest, sameLifetime, supportsExecutionContract, supportsOwnedFusionRoutes, supportsTreeOwnership, verifiesExecutionOwnership } from "./runtime-contract.js";
@@ -266,12 +267,13 @@ export class FusionOrchestrator {
       ...buildPanelSpawnParams(resolved.profile, args.prompt, outputContract, args.timeoutOverrides, args.executionLifetime),
       ...(args.reviewContext ? { cwd: args.reviewContext.cwd } : {}),
     };
+    const runId = preflight?.runId ?? (args.executionLifetime ? randomUUID() : undefined);
     try {
       run = this.runStore.startRun({
-        ...(preflight ? {
-          id: preflight.runId,
+        ...(runId ? {
+          id: runId,
           spawnIntent: {
-            stage: "panel", requestedAt: Date.now(), requestId: `${preflight.runId}:panel`,
+            stage: "panel", requestedAt: Date.now(), requestId: `${runId}:panel`,
             requestDigest: requestDigest(args.reviewContext ? { params: spawnParams, reviewContext: args.reviewContext } : spawnParams),
             params: spawnParams,
           },
@@ -302,8 +304,11 @@ export class FusionOrchestrator {
       });
     } catch (error: unknown) {
       this.runStore.refreshDurable();
-      const persisted = preflight ? this.runStore.getRunById(preflight.runId) : undefined;
-      if (persisted) return this.adoptPreflightRun(persisted);
+      const persisted = runId ? this.runStore.getRunById(runId) : undefined;
+      if (persisted) {
+        this.adoptPreflightRun(persisted);
+        return { status: "started", run: persisted };
+      }
       if (!(error instanceof FusionRunStoreError)) {
         const message = errorMessage(error);
         this.notify(ctx, message, "error");

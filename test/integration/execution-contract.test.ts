@@ -11,6 +11,10 @@ import { FusionOrchestrator, type FusionRpcClientLike } from "../../src/orchestr
 import { FusionRunStore, type FusionRunStorePersistence } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 import { FakePi } from "../support/fake-pi.js";
+import fusionExtension from "../../src/index.js";
+import { DurableRunSnapshotStore } from "../../src/durable-run-store.js";
+import { SUBAGENTS_RPC_REQUEST_CHANNEL, subagentsRpcReplyChannel } from "../../src/subagents-rpc.js";
+import { isRecord } from "../../src/utils.js";
 
 const capabilities = {
   executionLifetime: { version: 1, modes: ["unbounded", "bounded"] },
@@ -90,6 +94,90 @@ test("unbounded launch persists identity and survives old elapsed deadlines", as
   assert.equal(store.getActiveRun()?.phase, "panel");
   assert.equal(rpc.cancelled, false);
 });
+
+for (const fault of ["after-initial-write", "before-intent-write"] as const) {
+  for (const outcome of ["launch", "cancel", "continue"] as const) {
+    test(`direct public tool survives ${fault} and recovers by ${outcome}`, async (t) => {
+      const cwd = await mkdtemp(join(tmpdir(), "fusion-direct-intent-"));
+      t.after(() => rm(cwd, { recursive: true, force: true }));
+      await mkdir(join(cwd, ".pi"));
+      await writeFile(join(cwd, ".pi", "fusion.json"), JSON.stringify(config));
+      const directory = join(cwd, ".pi", "fusion", "runs");
+      const rpc = new NativeRuntime();
+      const boot = async () => {
+        const pi = new FakePi();
+        const emit = pi.events.emit.bind(pi.events);
+        t.mock.method(pi.events, "emit", (event: string, payload: unknown) => {
+          if (event !== SUBAGENTS_RPC_REQUEST_CHANNEL) return emit(event, payload);
+          assert.ok(isRecord(payload) && typeof payload.requestId === "string");
+          const { requestId, method, params } = payload;
+          let reply: Promise<unknown>;
+          switch (method) {
+            case "ping": reply = rpc.ping(); break;
+            case "spawn": assert.ok(isRecord(params)); reply = rpc.spawn(params); break;
+            case "lookup":
+              assert.ok(isRecord(params));
+              reply = rpc.identity ? rpc.lookup() : Promise.resolve({ operationId: params.operationId, digest: params.digest, state: outcome !== "cancel" ? "absent" : "pending" });
+              break;
+            case "cancel":
+              assert.ok(isRecord(params));
+              reply = Promise.resolve({ operationId: params.operationId, digest: params.digest, state: "cancelled", neverStarted: true });
+              break;
+            case "status": reply = rpc.status(); break;
+            default: throw new Error(`Unexpected native method ${String(method)}`);
+          }
+          void reply.then((data) => emit(subagentsRpcReplyChannel(requestId), { version: 1, requestId, method, success: true, data }));
+        });
+        fusionExtension(pi.asExtensionApi());
+        const ctx = pi.createContext(cwd);
+        t.after(() => pi.emitLifecycle("session_shutdown", {}, ctx));
+        await pi.emitLifecycle("session_start", {}, ctx);
+        return { pi, ctx };
+      };
+      const first = await boot();
+      const writer = new DurableRunSnapshotStore(directory);
+      const originalWrite = writer.write.bind(writer);
+      let writes = 0;
+      const mockedWrite = t.mock.method(DurableRunSnapshotStore.prototype, "write", function (this: DurableRunSnapshotStore, key: string, data: unknown, exclusive?: boolean) {
+        if (this.directory === directory) {
+          writes += 1;
+          if (writes === 2 && fault === "before-intent-write") throw new Error("interrupted before intent update");
+        }
+        assert.equal(this.directory, directory);
+        originalWrite(key, data, exclusive);
+        if (this.directory === directory && writes === 1 && fault === "after-initial-write") throw new Error("interrupted after initial publication");
+      });
+      const tool = first.pi.tools.get("start_fusion_review");
+      assert.ok(tool);
+      await tool.execute("direct-call", { prompt: "Review", executionLifetime: lifetime }, undefined, undefined, first.ctx);
+      mockedWrite.mock.restore();
+      const run = new FusionRunStore({ directory }).getActiveRun();
+      assert.ok(run?.spawnIntent?.requestId);
+      assert.equal(run.operationId, undefined);
+      assert.equal(run.spawnIntent.requestId, `${run.id}:panel`);
+      assert.equal(run.spawnIntent.requestDigest, requestDigest(run.spawnIntent.params));
+      assert.equal(rpc.spawns.length, 0);
+      if (outcome !== "continue") await first.pi.emitLifecycle("session_shutdown", {}, first.ctx);
+      const restarted = outcome === "continue" ? first : await boot();
+      if (outcome === "continue") await restarted.pi.runCommand("fusion", "status", restarted.ctx);
+      if (outcome === "cancel") await restarted.pi.runCommand("fusion", "stop", restarted.ctx);
+      const saved = new FusionRunStore({ directory }).getRunById(run.id);
+      assert.equal(saved?.id, run.id);
+      assert.equal(saved?.phase, outcome !== "cancel" ? "panel" : "cancelled");
+      assert.equal(rpc.spawns.length, outcome !== "cancel" ? 1 : 0);
+      if (outcome !== "cancel") {
+        assert.equal(saved?.panelRunId, "native-panel");
+        assert.deepEqual(rpc.identity, { operationId: run.spawnIntent.requestId, digest: run.spawnIntent.requestDigest });
+        await restarted.pi.runCommand("fusion", "status", restarted.ctx);
+        assert.equal(rpc.spawns.length, 1);
+        rpc.statusValue = "completed";
+        rpc.proof = proof(rpc);
+        await restarted.pi.runCommand("fusion", "status", restarted.ctx);
+        assert.equal(new FusionRunStore({ directory }).getLastRunSummary()?.phase, "done");
+      }
+    });
+  }
+}
 
 test("lost native spawn reply is adopted across restart without duplicate spawn", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "fusion-contract-"));
