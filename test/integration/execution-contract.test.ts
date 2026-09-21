@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -550,6 +550,12 @@ test("owned panel and direct judge close under separate native identities bound 
   }
 });
 
+function fixtureGit(args: string[]): string {
+  const environment = { ...process.env };
+  for (const name of Object.keys(environment)) if (name.startsWith("GIT_")) delete environment[name];
+  return execFileSync("git", args, { encoding: "utf8", env: environment }).trim();
+}
+
 async function candidateRepositories(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), "fusion-candidate-context-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -558,12 +564,12 @@ async function candidateRepositories(t: TestContext) {
   for (const [cwd, label] of [[sessionCwd, "session"], [candidateCwd, "candidate"]]) {
     assert.ok(cwd && label);
     await mkdir(cwd);
-    execFileSync("git", ["init", "--quiet", cwd]);
+    fixtureGit(["init", "--quiet", cwd]);
     await writeFile(join(cwd, "marker.txt"), label);
-    execFileSync("git", ["-C", cwd, "add", "marker.txt"]);
-    execFileSync("git", ["-C", cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", label]);
+    fixtureGit(["-C", cwd, "add", "marker.txt"]);
+    fixtureGit(["-C", cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", label]);
   }
-  const head = (cwd: string) => execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const head = (cwd: string) => fixtureGit(["-C", cwd, "rev-parse", "HEAD"]);
   return { sessionCwd, candidateCwd, sessionCommit: head(sessionCwd), reviewedCommit: head(candidateCwd) };
 }
 
@@ -632,7 +638,7 @@ test("candidate HEAD drift cannot produce an accepted report and does not preven
   const candidate = await candidateRepositories(t);
   const fixture = rpcHarness(t, candidate.sessionCwd);
   await fixture.request("start", { operationId: "drifting-candidate", digest: "caller-digest", prompt: "Review", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit });
-  execFileSync("git", ["-C", candidate.candidateCwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "changed candidate"]);
+  fixtureGit(["-C", candidate.candidateCwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "changed candidate"]);
   fixture.rpc.statusValue = "completed";
   fixture.rpc.proof = proof(fixture.rpc);
   await assert.rejects(fixture.orchestrator.getStatusReport(), /does not match reviewedCommit/);
@@ -694,5 +700,40 @@ test("candidate verification cannot be redirected by inherited Git repository va
   } finally {
     if (previous === undefined) delete process.env.GIT_DIR;
     else process.env.GIT_DIR = previous;
+  }
+});
+
+test("fixture Git commands isolate inherited hook selectors from a disposable sentinel repository", async (t) => {
+  const sentinel = await candidateRepositories(t);
+  const sentinelGitDir = join(sentinel.sessionCwd, ".git");
+  const beforeHead = fixtureGit(["-C", sentinel.sessionCwd, "rev-parse", "HEAD"]);
+  const beforeRefs = fixtureGit(["-C", sentinel.sessionCwd, "show-ref", "--heads"]);
+  const beforeConfig = await readFile(join(sentinelGitDir, "config"));
+  const beforeIndex = await readFile(join(sentinelGitDir, "index"));
+  const originalGitEnvironment = Object.entries(process.env).filter(([name]) => name.startsWith("GIT_"));
+  const injected = {
+    GIT_DIR: sentinelGitDir,
+    GIT_WORK_TREE: sentinel.sessionCwd,
+    GIT_COMMON_DIR: sentinelGitDir,
+    GIT_INDEX_FILE: join(sentinelGitDir, "index"),
+    GIT_OBJECT_DIRECTORY: join(sentinelGitDir, "objects"),
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(sentinelGitDir, "objects"),
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.bare",
+    GIT_CONFIG_VALUE_0: "true",
+    GIT_CONFIG_PARAMETERS: "'core.bare=true'",
+  };
+  Object.assign(process.env, injected);
+  try {
+    const isolated = await candidateRepositories(t);
+    assert.notEqual(isolated.sessionCommit, isolated.reviewedCommit);
+    assert.equal(fixtureGit(["-C", sentinel.sessionCwd, "rev-parse", "HEAD"]), beforeHead);
+    assert.equal(fixtureGit(["-C", sentinel.sessionCwd, "show-ref", "--heads"]), beforeRefs);
+    assert.deepEqual(await readFile(join(sentinelGitDir, "config")), beforeConfig);
+    assert.deepEqual(await readFile(join(sentinelGitDir, "index")), beforeIndex);
+    assert.equal(fixtureGit(["-C", sentinel.sessionCwd, "status", "--short"]), "");
+  } finally {
+    for (const name of Object.keys(process.env)) if (name.startsWith("GIT_")) delete process.env[name];
+    for (const [name, value] of originalGitEnvironment) if (value !== undefined) process.env[name] = value;
   }
 });

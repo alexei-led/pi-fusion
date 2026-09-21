@@ -14,7 +14,7 @@ export function verifyReviewContext(context: FusionReviewContext | undefined): v
   if (!isReviewContext(context)) throw new Error("Fusion review context requires an absolute cwd and a full reviewedCommit hash.");
   let head: string;
   const environment = { ...process.env };
-  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX"]) delete environment[name];
+  for (const name of Object.keys(environment)) if (name.startsWith("GIT_")) delete environment[name];
   try {
     head = execFileSync("git", ["-C", context.cwd, "rev-parse", "--verify", "HEAD^{commit}"], {
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000, env: environment,
