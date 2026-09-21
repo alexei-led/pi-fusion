@@ -44,7 +44,7 @@ export function supportsTreeOwnership(info: unknown): boolean {
 export function nativeTerminalProof(payload: unknown, runId: string): Record<string, unknown> | undefined {
   if (!isRecord(payload)) return undefined;
   const proof = payload.workflowTerminalProof ?? payload.processTerminalProof;
-  if (!isRecord(proof) || proof.runId !== runId || !isObservedProof(proof)) return undefined;
+  if (!isRecord(proof) || proof.kind !== "workflow" || proof.runId !== runId || !isObservedProof(proof)) return undefined;
   return proof;
 }
 

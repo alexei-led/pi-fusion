@@ -443,6 +443,10 @@ export class FusionOrchestrator {
     if (lookup.operationId !== intent.requestId || (lookup.state !== "absent" && lookup.digest !== intent.requestDigest)) return undefined;
     let reply: unknown = lookup;
     if (lookup.state === "absent" && !run.cancellationRequested && intent.params) {
+      this.runStore.refreshDurable();
+      if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
+        return this.runStore.updateRun(run.id, { cancellationRequested: true });
+      }
       reply = await this.rpc.spawn({ ...intent.params, operationId: intent.requestId, digest: intent.requestDigest });
     }
     const nativeId = extractSubagentRunId(reply);
@@ -452,6 +456,7 @@ export class FusionOrchestrator {
       ...(intent.stage === "panel" ? { panelRunId: nativeId, ...(asyncDir ? { panelAsyncDir: asyncDir } : {}) }
         : { phase: "judge", judgeRunId: nativeId, ...(asyncDir ? { judgeAsyncDir: asyncDir } : {}) }),
       effectiveExecutionLifetime: run.executionLifetime,
+      ...(run.operationId && this.operationCancelled(run.operationId) ? { cancellationRequested: true } : {}),
     });
   }
 
@@ -474,7 +479,7 @@ export class FusionOrchestrator {
     if (!target) return { status: "started", run };
     const payload = await this.nativeStatus(run, target);
     const proof = nativeTerminalProof(payload, target);
-    this.runStore.updateRun(run.id, { observation: payload });
+    this.persistNativeObservation(run, payload);
     if (!proof) return { status: "started", run };
     this.runStore.updateRun(run.id, { processTerminalProof: aggregateTerminalProof(run, proof) });
     const report = `Fusion run ${run.id} cancelled after native process-tree exit was observed.`;
@@ -491,6 +496,10 @@ export class FusionOrchestrator {
       if (isRecord(lookup) && lookup.operationId === intent.requestId && lookup.digest === intent.requestDigest && lookup.runId === target && isRecord(lookup.statusPayload)) return lookup.statusPayload;
     }
     return await this.rpc.status({ id: target });
+  }
+
+  private persistNativeObservation(run: FusionRun, payload: unknown): void {
+    if (JSON.stringify(run.observation) !== JSON.stringify(payload)) this.runStore.updateRun(run.id, { observation: payload });
   }
 
   async handleSubagentComplete(payload: unknown): Promise<FusionCommandResult> {
@@ -889,7 +898,7 @@ export class FusionOrchestrator {
         if (!target) return { status: "ignored" };
         const payload = await this.nativeStatus(active, target);
         const proof = nativeTerminalProof(payload, target);
-        this.runStore.updateRun(active.id, { observation: payload });
+        this.persistNativeObservation(active, payload);
         if (!proof) return { status: "ignored" };
         active = this.runStore.updateRun(active.id, { processTerminalProof: aggregateTerminalProof(active, proof) });
         if (active.cancellationRequested) return await this.reconcileContractCancellation(active);

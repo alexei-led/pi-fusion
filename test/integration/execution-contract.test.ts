@@ -49,7 +49,11 @@ class NativeRuntime implements FusionRpcClientLike {
 }
 
 function proof() {
-  return { version: 1, state: "observed", runId: "native-panel", runnerProcessInstanceId: "native-instance", observedAt: 1, instances: [], processTreeOwnership: capabilities.processTreeOwnership };
+  return { version: 1, kind: "workflow", state: "observed", runId: "native-panel", dispatchClosed: true, observedAt: 1, children: [processProof()] };
+}
+
+function processProof() {
+  return { version: 1, state: "observed", runId: "native-child", runnerProcessInstanceId: "native-instance", observedAt: 1, instances: [], processTreeOwnership: capabilities.processTreeOwnership };
 }
 
 test("unbounded launch persists identity and survives old elapsed deadlines", async (t) => {
@@ -199,6 +203,12 @@ test("public RPC preserves durable identity, rejects changed replay, and fences 
   assert.equal(fence.success, true);
   assert.equal((await request("start", { ...input, operationId: "late-operation" })).success, false);
   assert.equal(rpc.spawns.length, 1);
+  const busyInput = { ...input, operationId: "busy-operation" };
+  assert.equal((await request("start", busyInput)).success, false);
+  rpc.proof = proof();
+  await request("cancel", { operationId: input.operationId });
+  assert.equal((await request("start", busyInput)).success, true);
+  assert.equal(rpc.spawns.length, 2);
 });
 
 test("closed panel proof cannot acknowledge cancellation of an unresolved judge launch", async (t) => {
@@ -225,7 +235,7 @@ test("empty process group cannot prove escaped descendants exited", async (t) =>
   t.after(() => orchestrator.dispose());
   const ctx = new FakePi().createContext();
   await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, ctx);
-  rpc.proof = { ...proof(), instances: [{ kind: "pi-writer", processTree: { state: "observed", mechanism: "posix-process-group", containment: "unverified" } }] };
+  rpc.proof = { ...proof(), children: [{ ...processProof(), instances: [{ kind: "pi-writer", processTree: { state: "observed", mechanism: "posix-process-group", containment: "unverified" } }] }] };
   await orchestrator.cancelActiveRun(ctx);
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
   assert.equal(store.getLastRunSummary(), undefined);
@@ -241,4 +251,49 @@ test("explicit dispatch refuses the current group-only ownership capability", as
   const result = await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, new FakePi().createContext());
   assert.equal(result.status, "failed");
   assert.equal(rpc.spawns.length, 0);
+});
+
+test("unchanged unbounded activity polls do not grow durable session history", async (t) => {
+  const rpc = new NativeRuntime();
+  const pi = new FakePi();
+  const store = new FusionRunStore({ persistence: pi });
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  t.after(() => orchestrator.dispose());
+  await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, pi.createContext());
+  await orchestrator.getStatusReport();
+  const observations = pi.entries.length;
+  await orchestrator.getStatusReport();
+  assert.equal(pi.entries.length, observations);
+});
+
+test("native workflow stage does not accept a wrapper process proof", async (t) => {
+  const rpc = new NativeRuntime();
+  const store = new FusionRunStore();
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  t.after(() => orchestrator.dispose());
+  const ctx = new FakePi().createContext();
+  await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, ctx);
+  rpc.proof = { ...processProof(), runId: "native-panel" };
+  await orchestrator.cancelActiveRun(ctx);
+  assert.equal(store.getActiveRun()?.cancellationRequested, true);
+  assert.equal(store.getLastRunSummary(), undefined);
+});
+
+test("cancellation arriving during native lookup prevents an absent-intent replay", async (t) => {
+  const rpc = new NativeRuntime();
+  rpc.loseReply = true;
+  const store = new FusionRunStore();
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  t.after(() => orchestrator.dispose());
+  const ctx = new FakePi().createContext();
+  await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, ctx);
+  let resolveLookup: ((value: unknown) => void) | undefined;
+  rpc.lookup = () => new Promise((resolve) => { resolveLookup = resolve; });
+  const polling = orchestrator.getStatusReport();
+  await orchestrator.cancelActiveRun(ctx);
+  assert.ok(resolveLookup);
+  resolveLookup({ ...rpc.identity, state: "absent" });
+  await polling;
+  assert.equal(rpc.spawns.length, 1);
+  assert.equal(store.getActiveRun()?.cancellationRequested, true);
 });

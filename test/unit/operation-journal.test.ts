@@ -23,3 +23,15 @@ test("prelaunch cancellation is durable and prevents a late original launch", as
   new FusionOperationJournal(dir).cancel("late");
   assert.equal(new FusionOperationJournal(dir).claim("late", "sha256:late"), "cancelled");
 });
+
+test("confirmed prelaunch refusal releases its claim without removing a cancellation fence", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "fusion-journal-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const journal = new FusionOperationJournal(dir);
+  assert.equal(journal.claim("retry", "digest"), "claimed");
+  journal.releaseBeforeLaunch("retry");
+  assert.equal(journal.claim("retry", "digest"), "claimed");
+  journal.cancel("retry");
+  journal.releaseBeforeLaunch("retry");
+  assert.equal(journal.claim("retry", "digest"), "cancelled");
+});

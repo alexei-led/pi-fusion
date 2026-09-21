@@ -285,13 +285,14 @@ export function registerFusionRpc({
     }
     const pending = orchestrator
       .startRun({ ...toParsedFusionArgs(input), requestDigest: digest }, context)
-      .then((result) =>
-        startData(
+      .then((result) => {
+        if (input.executionLifetime && (result.status === "failed" || result.status === "conflict") && !store.getRunByOperationId(input.operationId)) journal().releaseBeforeLaunch(input.operationId);
+        return startData(
           input.operationId,
           runFromStartResult(result, input.operationId, store),
           false,
-        ),
-      );
+        );
+      });
     operations.set(input.operationId, { pending, digest });
 
     try {

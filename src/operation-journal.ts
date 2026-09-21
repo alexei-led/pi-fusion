@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { requestDigest } from "./runtime-contract.js";
 
@@ -30,6 +30,13 @@ export class FusionOperationJournal {
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     try { writeFileSync(this.path(operationId, "cancel"), "cancelled", { flag: "wx", mode: 0o600 }); }
     catch (error: unknown) { if (!isExists(error)) throw error; }
+  }
+
+  releaseBeforeLaunch(operationId: string): void {
+    try { unlinkSync(this.path(operationId, "intent")); }
+    catch (error: unknown) {
+      if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+    }
   }
 
   cancelled(operationId: string): boolean {
