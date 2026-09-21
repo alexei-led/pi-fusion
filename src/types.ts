@@ -18,6 +18,11 @@ export type FusionContextMode = "fresh" | "fork";
 export type ExecutionLifetime =
   | { mode: "unbounded" }
   | { mode: "bounded"; timeoutMs: number };
+
+export interface FusionReviewContext {
+  cwd: string;
+  reviewedCommit: string;
+}
 export type CallerOutputContract = "plan-review-v1";
 
 /**
@@ -197,6 +202,7 @@ export interface FusionConfig {
 }
 
 export interface ParsedFusionArgs {
+  reviewContext?: FusionReviewContext;
   executionLifetime?: ExecutionLifetime;
   requestDigest?: string;
   prompt: string;
@@ -295,6 +301,7 @@ export interface PanelDeadlineState {
 }
 
 export interface FusionRun {
+  reviewContext?: FusionReviewContext;
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
   requestDigest?: string;

@@ -6,6 +6,7 @@ import {
 import { join } from "node:path";
 import { FusionOperationJournal, type FusionOperationEvidence } from "./operation-journal.js";
 import { expectedExecutionRoute, isExecutionLifetime, requestDigest } from "./runtime-contract.js";
+import { isReviewContext } from "./review-context.js";
 import type {
   FusionCommandContext,
   FusionCommandResult,
@@ -18,6 +19,7 @@ import type {
   FusionTimeoutOverrides,
   ParsedFusionArgs,
   ExecutionLifetime,
+  FusionReviewContext,
 } from "./types.js";
 import { isNonEmptyString, isRecord } from "./utils.js";
 
@@ -71,6 +73,7 @@ export interface FusionRunState {
   processTerminalProof?: unknown;
   cancellationRequested?: boolean;
   observation?: unknown;
+  reviewContext?: FusionReviewContext;
 }
 
 export interface FusionRpcPingData {
@@ -81,6 +84,7 @@ export interface FusionRpcPingData {
 }
 
 export interface FusionRpcStartData {
+  reviewContext?: FusionReviewContext;
   operationId: string;
   replayed: boolean;
   run: FusionRunState;
@@ -91,6 +95,7 @@ export interface FusionRpcStartData {
 }
 
 export type FusionRpcStatusData = {
+  reviewContext?: FusionReviewContext;
   run: FusionRunState;
   effectiveExecutionLifetime?: ExecutionLifetime;
   processTerminalProof?: unknown;
@@ -102,6 +107,7 @@ export interface FusionRpcCallerOutput {
 }
 
 export interface FusionRpcResultData {
+  reviewContext?: FusionReviewContext;
   run: FusionRunState;
   callerOutput?: FusionRpcCallerOutput;
   effectiveExecutionLifetime?: ExecutionLifetime;
@@ -109,6 +115,7 @@ export interface FusionRpcResultData {
 }
 
 export interface FusionRpcCancelData {
+  reviewContext?: FusionReviewContext;
   cancelled: boolean;
   cancellationRequested?: boolean;
   run?: FusionRunState;
@@ -174,6 +181,8 @@ interface OperationRecord {
 }
 
 interface StartParams {
+  cwd?: string;
+  reviewedCommit?: string;
   executionLifetime?: ExecutionLifetime;
   digest?: string;
   prompt: string;
@@ -200,6 +209,7 @@ type ObservableRun = Pick<
   | "executionLifetime" | "effectiveExecutionLifetime" | "requestDigest"
   | "processTerminalProof" | "cancellationRequested" | "observation"
   | "spawnIntent" | "panelRunId" | "judgeRunId"
+  | "reviewContext"
 >;
 
 const TERMINAL_PHASES = new Set<FusionPhase>(["done", "failed", "cancelled"]);
@@ -504,6 +514,7 @@ function parseStartParams(input: unknown): StartParams {
   if (input.executionLifetime !== undefined && !isExecutionLifetime(input.executionLifetime)) throw invalidParams("Invalid executionLifetime.");
   if (input.executionLifetime !== undefined && timeoutOverrides) throw invalidParams("executionLifetime cannot be combined with stage timeout overrides.");
   if (input.digest !== undefined && !isNonEmptyString(input.digest)) throw invalidParams("digest must be a non-empty string.");
+  if ((input.cwd !== undefined || input.reviewedCommit !== undefined) && !isReviewContext({ cwd: input.cwd, reviewedCommit: input.reviewedCommit })) throw invalidParams("cwd and reviewedCommit must be supplied together as an absolute path and full commit hash.");
 
   const outputContract = input.outputContract;
   if (outputContract !== undefined && !isCallerOutputContract(outputContract)) {
@@ -517,6 +528,7 @@ function parseStartParams(input: unknown): StartParams {
     operationId,
     ...(input.executionLifetime !== undefined ? { executionLifetime: input.executionLifetime } : {}),
     ...(input.digest !== undefined ? { digest: input.digest } : {}),
+    ...(typeof input.cwd === "string" && typeof input.reviewedCommit === "string" ? { cwd: input.cwd, reviewedCommit: input.reviewedCommit } : {}),
     ...(profile === undefined ? {} : { profile }),
     ...(outputContract === undefined ? {} : { outputContract }),
     ...(timeoutOverrides ? { timeoutOverrides } : {}),
@@ -549,6 +561,7 @@ function toParsedFusionArgs(input: StartParams): ParsedFusionArgs {
     prompt: input.prompt,
     operationId: input.operationId,
     ...(input.executionLifetime ? { executionLifetime: input.executionLifetime } : {}),
+    ...(input.cwd !== undefined && input.reviewedCommit !== undefined ? { reviewContext: { cwd: input.cwd, reviewedCommit: input.reviewedCommit } } : {}),
     ...(input.profile === undefined ? {} : { profile: input.profile }),
     ...(input.outputContract === undefined
       ? {}
@@ -721,10 +734,11 @@ function stateFor(run: ObservableRun): FusionRunState {
   return state;
 }
 
-function runtimeData(run: ObservableRun): { effectiveExecutionLifetime?: ExecutionLifetime; effectiveExecutionOwnership?: { mode: "kernel" }; executionRoute?: "parallel-data" | "single-async"; processTerminalProof?: unknown; workflowTerminalProof?: unknown; neverStarted?: boolean } {
+function runtimeData(run: ObservableRun): { reviewContext?: FusionReviewContext; effectiveExecutionLifetime?: ExecutionLifetime; effectiveExecutionOwnership?: { mode: "kernel" }; executionRoute?: "parallel-data" | "single-async"; processTerminalProof?: unknown; workflowTerminalProof?: unknown; neverStarted?: boolean } {
   const nativeId = run.spawnIntent?.stage === "judge" ? run.judgeRunId : run.panelRunId;
   const route = nativeId ? expectedExecutionRoute(run.spawnIntent?.params) : undefined;
   return {
+    ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
     ...(run.effectiveExecutionLifetime ? { effectiveExecutionLifetime: run.effectiveExecutionLifetime } : {}),
     ...(run.effectiveExecutionLifetime && route ? { effectiveExecutionOwnership: { mode: "kernel" as const }, executionRoute: route } : {}),
     ...(TERMINAL_PHASES.has(run.phase) && run.processTerminalProof ? { processTerminalProof: run.processTerminalProof, workflowTerminalProof: run.processTerminalProof } : {}),

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { registerFusionRpc, FUSION_RPC_REQUEST_EVENT, fusionRpcReplyEvent } from "../../src/fusion-rpc.js";
 import { FusionOperationJournal } from "../../src/operation-journal.js";
+import { requestDigest } from "../../src/runtime-contract.js";
 import { FusionOrchestrator, type FusionRpcClientLike } from "../../src/orchestrator.js";
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
@@ -545,5 +547,152 @@ test("owned panel and direct judge close under separate native identities bound 
     assert.ok(typeof child === "object" && child !== null && "nativeOperation" in child && "kernelBinding" in child);
     assert.notDeepEqual(child.nativeOperation, closure.callerBinding);
     assert.notDeepEqual(child.kernelBinding, closure.callerBinding);
+  }
+});
+
+async function candidateRepositories(t: TestContext) {
+  const root = await mkdtemp(join(tmpdir(), "fusion-candidate-context-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionCwd = join(root, "session-a");
+  const candidateCwd = join(root, "candidate-b");
+  for (const [cwd, label] of [[sessionCwd, "session"], [candidateCwd, "candidate"]]) {
+    assert.ok(cwd && label);
+    await mkdir(cwd);
+    execFileSync("git", ["init", "--quiet", cwd]);
+    await writeFile(join(cwd, "marker.txt"), label);
+    execFileSync("git", ["-C", cwd, "add", "marker.txt"]);
+    execFileSync("git", ["-C", cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", label]);
+  }
+  const head = (cwd: string) => execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  return { sessionCwd, candidateCwd, sessionCommit: head(sessionCwd), reviewedCommit: head(candidateCwd) };
+}
+
+test("candidate context uses repository B for panel and restored judge while Pi stays in A", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const panelConfig: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel: [{ id: "one", agent: "panelist" }, { id: "two", agent: "panelist" }], judge: { agent: "judge" }, concurrency: 2 } } };
+  class CandidateRuntime extends NativeRuntime {
+    override async spawn(params: object): Promise<unknown> {
+      const result = await super.spawn(params);
+      this.statusValue = "running";
+      this.proof = undefined;
+      return result;
+    }
+    override payload(): unknown {
+      return { runId: this.runId, state: this.statusValue, ...(this.proof ? { processTerminalProof: this.proof } : {}), results: this.route === "parallel-data"
+        ? [{ agent: "panelist", output: "First", success: true }, { agent: "panelist", output: "Second", success: true }]
+        : [{ agent: "judge", output: "# Fusion Report\n\n## Summary\nReviewed candidate.", success: true }] };
+    }
+  }
+  const rpc = new CandidateRuntime();
+  const first = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
+  const context = { cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit };
+  const input = { operationId: "candidate-review", digest: "caller-candidate-digest", prompt: "Review", executionLifetime: lifetime, ...context };
+  assert.equal((await first.request("start", input)).success, true);
+  assert.deepEqual(first.store.getActiveRun()?.reviewContext, context);
+  const panelSpawn = rpc.spawns[0];
+  assert.ok(panelSpawn && "cwd" in panelSpawn && "operationId" in panelSpawn && "digest" in panelSpawn);
+  assert.equal(panelSpawn.cwd, candidate.candidateCwd);
+  const { operationId, digest, ...params } = panelSpawn;
+  assert.equal(operationId, first.store.getActiveRun()?.spawnIntent?.requestId);
+  assert.equal(digest, requestDigest({ params, reviewContext: context }));
+  assert.equal((await first.request("start", { ...input, cwd: candidate.sessionCwd, reviewedCommit: candidate.sessionCommit })).success, false);
+  assert.equal(rpc.spawns.length, 1);
+  first.dispose();
+  const restored = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
+  rpc.statusValue = "completed";
+  rpc.proof = proof(rpc);
+  await restored.orchestrator.restore(new FakePi().createContext(candidate.sessionCwd));
+  assert.equal(restored.store.getActiveRun()?.phase, "judge");
+  assert.deepEqual(restored.store.getActiveRun()?.reviewContext, context);
+  const judgeSpawn = rpc.spawns[1];
+  assert.ok(judgeSpawn && "cwd" in judgeSpawn && "agent" in judgeSpawn);
+  assert.equal(judgeSpawn.cwd, candidate.candidateCwd);
+  assert.equal(judgeSpawn.agent, "judge");
+  rpc.statusValue = "completed";
+  rpc.proof = proof(rpc);
+  await restored.orchestrator.getStatusReport();
+  assert.equal(restored.store.getLastRunSummary()?.phase, "done");
+  assert.deepEqual(new FusionRunStore({ directory: join(candidate.sessionCwd, "runs") }).getRunByOperationId(input.operationId)?.reviewContext, context);
+});
+
+test("candidate HEAD mismatch rejects before native admission and leaves cancellation available", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const fixture = rpcHarness(t, candidate.sessionCwd);
+  const operationId = "mismatched-candidate";
+  const response = await fixture.request("start", { operationId, digest: "caller-digest", prompt: "Review", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.sessionCommit });
+  assert.equal(response.success, false);
+  assert.match(JSON.stringify(response), /does not match reviewedCommit/);
+  assert.equal(fixture.rpc.spawns.length, 0);
+  assert.equal(fixture.store.getActiveRun(), undefined);
+  assert.deepEqual(responseData(await fixture.request("status", { operationId })), { operationId, state: "absent", replaySafe: true });
+  assert.equal(responseData(await fixture.request("cancel", { operationId })).neverStarted, true);
+});
+
+test("candidate HEAD drift cannot produce an accepted report and does not prevent cancellation", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const fixture = rpcHarness(t, candidate.sessionCwd);
+  await fixture.request("start", { operationId: "drifting-candidate", digest: "caller-digest", prompt: "Review", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit });
+  execFileSync("git", ["-C", candidate.candidateCwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "changed candidate"]);
+  fixture.rpc.statusValue = "completed";
+  fixture.rpc.proof = proof(fixture.rpc);
+  await assert.rejects(fixture.orchestrator.getStatusReport(), /does not match reviewedCommit/);
+  assert.equal(fixture.store.getActiveRun()?.phase, "panel");
+  assert.equal(fixture.store.getLastRunSummary(), undefined);
+  assert.equal(fixture.rpc.spawns.length, 1);
+  const cancelled = responseData(await fixture.request("cancel", { operationId: "drifting-candidate" }));
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(fixture.store.getLastRunSummary()?.phase, "cancelled");
+});
+
+test("review context requires a complete absolute directory and immutable commit pair", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-context-validation-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const fixture = rpcHarness(t, cwd);
+  for (const [index, context] of [
+    { cwd },
+    { reviewedCommit: "a".repeat(40) },
+    { cwd: "relative", reviewedCommit: "a".repeat(40) },
+    { cwd, reviewedCommit: "HEAD" },
+  ].entries()) {
+    const response = await fixture.request("start", { operationId: `invalid-context-${index}`, prompt: "Review", executionLifetime: lifetime, digest: "caller-digest", ...context });
+    assert.equal(response.success, false);
+    assert.match(JSON.stringify(response), /invalid_request/);
+  }
+  assert.equal(fixture.rpc.spawns.length, 0);
+});
+
+test("lost-launch replay retains candidate context and native digest after restart", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const rpc = new NativeRuntime();
+  rpc.loseReply = true;
+  const first = rpcHarness(t, candidate.sessionCwd, rpc);
+  const input = { operationId: "candidate-replay", digest: "caller-digest", prompt: "Review", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit };
+  assert.equal((await first.request("start", input)).success, true);
+  const original = rpc.spawns[0];
+  assert.ok(original);
+  first.dispose();
+  rpc.loseReply = false;
+  rpc.lookup = async () => ({ operationId: rpc.identity?.operationId, state: "absent" });
+  const restored = rpcHarness(t, candidate.sessionCwd, rpc);
+  await restored.orchestrator.restore(new FakePi().createContext(candidate.sessionCwd));
+  assert.equal(rpc.spawns.length, 2);
+  assert.deepEqual(rpc.spawns[1], original);
+  assert.deepEqual(restored.store.getActiveRun()?.reviewContext, { cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit });
+  assert.equal(restored.store.getActiveRun()?.panelRunId, "native-panel");
+});
+
+test("candidate verification cannot be redirected by inherited Git repository variables", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const fixture = rpcHarness(t, candidate.sessionCwd);
+  const previous = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(candidate.sessionCwd, ".git");
+  try {
+    const response = await fixture.request("start", { operationId: "git-environment-candidate", digest: "caller-digest", prompt: "Review", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.sessionCommit });
+    assert.equal(response.success, false);
+    assert.match(JSON.stringify(response), /does not match reviewedCommit/);
+    assert.equal(fixture.rpc.spawns.length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = previous;
   }
 });

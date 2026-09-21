@@ -16,6 +16,7 @@ import type {
   RunUsage,
 } from "./types.js";
 import { isFiniteNumber, isNonEmptyString, isRecord } from "./utils.js";
+import { isReviewContext } from "./review-context.js";
 
 export const FUSION_RUN_ENTRY_TYPE = "fusion-run";
 
@@ -31,6 +32,7 @@ export type FusionRunSummary = Omit<
     | "executionLifetime"
     | "effectiveExecutionLifetime"
     | "requestDigest"
+    | "reviewContext"
     | "cancellationRequested"
     | "processTerminalProof"
     | "observation"
@@ -55,6 +57,7 @@ export type FusionRunSummary = Omit<
 
 export interface FusionRunStartInput {
   id?: string;
+  reviewContext?: FusionRun["reviewContext"];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
   requestDigest?: string;
@@ -290,6 +293,7 @@ export class FusionRunStore {
     const createdAt = input.createdAt ?? this.now();
     const run: FusionRun = {
       id: input.id ?? this.idFactory(),
+      ...(input.reviewContext ? { reviewContext: { ...input.reviewContext } } : {}),
       ...(input.executionLifetime !== undefined
         ? { executionLifetime: cloneExecutionLifetime(input.executionLifetime) }
         : {}),
@@ -663,6 +667,7 @@ function toRunSummary(
 ): FusionRunSummary {
   return {
     id: run.id,
+    ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
     ...(run.executionLifetime !== undefined
       ? { executionLifetime: cloneExecutionLifetime(run.executionLifetime) }
       : {}),
@@ -712,6 +717,7 @@ function toRunSummary(
 function cloneRun(run: FusionRun): FusionRun {
   return {
     id: run.id,
+    ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
     ...(run.executionLifetime !== undefined
       ? { executionLifetime: cloneExecutionLifetime(run.executionLifetime) }
       : {}),
@@ -901,6 +907,7 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (!isNonEmptyString(value.id)) return false;
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
+  if (value.reviewContext !== undefined && !isReviewContext(value.reviewContext)) return false;
   if (
     value.executionLifetime !== undefined &&
     !isExecutionLifetime(value.executionLifetime)

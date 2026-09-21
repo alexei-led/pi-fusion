@@ -1,6 +1,7 @@
 import { deadlineSteerMessage, planPanelDeadlines, PANEL_DECISION_WAIT_MS } from "./panel-deadlines.js";
 import { join } from "node:path";
 import { FusionOperationJournal } from "./operation-journal.js";
+import { isReviewContext, verifyReviewContext } from "./review-context.js";
 import { aggregateTerminalProof, expectedExecutionRoute, isExecutionLifetime, nativeTerminalProof, requestDigest, sameLifetime, supportsExecutionContract, supportsOwnedFusionRoutes, supportsTreeOwnership, verifiesExecutionOwnership } from "./runtime-contract.js";
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import {
@@ -232,6 +233,7 @@ export class FusionOrchestrator {
           subagentsInfo.capabilities.nonRecoveringSteer !== true)) {
         throw new FusionArgsError("Soft deadlines require pi-subagents RPC with nonRecoveringSteer. Update pi-subagents and reload Pi, or omit panelistSoftTimeoutMs.");
       }
+      verifyReviewContext(args.reviewContext);
       this.configWarning = undefined;
     } catch (error: unknown) {
       const message = errorMessage(error);
@@ -249,6 +251,7 @@ export class FusionOrchestrator {
     let run: FusionRun;
     try {
       run = this.runStore.startRun({
+        ...(args.reviewContext ? { reviewContext: args.reviewContext } : {}),
         ...(args.executionLifetime ? { executionLifetime: args.executionLifetime } : {}),
         ...(args.requestDigest ? { requestDigest: args.requestDigest } : {}),
         prompt: args.prompt,
@@ -405,12 +408,14 @@ export class FusionOrchestrator {
   }
 
   private async spawnStage(run: FusionRun, stage: "panel" | "judge", params: object): Promise<unknown> {
+    verifyReviewContext(run.reviewContext);
+    params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd } : {}) };
     if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError("Cancellation fenced further stage launches.");
     }
     const requestId = `${run.id}:${stage}`;
-    const digest = requestDigest(params);
+    const digest = requestDigest(run.reviewContext ? { params, reviewContext: run.reviewContext } : params);
     this.runStore.updateRun(run.id, {
       spawnIntent: { stage, requestedAt: Date.now(), ...(run.executionLifetime ? { requestId, requestDigest: digest, params } : {}) },
     });
@@ -454,6 +459,9 @@ export class FusionOrchestrator {
     if (lookup.operationId !== intent.requestId || (lookup.state !== "absent" && lookup.digest !== intent.requestDigest)) return undefined;
     let reply: unknown = lookup;
     if (lookup.state === "absent" && !run.cancellationRequested && intent.params) {
+      verifyReviewContext(run.reviewContext);
+      const expectedDigest = requestDigest(run.reviewContext ? { params: intent.params, reviewContext: run.reviewContext } : intent.params);
+      if (expectedDigest !== intent.requestDigest || (run.reviewContext && (!isRecord(intent.params) || intent.params.cwd !== run.reviewContext.cwd))) throw new FusionArgsError("Persisted native launch parameters do not match the frozen review intent.");
       this.runStore.refreshDurable();
       if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
         return this.runStore.updateRun(run.id, { cancellationRequested: true });
@@ -939,6 +947,7 @@ export class FusionOrchestrator {
         const proof = this.stageTerminalProof(active, payload, target);
         this.persistNativeObservation(active, payload);
         if (!proof) return { status: "ignored" };
+        verifyReviewContext(active.reviewContext);
         active = this.runStore.updateRun(active.id, { processTerminalProof: this.bindCallerProof(active, aggregateTerminalProof(active, proof)) });
         if (active.cancellationRequested) return await this.reconcileContractCancellation(active);
       }
@@ -1832,6 +1841,7 @@ function completionQuality(
 }
 
 function validateStartArgs(args: ParsedFusionArgs): string | undefined {
+  if (args.reviewContext !== undefined && !isReviewContext(args.reviewContext)) return "Invalid Fusion review context.";
   if (args.executionLifetime !== undefined && !isExecutionLifetime(args.executionLifetime)) return "Invalid executionLifetime.";
   if (args.executionLifetime && args.timeoutOverrides) return "executionLifetime cannot be combined with stage timeout overrides.";
   if (typeof args.prompt !== "string" || !args.prompt.trim()) {

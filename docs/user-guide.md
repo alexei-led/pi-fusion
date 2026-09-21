@@ -224,6 +224,15 @@ generic lookup failure does not. A caller may send its frozen request hash as
 start parameter `digest`. Fusion echoes it unchanged as `requestDigest` and
 reports its own canonical hash separately as `fusionRequestDigest`.
 
+Code-review callers can supply `cwd` and `reviewedCommit` together. `cwd` must be
+absolute and `reviewedCommit` must be a full Git commit hash. Fusion verifies the
+candidate checkout's HEAD before admission, later stages, replay, and acceptance.
+The frozen context is returned as `reviewContext` and survives restart. Panel
+and judge launches use that candidate directory, while operation lookup and
+cancellation retain the original Pi session's journal namespace. Changing the
+context under an existing operation ID is rejected. The native launch digest
+includes the directory and reviewed commit, in addition to the launch parameters.
+
 ### Soft deadline decisions
 
 For a six-member panel with concurrency four, a bounded review budget can be:
