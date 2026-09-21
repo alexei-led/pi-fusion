@@ -15,6 +15,9 @@ export const JUDGE_AGENT = "pi-fusion.fusion-judge";
 export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
 
 export type FusionContextMode = "fresh" | "fork";
+export type ExecutionLifetime =
+  | { mode: "unbounded" }
+  | { mode: "bounded"; timeoutMs: number };
 export type CallerOutputContract = "plan-review-v1";
 
 /**
@@ -194,6 +197,8 @@ export interface FusionConfig {
 }
 
 export interface ParsedFusionArgs {
+  executionLifetime?: ExecutionLifetime;
+  requestDigest?: string;
   prompt: string;
   profile?: string;
   operationId?: string;
@@ -267,11 +272,14 @@ export interface FusionRecoveryState {
 }
 
 /**
- * Durable record written before a public RPC spawn. The public API cannot
- * query by this correlation token, so a restored intent without its returned
- * run ID is deliberately failed instead of risking a duplicate remote run.
+ * Durable record written before a public RPC spawn. Explicit lifetime runs
+ * persist the native operation identity and frozen parameters for lookup and
+ * safe replay; legacy records may contain only the stage and timestamp.
  */
 export interface FusionSpawnIntent {
+  requestId?: string;
+  requestDigest?: string;
+  params?: object;
   stage: "panel" | "judge";
   requestedAt: number;
 }
@@ -287,6 +295,12 @@ export interface PanelDeadlineState {
 }
 
 export interface FusionRun {
+  executionLifetime?: ExecutionLifetime;
+  effectiveExecutionLifetime?: ExecutionLifetime;
+  requestDigest?: string;
+  cancellationRequested?: boolean;
+  processTerminalProof?: unknown;
+  observation?: unknown;
   id: string;
   prompt: string;
   profileName: string;

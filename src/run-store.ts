@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  DurableRunSnapshotStore,
+  type DurableRunSnapshot,
+} from "./durable-run-store.js";
 import type {
+  ExecutionLifetime,
   FusionPhase,
   FusionProfileSnapshot,
   FusionRecoveryState,
@@ -23,6 +28,12 @@ export type FusionRunSummary = Omit<
   Pick<
     FusionRun,
     | "id"
+    | "executionLifetime"
+    | "effectiveExecutionLifetime"
+    | "requestDigest"
+    | "cancellationRequested"
+    | "processTerminalProof"
+    | "observation"
     | "prompt"
     | "profileName"
     | "operationId"
@@ -44,6 +55,12 @@ export type FusionRunSummary = Omit<
 
 export interface FusionRunStartInput {
   id?: string;
+  executionLifetime?: ExecutionLifetime;
+  effectiveExecutionLifetime?: ExecutionLifetime;
+  requestDigest?: string;
+  cancellationRequested?: boolean;
+  processTerminalProof?: unknown;
+  observation?: unknown;
   prompt: string;
   profileName: string;
   inlinePanel?: string[];
@@ -59,6 +76,12 @@ export interface FusionRunStartInput {
 }
 
 export interface FusionRunPatch {
+  executionLifetime?: ExecutionLifetime;
+  effectiveExecutionLifetime?: ExecutionLifetime;
+  requestDigest?: string;
+  cancellationRequested?: boolean;
+  processTerminalProof?: unknown;
+  observation?: unknown;
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   chainRunId?: string;
   chainAsyncDir?: string;
@@ -82,6 +105,12 @@ export interface FusionRunPatch {
 }
 
 export interface FusionRunTransitionPatch {
+  executionLifetime?: ExecutionLifetime;
+  effectiveExecutionLifetime?: ExecutionLifetime;
+  requestDigest?: string;
+  cancellationRequested?: boolean;
+  processTerminalProof?: unknown;
+  observation?: unknown;
   chainRunId?: string;
   panelRunId?: string;
   judgeRunId?: string;
@@ -106,6 +135,7 @@ export interface FusionRunStoreOptions {
   now?: () => number;
   idFactory?: () => string;
   persistence?: FusionRunStorePersistence;
+  directory?: string;
 }
 
 export class FusionRunStoreError extends Error {
@@ -123,12 +153,93 @@ export class FusionRunStore {
   private readonly now: () => number;
   private readonly idFactory: () => string;
   private readonly persistence: FusionRunStorePersistence | undefined;
+  private durableStore: DurableRunSnapshotStore | undefined;
+  private durableRunsById = new Map<string, FusionRun>();
+  private durableRestoreError: string | undefined;
   private restoreError: string | undefined;
 
   constructor(options: FusionRunStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
     this.persistence = options.persistence;
+    if (options.directory !== undefined) this.setDirectory(options.directory);
+  }
+
+  /**
+   * Selects the project directory used for cross-session run snapshots.
+   * Calling this after construction reloads the directory and replaces the
+   * in-memory project view with the records found there.
+   */
+  setDirectory(directory: string): void {
+    if (!directory.trim()) {
+      throw new FusionRunStoreError("Fusion run directory must not be empty.");
+    }
+    this.durableStore = new DurableRunSnapshotStore(directory);
+    this.restoreError = undefined;
+    this.durableRunsById.clear();
+    this.durableRestoreError = undefined;
+    const loaded = this.durableStore.load();
+    if (loaded.errors.length > 0) {
+      this.durableRestoreError = invalidDurableLoadMessage(loaded.errors[0]);
+    }
+    for (const snapshot of loaded.snapshots) {
+      if (!isFusionRunState(snapshot.data)) {
+        this.durableRestoreError ??= invalidDurableSnapshotMessage(snapshot);
+        continue;
+      }
+      this.durableRunsById.set(snapshot.data.id, cloneRun(snapshot.data));
+    }
+    this.resetFromDurableRuns();
+  }
+
+  getDirectory(): string | undefined {
+    return this.durableStore?.directory;
+  }
+
+  /**
+   * Reloads project snapshots for a long-lived process. A disk record replaces
+   * the cached record only when its persisted timestamp advances, so a stale
+   * filesystem read cannot roll back a newer in-memory run.
+   */
+  refreshDurable(): void {
+    if (!this.durableStore) return;
+    const priorDurableError = this.durableRestoreError;
+    const loaded = this.durableStore.load();
+    const next = new Map<string, FusionRun>();
+    let loadError =
+      loaded.errors.length > 0
+        ? invalidDurableLoadMessage(loaded.errors[0])
+        : undefined;
+    for (const snapshot of loaded.snapshots) {
+      if (!isFusionRunState(snapshot.data)) {
+        loadError ??= invalidDurableSnapshotMessage(snapshot);
+        continue;
+      }
+      const previous =
+        this.runsById.get(snapshot.data.id) ??
+        this.durableRunsById.get(snapshot.data.id);
+      if (!previous || snapshot.data.updatedAt >= previous.updatedAt) {
+        next.set(snapshot.data.id, cloneRun(snapshot.data));
+      }
+    }
+    for (const [id, run] of this.durableRunsById) {
+      if (!next.has(id)) next.set(id, run);
+    }
+    for (const [id, run] of this.runsById) {
+      if (!next.has(id)) next.set(id, run);
+    }
+    if (loadError) {
+      this.durableRestoreError = loadError;
+      this.activeRun = undefined;
+      this.lastRunSummary = undefined;
+      this.runsById.clear();
+      this.runIdsByOperationId.clear();
+      return;
+    }
+    this.durableRestoreError = undefined;
+    if (this.restoreError === priorDurableError) this.restoreError = undefined;
+    this.durableRunsById = next;
+    this.resetFromDurableRuns();
   }
 
   getActiveRun(): FusionRun | undefined {
@@ -153,10 +264,16 @@ export class FusionRunStore {
 
   /** A corrupt newest snapshot must never revive an older active run. */
   getRestoreError(): string | undefined {
-    return this.restoreError;
+    return this.restoreError ?? this.durableRestoreError;
   }
 
   startRun(input: FusionRunStartInput): FusionRun {
+    const restoreError = this.getRestoreError();
+    if (restoreError) {
+      throw new FusionRunStoreError(
+        `Cannot start a fusion run while restore is blocked: ${restoreError}`,
+      );
+    }
     if (this.activeRun) {
       throw new FusionRunStoreError(
         `Fusion run ${this.activeRun.id} is already active.`,
@@ -173,6 +290,28 @@ export class FusionRunStore {
     const createdAt = input.createdAt ?? this.now();
     const run: FusionRun = {
       id: input.id ?? this.idFactory(),
+      ...(input.executionLifetime !== undefined
+        ? { executionLifetime: cloneExecutionLifetime(input.executionLifetime) }
+        : {}),
+      ...(input.effectiveExecutionLifetime !== undefined
+        ? {
+            effectiveExecutionLifetime: cloneExecutionLifetime(
+              input.effectiveExecutionLifetime,
+            ),
+          }
+        : {}),
+      ...(input.requestDigest !== undefined
+        ? { requestDigest: input.requestDigest }
+        : {}),
+      ...(input.cancellationRequested !== undefined
+        ? { cancellationRequested: input.cancellationRequested }
+        : {}),
+      ...(input.processTerminalProof !== undefined
+        ? { processTerminalProof: cloneUnknown(input.processTerminalProof) }
+        : {}),
+      ...(input.observation !== undefined
+        ? { observation: cloneUnknown(input.observation) }
+        : {}),
       prompt: input.prompt,
       profileName: input.profileName,
       ...(input.inlinePanel?.length
@@ -214,9 +353,9 @@ export class FusionRunStore {
   updateRun(id: string, patch: FusionRunPatch): FusionRun {
     const active = this.requireActiveRun(id);
     const updated = applyPatch(active, patch, patch.updatedAt ?? this.now());
+    this.persistRun(updated);
     this.activeRun = updated;
     this.rememberRun(updated);
-    this.persistRun(updated);
     return cloneRun(updated);
   }
 
@@ -245,10 +384,10 @@ export class FusionRunStore {
       patch.updatedAt ?? this.now(),
     );
     const summary = toRunSummary(finished);
+    this.persistRun(finished, summary);
     this.activeRun = undefined;
     this.lastRunSummary = summary;
     this.rememberRun(finished);
-    this.persistRun(summary);
     return cloneRun(finished);
   }
 
@@ -256,8 +395,16 @@ export class FusionRunStore {
     entries: readonly unknown[],
   ): FusionRunSummary | undefined {
     this.restoreError = undefined;
-    this.runsById.clear();
-    this.runIdsByOperationId.clear();
+    this.resetFromDurableRuns();
+
+    if (this.durableRestoreError) {
+      this.activeRun = undefined;
+      this.lastRunSummary = undefined;
+      this.runsById.clear();
+      this.runIdsByOperationId.clear();
+      this.restoreError = this.durableRestoreError;
+      return undefined;
+    }
 
     const latestPersisted = lastFusionRunEnvelope(entries);
     if (
@@ -274,13 +421,13 @@ export class FusionRunStore {
     }
 
     const states = readFusionRunStates(entries);
-    for (const state of states) this.rememberRun(state);
-    const latestState = states.at(-1);
-    const summary = readLastFusionRunSummary(entries);
+    for (const state of states) this.mergeRestoredRun(state);
+    const latestState = latestRun(Array.from(this.runsById.values()));
     this.activeRun =
       latestState && !isTerminalPhase(latestState.phase)
         ? cloneRun(latestState)
         : undefined;
+    const summary = latestRunSummary(Array.from(this.runsById.values()));
     this.lastRunSummary = summary;
     return summary ? cloneRunSummary(summary) : undefined;
   }
@@ -301,8 +448,18 @@ export class FusionRunStore {
     this.activeRun = undefined;
   }
 
-  private persistRun(run: FusionRun): void {
-    this.persistence?.appendEntry(FUSION_RUN_ENTRY_TYPE, cloneRun(run));
+  private persistRun(
+    run: FusionRun,
+    sessionEntry: FusionRun | FusionRunSummary = run,
+  ): void {
+    this.durableStore?.write(run.id, cloneRun(run));
+    if (this.durableStore) {
+      this.durableRunsById.set(run.id, cloneRun(run));
+    }
+    this.persistence?.appendEntry(
+      FUSION_RUN_ENTRY_TYPE,
+      cloneRunOrSummary(sessionEntry),
+    );
   }
 
   private rememberRun(run: FusionRun): void {
@@ -312,6 +469,33 @@ export class FusionRunStore {
       !this.runIdsByOperationId.has(run.operationId)
     ) {
       this.runIdsByOperationId.set(run.operationId, run.id);
+    }
+  }
+
+  private resetFromDurableRuns(): void {
+    this.runsById.clear();
+    this.runIdsByOperationId.clear();
+    this.activeRun = undefined;
+    this.lastRunSummary = undefined;
+    if (this.durableRestoreError) return;
+    for (const run of this.durableRunsById.values()) {
+      this.rememberRun(run);
+    }
+    const latest = latestRun(Array.from(this.runsById.values()));
+    this.activeRun =
+      latest && !isTerminalPhase(latest.phase) ? cloneRun(latest) : undefined;
+    this.lastRunSummary = latestRunSummary(Array.from(this.runsById.values()));
+  }
+
+  private mergeRestoredRun(run: FusionRun): void {
+    const existing = this.runsById.get(run.id);
+    const isDurableBaseline = this.durableRunsById.has(run.id);
+    if (
+      !existing ||
+      run.updatedAt > existing.updatedAt ||
+      (!isDurableBaseline && run.updatedAt === existing.updatedAt)
+    ) {
+      this.rememberRun(run);
     }
   }
 
@@ -373,6 +557,24 @@ function applyPatch(
 ): FusionRun {
   const updated = cloneRun(run);
   updated.updatedAt = updatedAt;
+  if (patch.executionLifetime !== undefined) {
+    updated.executionLifetime = cloneExecutionLifetime(patch.executionLifetime);
+  }
+  if (patch.effectiveExecutionLifetime !== undefined) {
+    updated.effectiveExecutionLifetime = cloneExecutionLifetime(
+      patch.effectiveExecutionLifetime,
+    );
+  }
+  if (patch.requestDigest !== undefined) updated.requestDigest = patch.requestDigest;
+  if (patch.cancellationRequested !== undefined) {
+    updated.cancellationRequested = patch.cancellationRequested;
+  }
+  if (patch.processTerminalProof !== undefined) {
+    updated.processTerminalProof = cloneUnknown(patch.processTerminalProof);
+  }
+  if (patch.observation !== undefined) {
+    updated.observation = cloneUnknown(patch.observation);
+  }
   if (patch.phase !== undefined) updated.phase = patch.phase;
   if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
   if (patch.chainAsyncDir !== undefined) {
@@ -426,6 +628,24 @@ function applyTransitionPatch(
     phase,
   };
   updated.updatedAt = updatedAt;
+  if (patch.executionLifetime !== undefined) {
+    updated.executionLifetime = cloneExecutionLifetime(patch.executionLifetime);
+  }
+  if (patch.effectiveExecutionLifetime !== undefined) {
+    updated.effectiveExecutionLifetime = cloneExecutionLifetime(
+      patch.effectiveExecutionLifetime,
+    );
+  }
+  if (patch.requestDigest !== undefined) updated.requestDigest = patch.requestDigest;
+  if (patch.cancellationRequested !== undefined) {
+    updated.cancellationRequested = patch.cancellationRequested;
+  }
+  if (patch.processTerminalProof !== undefined) {
+    updated.processTerminalProof = cloneUnknown(patch.processTerminalProof);
+  }
+  if (patch.observation !== undefined) {
+    updated.observation = cloneUnknown(patch.observation);
+  }
   if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
@@ -443,6 +663,28 @@ function toRunSummary(
 ): FusionRunSummary {
   return {
     id: run.id,
+    ...(run.executionLifetime !== undefined
+      ? { executionLifetime: cloneExecutionLifetime(run.executionLifetime) }
+      : {}),
+    ...(run.effectiveExecutionLifetime !== undefined
+      ? {
+          effectiveExecutionLifetime: cloneExecutionLifetime(
+            run.effectiveExecutionLifetime,
+          ),
+        }
+      : {}),
+    ...(run.requestDigest !== undefined
+      ? { requestDigest: run.requestDigest }
+      : {}),
+    ...(run.cancellationRequested !== undefined
+      ? { cancellationRequested: run.cancellationRequested }
+      : {}),
+    ...(run.processTerminalProof !== undefined
+      ? { processTerminalProof: cloneUnknown(run.processTerminalProof) }
+      : {}),
+    ...(run.observation !== undefined
+      ? { observation: cloneUnknown(run.observation) }
+      : {}),
     prompt: run.prompt,
     profileName: run.profileName,
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
@@ -470,6 +712,28 @@ function toRunSummary(
 function cloneRun(run: FusionRun): FusionRun {
   return {
     id: run.id,
+    ...(run.executionLifetime !== undefined
+      ? { executionLifetime: cloneExecutionLifetime(run.executionLifetime) }
+      : {}),
+    ...(run.effectiveExecutionLifetime !== undefined
+      ? {
+          effectiveExecutionLifetime: cloneExecutionLifetime(
+            run.effectiveExecutionLifetime,
+          ),
+        }
+      : {}),
+    ...(run.requestDigest !== undefined
+      ? { requestDigest: run.requestDigest }
+      : {}),
+    ...(run.cancellationRequested !== undefined
+      ? { cancellationRequested: run.cancellationRequested }
+      : {}),
+    ...(run.processTerminalProof !== undefined
+      ? { processTerminalProof: cloneUnknown(run.processTerminalProof) }
+      : {}),
+    ...(run.observation !== undefined
+      ? { observation: cloneUnknown(run.observation) }
+      : {}),
     prompt: run.prompt,
     profileName: run.profileName,
     // cloneRun is a strict field allowlist: a new FusionRun field is dropped on
@@ -545,6 +809,69 @@ function cloneRunSummary(summary: FusionRunSummary): FusionRunSummary {
   return toRunSummary(summary);
 }
 
+function cloneRunOrSummary(
+  value: FusionRun | FusionRunSummary,
+): FusionRun | FusionRunSummary {
+  return isTerminalRun(value) ? cloneRunSummary(value) : cloneRun(value);
+}
+
+function cloneExecutionLifetime(lifetime: ExecutionLifetime): ExecutionLifetime {
+  return lifetime.mode === "bounded"
+    ? { mode: "bounded", timeoutMs: lifetime.timeoutMs }
+    : { mode: "unbounded" };
+}
+
+function cloneUnknown(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => cloneUnknown(item));
+  if (isRecord(value)) {
+    const clone: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      clone[key] = cloneUnknown(item);
+    }
+    return clone;
+  }
+  return value;
+}
+
+function latestRun(runs: readonly FusionRun[]): FusionRun | undefined {
+  let latest: FusionRun | undefined;
+  for (const run of runs) {
+    if (latest === undefined || run.updatedAt >= latest.updatedAt) latest = run;
+  }
+  return latest;
+}
+
+function latestRunSummary(
+  runs: readonly FusionRun[],
+): FusionRunSummary | undefined {
+  let latest: (FusionRun & { phase: FusionTerminalPhase }) | undefined;
+  for (const run of runs) {
+    if (!isTerminalRunState(run)) continue;
+    if (latest === undefined || run.updatedAt >= latest.updatedAt) latest = run;
+  }
+  return latest ? toRunSummary(latest) : undefined;
+}
+
+function isTerminalRun(
+  value: FusionRun | FusionRunSummary,
+): value is FusionRunSummary {
+  return isTerminalPhase(value.phase);
+}
+
+function isTerminalRunState(
+  value: FusionRun,
+): value is FusionRun & { phase: FusionTerminalPhase } {
+  return isTerminalPhase(value.phase);
+}
+
+function invalidDurableSnapshotMessage(snapshot: DurableRunSnapshot): string {
+  return `Latest persisted fusion run snapshot is invalid; refusing stale project-run recovery (${snapshot.fileName}).`;
+}
+
+function invalidDurableLoadMessage(error: string | undefined): string {
+  return `Latest persisted fusion run snapshot is invalid; refusing stale project-run recovery${error ? ` (${error})` : "."}`;
+}
+
 function lastFusionRunEnvelope(entries: readonly unknown[]): unknown {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -574,6 +901,30 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (!isNonEmptyString(value.id)) return false;
   if (typeof value.prompt !== "string") return false;
   if (!isNonEmptyString(value.profileName)) return false;
+  if (
+    value.executionLifetime !== undefined &&
+    !isExecutionLifetime(value.executionLifetime)
+  ) {
+    return false;
+  }
+  if (
+    value.effectiveExecutionLifetime !== undefined &&
+    !isExecutionLifetime(value.effectiveExecutionLifetime)
+  ) {
+    return false;
+  }
+  if (
+    value.requestDigest !== undefined &&
+    !isNonEmptyString(value.requestDigest)
+  ) {
+    return false;
+  }
+  if (
+    value.cancellationRequested !== undefined &&
+    typeof value.cancellationRequested !== "boolean"
+  ) {
+    return false;
+  }
   if (value.operationId !== undefined && !isNonEmptyString(value.operationId)) {
     return false;
   }
@@ -773,6 +1124,17 @@ function isFusionPhase(value: unknown): value is FusionPhase {
     value === "done" ||
     value === "failed" ||
     value === "cancelled"
+  );
+}
+
+function isExecutionLifetime(value: unknown): value is ExecutionLifetime {
+  if (!isRecord(value)) return false;
+  if (value.mode === "unbounded") return value.timeoutMs === undefined;
+  return (
+    value.mode === "bounded" &&
+    isFiniteNumber(value.timeoutMs) &&
+    Number.isSafeInteger(value.timeoutMs) &&
+    value.timeoutMs > 0
   );
 }
 
@@ -1002,14 +1364,32 @@ function isSpawnIntent(value: unknown): value is FusionRun["spawnIntent"] {
   return (
     isRecord(value) &&
     (value.stage === "panel" || value.stage === "judge") &&
-    isFiniteNumber(value.requestedAt)
+    isFiniteNumber(value.requestedAt) &&
+    (value.requestId === undefined || isNonEmptyString(value.requestId)) &&
+    (value.requestDigest === undefined || isNonEmptyString(value.requestDigest)) &&
+    (value.params === undefined || isRecord(value.params))
   );
 }
 
 function cloneSpawnIntent(
   intent: NonNullable<FusionRun["spawnIntent"]>,
 ): NonNullable<FusionRun["spawnIntent"]> {
-  return { ...intent };
+  return {
+    stage: intent.stage,
+    requestedAt: intent.requestedAt,
+    ...(intent.requestId !== undefined ? { requestId: intent.requestId } : {}),
+    ...(intent.requestDigest !== undefined
+      ? { requestDigest: intent.requestDigest }
+      : {}),
+    ...(intent.params !== undefined
+      ? { params: cloneObject(intent.params) }
+      : {}),
+  };
+}
+
+function cloneObject(value: object): object {
+  const cloned = cloneUnknown(value);
+  return typeof cloned === "object" && cloned !== null ? cloned : {};
 }
 
 function clonePanelOutputs(

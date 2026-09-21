@@ -17,6 +17,7 @@ import {
   resolveSynthesisMode,
   type CallerOutputContract,
   type EffectiveFusionTimeouts,
+  type ExecutionLifetime,
   type FusionTimeoutOverrides,
   THINKING_LEVELS,
   type FailedPanelSummary,
@@ -47,6 +48,7 @@ const DEFAULT_TOOL_BUDGET: ToolBudget = {
 export interface PanelSubagentTaskParams {
   agent: string;
   task: string;
+  async?: true;
   output: true;
   outputMode: "inline";
   progress: true;
@@ -57,6 +59,7 @@ export interface PanelSubagentTaskParams {
   toolBudget: ToolBudget;
   /** Child deadline, always shorter than the enclosing panel workflow. */
   timeoutMs?: number;
+  executionLifetime?: ExecutionLifetime;
 }
 
 export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
@@ -71,11 +74,13 @@ export interface PanelSpawnParams {
   outputMode: "inline";
   acceptance: FusionAcceptanceDisabled;
   timeoutMs?: number;
+  executionLifetime?: ExecutionLifetime;
 }
 
 export interface JudgeWorkflowTaskParams {
   agent: string;
   task: string;
+  async?: true;
   output: true;
   outputMode: "inline";
   skill: false;
@@ -83,6 +88,9 @@ export interface JudgeWorkflowTaskParams {
   model?: string;
   /** Per-task cap on judge tool calls; see `FusionProfile.judgeToolBudget`. */
   toolBudget?: ToolBudget;
+  /** Child deadline, when an explicit bounded execution lifetime is requested. */
+  timeoutMs?: number;
+  executionLifetime?: ExecutionLifetime;
 }
 
 export interface JudgeSpawnParams {
@@ -93,6 +101,7 @@ export interface JudgeSpawnParams {
   outputMode: "inline";
   acceptance: FusionAcceptanceDisabled;
   timeoutMs?: number;
+  executionLifetime?: ExecutionLifetime;
 }
 
 export type { FailedPanelSummary, PanelOutput } from "./types.js";
@@ -110,6 +119,7 @@ export interface BuildJudgeSpawnParamsInput {
   runId: string;
   callerContract?: CallerOutputContract;
   timeoutOverrides?: FusionTimeoutOverrides;
+  executionLifetime?: ExecutionLifetime;
   /** Persisted at panel start so restored fallback judges keep their deadline. */
   effectiveTimeouts?: EffectiveFusionTimeouts;
 }
@@ -181,8 +191,11 @@ export function buildPanelSpawnParams(
   prompt: string,
   callerContract?: CallerOutputContract,
   timeoutOverrides?: FusionTimeoutOverrides,
+  executionLifetime?: ExecutionLifetime,
 ): PanelSpawnParams {
-  const timeouts = resolveEffectiveTimeouts(profile, timeoutOverrides);
+  const timeouts = executionLifetime
+    ? undefined
+    : resolveEffectiveTimeouts(profile, timeoutOverrides);
   const concurrency = profile.concurrency ?? profile.panel.length;
   const tasks: PanelWorkflowTaskParams[] = profile.panel.map(
     (member, index) => ({
@@ -193,8 +206,11 @@ export function buildPanelSpawnParams(
         profile.stopWhenPanelAgrees === true,
         profile.panelToolBudget ?? DEFAULT_TOOL_BUDGET,
         callerContract,
-        timeouts.panelistTimeoutMs,
-        timeouts.panelistSoftTimeoutMs !== undefined,
+        executionLifetime?.mode === "bounded"
+          ? executionLifetime.timeoutMs
+          : timeouts?.panelistTimeoutMs,
+        timeouts?.panelistSoftTimeoutMs !== undefined,
+        executionLifetime,
       ),
     }),
   );
@@ -216,7 +232,7 @@ export function buildPanelSpawnParams(
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    timeoutMs: timeouts.panelTimeoutMs,
+    ...executionLifetimeFields(executionLifetime, timeouts?.panelTimeoutMs),
   };
 }
 
@@ -227,6 +243,13 @@ export function buildJudgeSpawnParams(
     input.profile.judge.model,
     input.profile.judge.thinking,
   );
+  const judgeTimeoutMs = input.executionLifetime
+    ? undefined
+    : input.effectiveTimeouts?.judgeTimeoutMs ??
+      resolveEffectiveTimeouts(input.profile, input.timeoutOverrides).judgeTimeoutMs;
+  const judgeLifetimeFields = input.executionLifetime
+    ? executionLifetimeFields(input.executionLifetime, undefined)
+    : {};
   const task: JudgeWorkflowTaskParams = {
     agent: resolveSynthesisAgent(input.profile),
     task: buildJudgeTask(input),
@@ -236,6 +259,7 @@ export function buildJudgeSpawnParams(
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
     toolBudget: input.profile.judgeToolBudget ?? DEFAULT_TOOL_BUDGET,
+    ...judgeLifetimeFields,
   };
 
   return {
@@ -245,9 +269,7 @@ export function buildJudgeSpawnParams(
     output: true,
     outputMode: "inline",
     acceptance: FUSION_ACCEPTANCE_DISABLED,
-    timeoutMs:
-      input.effectiveTimeouts?.judgeTimeoutMs ??
-      resolveEffectiveTimeouts(input.profile, input.timeoutOverrides).judgeTimeoutMs,
+    ...executionLifetimeFields(input.executionLifetime, judgeTimeoutMs),
   };
 }
 
@@ -403,6 +425,7 @@ function buildPanelTaskParams(
   callerContract?: CallerOutputContract,
   timeoutMs?: number,
   allowSupervisor = false,
+  executionLifetime?: ExecutionLifetime,
 ): PanelSubagentTaskParams {
   const model = appendThinkingSuffix(member.model, member.thinking);
   return {
@@ -420,9 +443,26 @@ function buildPanelTaskParams(
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     toolBudget,
-    ...(timeoutMs ? { timeoutMs } : {}),
+    ...executionLifetimeFields(executionLifetime, timeoutMs ? timeoutMs : undefined),
     ...(model ? { model } : {}),
   };
+}
+
+function executionLifetimeFields(
+  executionLifetime: ExecutionLifetime | undefined,
+  timeoutMs: number | undefined,
+): { async?: true; executionLifetime?: ExecutionLifetime; timeoutMs?: number } {
+  if (executionLifetime?.mode === "unbounded") {
+    return { async: true, executionLifetime };
+  }
+  if (executionLifetime?.mode === "bounded") {
+    return {
+      async: true,
+      executionLifetime,
+      timeoutMs: executionLifetime.timeoutMs,
+    };
+  }
+  return timeoutMs !== undefined ? { timeoutMs } : {};
 }
 
 function buildPanelTask(

@@ -164,6 +164,7 @@ export function decidePanelCompletion(
       panelOutputs: input.panelOutputs,
       failedPanelists: input.panelFailures,
       runId: input.run.id,
+      ...(input.run.executionLifetime ? { executionLifetime: input.run.executionLifetime } : {}),
       ...(input.run.outputContract
         ? { callerContract: input.run.outputContract }
         : {}),

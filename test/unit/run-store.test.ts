@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   FUSION_RUN_ENTRY_TYPE,
   FusionRunStore,
@@ -442,4 +445,135 @@ test("fusion run summary restore helpers read the latest valid session entry", (
 
   assert.equal(restored?.id, "second");
   assert.equal(store.getLastRunSummary()?.profileName, "fast");
+});
+
+test("FusionRunStore keeps project snapshots across sessions and restart", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-fusion-run-store-"));
+  try {
+    const first = new FusionRunStore({
+      directory,
+      idFactory: () => "project-run",
+      now: () => 10,
+    });
+    const started = first.startRun({
+      prompt: "compare",
+      profileName: "quality",
+      operationId: "operation-1",
+      requestDigest: "digest-1",
+      executionLifetime: { mode: "bounded", timeoutMs: 60_000 },
+    });
+    first.updateRun(started.id, {
+      spawnIntent: {
+        stage: "panel",
+        requestedAt: 11,
+        requestId: "request-1",
+        requestDigest: "digest-1",
+        params: { prompt: "compare", panel: ["one", "two"] },
+      },
+      processTerminalProof: { source: { state: "running" } },
+      observation: { nested: { attempts: [1, 2] } },
+    });
+
+    const snapshotFiles = readdirSync(directory).filter((file) =>
+      file.endsWith(".json"),
+    );
+    assert.equal(snapshotFiles.length, 1);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(directory, snapshotFiles[0]!), "utf8")),
+      first.getActiveRun(),
+    );
+
+    const restarted = new FusionRunStore({ directory });
+    assert.equal(restarted.getDirectory(), directory);
+    assert.equal(restarted.getActiveRun()?.id, "project-run");
+    assert.deepEqual(restarted.getRunByOperationId("operation-1"), {
+      ...first.getActiveRun(),
+    });
+
+    restarted.restoreFromSession({ sessionManager: { getEntries: () => [] } });
+    assert.equal(restarted.getActiveRun()?.id, "project-run");
+    assert.deepEqual(restarted.getActiveRun()?.spawnIntent?.params, {
+      prompt: "compare",
+      panel: ["one", "two"],
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("FusionRunStore fails closed when a project snapshot is corrupt", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-fusion-run-store-"));
+  try {
+    const entries: Array<{ customType: string; data?: unknown }> = [];
+    const original = new FusionRunStore({
+      directory,
+      idFactory: () => "project-run",
+      persistence: {
+        appendEntry: (customType, data) => entries.push({ customType, data }),
+      },
+    });
+    original.startRun({ prompt: "compare", profileName: "quality" });
+
+    const snapshotFile = readdirSync(directory).find((file) =>
+      file.endsWith(".json"),
+    );
+    assert.ok(snapshotFile);
+    writeFileSync(join(directory, snapshotFile), "{ corrupt", "utf8");
+
+    const restored = new FusionRunStore({ directory });
+    assert.equal(restored.getActiveRun(), undefined);
+    assert.match(
+      restored.getRestoreError() ?? "",
+      /Latest persisted fusion run snapshot is invalid/,
+    );
+
+    restored.restoreFromSession({
+      sessionManager: {
+        getEntries: () =>
+          entries.map((entry) => ({
+            type: "custom",
+            ...entry,
+          })),
+      },
+    });
+    assert.equal(restored.getActiveRun(), undefined);
+    assert.match(
+      restored.getRestoreError() ?? "",
+      /Latest persisted fusion run snapshot is invalid/,
+    );
+    assert.throws(
+      () => restored.startRun({ prompt: "new", profileName: "quality" }),
+      /Cannot start a fusion run while restore is blocked/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("FusionRunStore refreshes newer project snapshots in a long-lived reader", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pi-fusion-run-store-"));
+  try {
+    const writer = new FusionRunStore({
+      directory,
+      idFactory: () => "project-run",
+      now: () => 10,
+    });
+    writer.startRun({ prompt: "compare", profileName: "quality" });
+
+    const reader = new FusionRunStore({ directory });
+    writer.updateRun("project-run", {
+      observation: { state: "running", attempt: 2 },
+      updatedAt: 20,
+    });
+    assert.equal(reader.getActiveRun()?.updatedAt, 10);
+
+    reader.refreshDurable();
+    assert.equal(reader.getActiveRun()?.updatedAt, 20);
+    assert.deepEqual(reader.getActiveRun()?.observation, {
+      state: "running",
+      attempt: 2,
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

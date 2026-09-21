@@ -29,7 +29,7 @@ prompts, or both. **Mixing models is the main lever.** The config that
 `/fusion init` writes sets no `model`. By default you therefore get one model in
 three roles. Give each member its own `model` to get the real benefit.
 
-Fusion launches new panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. At start, Fusion persists a small resolved profile snapshot (panel labels/models/roles, quorum, synthesis and judge settings) and uses it after restart, so later config edits cannot change an active run's reconciliation, report, or synthesis spawn. Older runs created before this snapshot, including single-chain runs, retain the legacy config-lookup restore fallback. Before each public RPC spawn, Fusion persists a spawn intent. If Pi crashes after that RPC might have started but before its remote run ID is saved, restore fails that local run with an explicit recovery warning instead of spawning a possible duplicate (public RPC cannot safely adopt by correlation key). A corrupt newest run snapshot is likewise refused rather than reviving an older active run.
+Fusion launches panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. At start, Fusion persists the resolved profile and native spawn intent. Project snapshots in `.pi/fusion/runs` preserve identity across sessions and process restarts. Runs using an explicit execution lifetime also persist the native operation ID, request digest, and exact spawn parameters before dispatch. A lost reply remains unresolved while Fusion looks up the original native operation. It does not become a failed run with an assumed absent child. Legacy runs without this contract retain their recovery warning when their native run ID was never saved. Corrupt durable snapshots block recovery instead of reviving stale state.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -170,6 +170,37 @@ Profile:
 - `judgeToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` for the judge or composer. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. `soft` is a nudge. After `hard`, the selected tools are blocked so synthesis can still finalise. `soft` or `hard` must be positive integers when present, and `soft` must not be larger than `hard` when both are present. Legacy soft-only budgets remain valid.
 
 Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion durably keeps verified completed slots, turns terminal running/interrupted slots into typed failures, and fails closed when lifecycle sources genuinely disagree. A timed-out judge never becomes a panel-only success. When at least one valid panel result exists, Fusion produces either synthesis at quorum or an explicitly unsynthesized partial report below quorum; failures and timeouts are disclosed as missing coverage. Only zero successful outputs fail outright. Fusion never automatically retries a failed panelist, restarts a panel, or extends a deadline.
+
+### Explicit execution lifetime
+
+The `start_fusion_review` tool and `fusion:rpc:v1` `start` method accept
+`executionLifetime: { "mode": "unbounded" }` or
+`{ "mode": "bounded", "timeoutMs": 120000 }`. The setting applies to the panel
+workflow, each panelist, the judge workflow, and its child. Unbounded execution
+omits elapsed deadlines throughout that chain. Omitting `executionLifetime`
+preserves the profile and legacy timeout rules above. Do not combine it with
+per-stage timeout overrides.
+
+Before using this mode, check RPC `ping` capabilities. Fusion advertises
+`executionLifetime` version 1 only when the connected `pi-subagents` runtime
+also supports durable operation lookup, idempotent replay, cancellation fences,
+and workflow process-tree closure evidence. An incompatible runtime fails
+preflight before launch. Successful native admission is reported as
+`effectiveExecutionLifetime`; missing or conflicting confirmation remains
+unresolved.
+
+Explicit execution also requires `processTreeOwnership` version 1 with
+`scope: "owned-process-tree"` and `escapedDescendants: "contained"`. A runtime
+that proves only an empty POSIX process group does not satisfy this requirement:
+an escaped descendant can still be alive. Fusion forwards the native ownership
+capability unchanged and refuses that runtime before explicit dispatch.
+
+Reuse the same `operationId` and parameters when an RPC reply is lost. A changed
+request under the same identity is rejected. Cancellation is durable, but its
+receipt is not completion: `cancelled: false` with `cancellationRequested: true`
+means cleanup is still pending. A terminal `workflowTerminalProof` contains
+closed dispatch and recursively verified native child proofs. Status also
+retains the last native observation for phase and activity diagnosis.
 
 ### Soft deadline decisions
 

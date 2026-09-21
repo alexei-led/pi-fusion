@@ -88,6 +88,37 @@ function buildJudgeSpawnParams(
   return judgeWorkflowTask(buildJudgeWorkflowSpawnParams(input));
 }
 
+async function generatedPanelChildCalls(
+  params: ReturnType<typeof buildPanelSpawnParams>,
+): Promise<Array<{ key: string; task: PanelWorkflowTaskParams }>> {
+  const calls: Array<{ key: string; task: PanelWorkflowTaskParams }> = [];
+  await runInNewContext(`(async () => { ${params.workflowScript} })()`, {
+    runs: {
+      run(key: string, task: PanelWorkflowTaskParams) {
+        calls.push({ key, task });
+        return Promise.resolve({ ok: true, output: key });
+      },
+    },
+  });
+  return calls;
+}
+
+async function generatedJudgeChildCall(
+  params: ReturnType<typeof buildJudgeWorkflowSpawnParams>,
+): Promise<{ key: string; task: JudgeWorkflowTaskParams }> {
+  const calls: Array<{ key: string; task: JudgeWorkflowTaskParams }> = [];
+  await runInNewContext(`(async () => { ${params.workflowScript} })()`, {
+    runs: {
+      run(key: string, task: JudgeWorkflowTaskParams) {
+        calls.push({ key, task });
+        return Promise.resolve({ ok: true, output: "judge" });
+      },
+    },
+  });
+  assert.equal(calls.length, 1);
+  return calls[0]!;
+}
+
 test("appendThinkingSuffix appends only when a model exists and no suffix exists", () => {
   assert.equal(
     appendThinkingSuffix("openai/gpt-5.5", "xhigh"),
@@ -186,6 +217,97 @@ test("default panel deadline covers every concurrency wave", () => {
   const profile: FusionProfile = { ...PROFILE };
   delete profile.timeoutMs;
   assert.equal(buildPanelSpawnParams(profile, "review").timeoutMs, 1_800_000);
+});
+
+test("unbounded execution lifetime reaches generated panel children without deadlines", async () => {
+  const executionLifetime = { mode: "unbounded" } as const;
+  const params = buildPanelSpawnParams(
+    PROFILE,
+    "review",
+    undefined,
+    undefined,
+    executionLifetime,
+  );
+
+  assert.deepEqual(params.executionLifetime, executionLifetime);
+  assert.equal("timeoutMs" in params, false);
+  assert.equal(params.workflowScript.includes('"timeoutMs"'), false);
+
+  const calls = await generatedPanelChildCalls(params);
+  assert.equal(calls.length, PROFILE.panel.length);
+  for (const call of calls) {
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(call.task.executionLifetime)),
+      executionLifetime,
+    );
+    assert.equal(call.task.async, true);
+    assert.equal("timeoutMs" in call.task, false);
+  }
+});
+
+test("unbounded execution lifetime reaches the generated judge child without deadlines", async () => {
+  const executionLifetime = { mode: "unbounded" } as const;
+  const spawn = buildJudgeWorkflowSpawnParams({
+    profile: PROFILE,
+    prompt: "review",
+    panelOutputs: [],
+    failedPanelists: [],
+    runId: "run-unbounded",
+    executionLifetime,
+  });
+
+  assert.deepEqual(spawn.executionLifetime, executionLifetime);
+  assert.equal("timeoutMs" in spawn, false);
+  assert.equal(spawn.workflowScript.includes('"timeoutMs"'), false);
+
+  const call = await generatedJudgeChildCall(spawn);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(call.task.executionLifetime)),
+    executionLifetime,
+  );
+  assert.equal(call.task.async, true);
+  assert.equal("timeoutMs" in call.task, false);
+});
+
+test("bounded execution lifetime applies its timeout to wrappers and generated children", async () => {
+  const executionLifetime = { mode: "bounded", timeoutMs: 12_345 } as const;
+  const panel = buildPanelSpawnParams(
+    PROFILE,
+    "review",
+    undefined,
+    undefined,
+    executionLifetime,
+  );
+
+  assert.deepEqual(panel.executionLifetime, executionLifetime);
+  assert.equal(panel.timeoutMs, executionLifetime.timeoutMs);
+  const panelCalls = await generatedPanelChildCalls(panel);
+  for (const call of panelCalls) {
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(call.task.executionLifetime)),
+      executionLifetime,
+    );
+    assert.equal(call.task.async, true);
+    assert.equal(call.task.timeoutMs, executionLifetime.timeoutMs);
+  }
+
+  const judge = buildJudgeWorkflowSpawnParams({
+    profile: PROFILE,
+    prompt: "review",
+    panelOutputs: [],
+    failedPanelists: [],
+    runId: "run-bounded",
+    executionLifetime,
+  });
+  assert.deepEqual(judge.executionLifetime, executionLifetime);
+  assert.equal(judge.timeoutMs, executionLifetime.timeoutMs);
+  const judgeCall = await generatedJudgeChildCall(judge);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(judgeCall.task.executionLifetime)),
+    executionLifetime,
+  );
+  assert.equal(judgeCall.task.async, true);
+  assert.equal(judgeCall.task.timeoutMs, executionLifetime.timeoutMs);
 });
 
 test("exact caller contracts replace panel headings and agreement records", () => {

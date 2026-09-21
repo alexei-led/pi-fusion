@@ -246,6 +246,7 @@ test("start_fusion_review exposes the parameters a skill can drive", () => {
   assert.deepEqual(
     Object.keys(tool.parameters.properties).sort(),
     [
+      "executionLifetime",
       "judgeTimeoutMs",
       "panel",
       "panelGraceMs",

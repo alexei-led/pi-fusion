@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { join } from "node:path";
 import { registerFusionCommands } from "./commands.js";
 import {
   FusionOrchestrator,
@@ -30,6 +31,10 @@ function registerFusionTool(
         pattern: ".*\\S.*",
         description: "What to review or discuss (must contain non-whitespace text)",
       }),
+      executionLifetime: Type.Optional(Type.Union([
+        Type.Object({ mode: Type.Literal("unbounded") }),
+        Type.Object({ mode: Type.Literal("bounded"), timeoutMs: Type.Integer({ minimum: 1 }) }),
+      ])),
       profile: Type.Optional(
         Type.String({ minLength: 1, description: "Fusion profile name (optional)" }),
       ),
@@ -49,6 +54,7 @@ function registerFusionTool(
       const result = await orchestrator.startRun(
         {
           prompt: params.prompt,
+          ...(params.executionLifetime ? { executionLifetime: params.executionLifetime } : {}),
           ...(params.profile !== undefined ? { profile: params.profile } : {}),
           ...(params.panel !== undefined ? { panel: params.panel } : {}),
           ...(params.panelistTimeoutMs !== undefined ||
@@ -69,7 +75,9 @@ function registerFusionTool(
       );
       const text =
         result.status === "started"
-          ? "Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum."
+          ? params.executionLifetime && !result.run.effectiveExecutionLifetime
+            ? "Fusion launch is unresolved. Native admission is still being reconciled under the original operation identity."
+            : "Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum."
           : result.status === "conflict"
             ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
             : `Fusion review failed to start: ${result.status === "failed" ? result.error : result.status}`;
@@ -134,6 +142,7 @@ export default function fusionExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     sessionContext = ctx;
+    store.setDirectory(join(ctx.cwd, ".pi", "fusion", "runs"));
     await orchestrator.restore(ctx);
   });
 

@@ -12,6 +12,8 @@ export const SUBAGENTS_RPC_METHODS = [
   "stop",
   "interrupt",
   "steer",
+  "lookup",
+  "cancel",
 ] as const;
 
 export type SubagentsRpcMethod = (typeof SUBAGENTS_RPC_METHODS)[number];
@@ -256,6 +258,14 @@ export class SubagentsRpcClient {
 
   ping(options?: SubagentsRpcRequestOptions): Promise<unknown> {
     return this.request("ping", undefined, options);
+  }
+
+  lookup(params: { operationId: string; digest?: string }): Promise<unknown> {
+    return this.request("lookup", params);
+  }
+
+  cancel(params: { operationId: string; digest: string }): Promise<unknown> {
+    return this.request("cancel", params);
   }
 
   spawn(
