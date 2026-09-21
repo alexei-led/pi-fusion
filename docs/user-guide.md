@@ -181,6 +181,14 @@ omits elapsed deadlines throughout that chain. Omitting `executionLifetime`
 preserves the profile and legacy timeout rules above. Do not combine it with
 per-stage timeout overrides.
 
+Explicit mode sends panel tasks as a native `ownedWorkflow` parallel data graph
+and launches the judge directly under kernel ownership. It does not send
+arbitrary workflow JavaScript. The native runtime must advertise both
+`single-async` and `parallel-data` ownership routes with `requestMode: "kernel"`.
+Profiles with `stopWhenPanelAgrees: true` are rejected before admission because
+this owned route does not yet implement that stopping policy. Choose a profile
+without agreement stopping; normal lookup and cancellation remain available.
+
 Before using this mode, check RPC `ping` capabilities. Fusion advertises
 `executionLifetime` version 1 only when the connected `pi-subagents` runtime
 also supports durable operation lookup, idempotent replay, cancellation fences,

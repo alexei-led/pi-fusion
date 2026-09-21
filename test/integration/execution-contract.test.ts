@@ -15,7 +15,7 @@ const capabilities = {
   durableOperations: { version: 1, lookup: true, replay: true, cancelFence: true },
   processTerminalProof: { version: 1 },
   workflowTerminalProof: { version: 1 },
-  processTreeOwnership: { version: 1, scope: "owned-process-tree", escapedDescendants: "contained" },
+  processTreeOwnership: { version: 1, scope: "owned-process-tree", escapedDescendants: "contained", requestMode: "kernel", routes: ["single-async", "parallel-data"] },
 };
 const lifetime = { mode: "unbounded" } as const;
 const config: FusionConfig = {
@@ -30,28 +30,41 @@ class NativeRuntime implements FusionRpcClientLike {
   cancelled = false;
   statusValue = "running";
   identity: { operationId: unknown; digest: unknown } | undefined;
+  route = "parallel-data";
+  runId = "native-panel";
   async ping(): Promise<unknown> { return { capabilities }; }
   async spawn(params: object): Promise<unknown> {
     this.spawns.push(params);
     assert.ok("operationId" in params && "digest" in params);
     this.identity = { operationId: params.operationId, digest: params.digest };
+    this.route = "ownedWorkflow" in params ? "parallel-data" : "single-async";
+    this.runId = this.route === "parallel-data" ? "native-panel" : "native-judge";
     if (this.loseReply) throw new Error("spawn reply lost");
-    return { ...this.identity, runId: "native-panel", effectiveExecutionLifetime: lifetime };
+    return { ...this.identity, runId: this.runId, effectiveExecutionLifetime: lifetime, effectiveExecutionOwnership: { mode: "kernel" }, executionRoute: this.route };
   }
   async lookup(): Promise<unknown> {
-    return { ...this.identity, state: "found", runId: "native-panel", effectiveExecutionLifetime: lifetime, statusPayload: this.payload() };
+    return { ...this.identity, state: "found", runId: this.runId, effectiveExecutionLifetime: lifetime, effectiveExecutionOwnership: { mode: "kernel" }, executionRoute: this.route, statusPayload: this.payload() };
   }
   async cancel(): Promise<unknown> { this.cancelled = true; return { cancellationRequested: true }; }
   async status(): Promise<unknown> { return this.payload(); }
   async stop(): Promise<unknown> { return { ok: true }; }
   async interrupt(): Promise<unknown> { return { ok: true }; }
   payload(): unknown {
-    return { runId: "native-panel", state: this.statusValue, ...(this.proof ? { processTerminalProof: this.proof } : {}), results: [{ agent: "panelist", output: "Answer", success: true }] };
+    return { runId: this.runId, state: this.statusValue, ...(this.proof ? { processTerminalProof: this.proof } : {}), results: [{ agent: "panelist", output: "Answer", success: true }] };
   }
 }
 
-function proof() {
-  return { version: 1, kind: "workflow", state: "observed", runId: "native-panel", dispatchClosed: true, observedAt: 1, children: [processProof()] };
+function proof(rpc: NativeRuntime) {
+  assert.ok(rpc.identity);
+  const binding = { operationId: `kernel:${String(rpc.identity.operationId)}`, requestDigest: `kernel:${String(rpc.identity.digest)}`, hostId: "11111111-2222-3333-4444-555555555555", bootId: "66666666-7777-8888-9999-aaaaaaaaaaaa" };
+  const identity = { version: 1, backend: "darwin-resource-coalition-v1", ...binding, coalitionId: rpc.route === "parallel-data" ? "123" : "124", leader: { pid: 1234, uniqueId: rpc.route === "parallel-data" ? "123456" : "123457", pidVersion: 0 } };
+  return {
+    version: 1, state: "observed", runId: rpc.runId, runnerProcessInstanceId: "native-instance", observedAt: 1,
+    processTreeOwnership: capabilities.processTreeOwnership,
+    nativeOperation: rpc.identity,
+    kernelBinding: binding,
+    kernelProof: { status: "retired", binding, identity, proof: { kind: "darwin-coalition-retired", ...binding, identity, observedAt: "2026-09-21T00:00:00.000Z" } },
+  };
 }
 
 function processProof() {
@@ -111,10 +124,10 @@ test("wrapper terminal and cancel receipt are not native tree exit", async (t) =
   const cancelled = await orchestrator.cancelActiveRun(ctx);
   assert.equal(cancelled.status, "started");
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
-  rpc.proof = { ...proof(), runId: "other-run" };
+  rpc.proof = { ...proof(rpc), runId: "other-run" };
   await orchestrator.getStatusReport();
   assert.equal(store.getActiveRun()?.phase, "panel");
-  rpc.proof = proof();
+  rpc.proof = proof(rpc);
   await orchestrator.getStatusReport();
   assert.equal(store.getLastRunSummary()?.phase, "cancelled");
   assert.equal((store.getLastRunSummary()?.processTerminalProof as { runId: string }).runId, store.getLastRunSummary()?.id);
@@ -149,13 +162,13 @@ test("stop during an ambiguous launch remains fenced after restart until native 
   await restored.restore(new FakePi().createContext(cwd));
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
   assert.equal(rpc.spawns.length, 1);
-  rpc.proof = proof();
+  rpc.proof = proof(rpc);
   await restored.getStatusReport();
   assert.equal(store.getLastRunSummary()?.phase, "cancelled");
   assert.equal(rpc.spawns.length, 1);
 });
 
-test("workflow closure requires closed dispatch and every native child proof", async (t) => {
+test("owned root requires kernel retirement even when a workflow claims closed dispatch", async (t) => {
   const rpc = new NativeRuntime();
   const store = new FusionRunStore();
   const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
@@ -163,14 +176,17 @@ test("workflow closure requires closed dispatch and every native child proof", a
   const ctx = new FakePi().createContext();
   await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, ctx);
   await orchestrator.cancelActiveRun(ctx);
-  const workflow = { version: 1, kind: "workflow", state: "observed", runId: "native-panel", dispatchClosed: false, observedAt: 2, children: [proof()] };
+  const workflow = { version: 1, kind: "workflow", state: "observed", runId: "native-panel", dispatchClosed: false, observedAt: 2, children: [proof(rpc)] };
   rpc.proof = workflow;
   await orchestrator.getStatusReport();
   assert.ok(store.getActiveRun());
-  rpc.proof = { ...workflow, dispatchClosed: true, children: [{ ...proof(), state: "pending" }] };
+  rpc.proof = { ...workflow, dispatchClosed: true, children: [{ ...proof(rpc), state: "pending" }] };
   await orchestrator.getStatusReport();
   assert.ok(store.getActiveRun());
   rpc.proof = { ...workflow, dispatchClosed: true };
+  await orchestrator.getStatusReport();
+  assert.ok(store.getActiveRun());
+  rpc.proof = proof(rpc);
   await orchestrator.getStatusReport();
   assert.equal(store.getLastRunSummary()?.phase, "cancelled");
 });
@@ -207,7 +223,7 @@ test("public RPC preserves durable identity, rejects changed replay, and fences 
   assert.equal(rpc.spawns.length, 1);
   const busyInput = { ...input, operationId: "busy-operation" };
   assert.equal((await request("start", busyInput)).success, false);
-  rpc.proof = proof();
+  rpc.proof = proof(rpc);
   await request("cancel", { operationId: input.operationId });
   assert.equal((await request("start", busyInput)).success, true);
   assert.equal(rpc.spawns.length, 2);
@@ -215,7 +231,7 @@ test("public RPC preserves durable identity, rejects changed replay, and fences 
 
 test("closed panel proof cannot acknowledge cancellation of an unresolved judge launch", async (t) => {
   const rpc = new NativeRuntime();
-  rpc.proof = proof();
+  rpc.proof = { ...processProof(), runId: "native-panel" };
   const store = new FusionRunStore();
   const run = store.startRun({ prompt: "Review", profileName: "quality", executionLifetime: lifetime, phase: "panel" });
   store.updateRun(run.id, {
@@ -237,7 +253,7 @@ test("empty process group cannot prove escaped descendants exited", async (t) =>
   t.after(() => orchestrator.dispose());
   const ctx = new FakePi().createContext();
   await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, ctx);
-  rpc.proof = { ...proof(), children: [{ ...processProof(), instances: [{ kind: "pi-writer", processTree: { state: "observed", mechanism: "posix-process-group", containment: "unverified" } }] }] };
+  rpc.proof = { ...processProof(), runId: "native-panel", instances: [{ kind: "pi-writer", processTree: { state: "observed", mechanism: "posix-process-group", containment: "unverified" } }] };
   await orchestrator.cancelActiveRun(ctx);
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
   assert.equal(store.getLastRunSummary(), undefined);
@@ -300,11 +316,11 @@ test("cancellation arriving during native lookup prevents an absent-intent repla
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
 });
 
-function rpcHarness(t: TestContext, cwd: string, rpc = new NativeRuntime()) {
+function rpcHarness(t: TestContext, cwd: string, rpc = new NativeRuntime(), configuration = config) {
   const pi = new FakePi();
   const ctx = pi.createContext(cwd);
   const store = new FusionRunStore({ directory: join(cwd, "runs") });
-  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => configuration });
   const unregister = registerFusionRpc({ events: pi.events, orchestrator, store, getContext: () => ctx });
   const dispose = () => { unregister(); orchestrator.dispose(); };
   t.after(dispose);
@@ -423,4 +439,111 @@ test("RPC restart with admitted identity but no bound run stays unresolved", asy
   assert.equal(status.neverStarted, false);
   assert.equal(status.replaySafe, false);
   assert.equal(restarted.rpc.spawns.length, 0);
+});
+
+test("strict Fusion refuses ownership without both native data routes", async (t) => {
+  const rpc = new NativeRuntime();
+  rpc.ping = async () => ({ capabilities: { ...capabilities, processTreeOwnership: { version: 1, scope: "owned-process-tree", escapedDescendants: "contained", requestMode: "kernel", routes: ["single-async"] } } });
+  const store = new FusionRunStore();
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  t.after(() => orchestrator.dispose());
+  const result = await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, new FakePi().createContext());
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") assert.match(result.error, /parallel-data/);
+  assert.equal(rpc.spawns.length, 0);
+  assert.equal(store.getActiveRun(), undefined);
+});
+
+test("strict agreement policy refusal happens before admission while service lookup remains available", async (t) => {
+  const rpc = new NativeRuntime();
+  const store = new FusionRunStore();
+  const agreement: FusionConfig = { defaultProfile: "quality", profiles: { quality: { ...config.profiles.quality!, stopWhenPanelAgrees: true } } };
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => agreement });
+  t.after(() => orchestrator.dispose());
+  const result = await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, new FakePi().createContext());
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") assert.match(result.error, /stopWhenPanelAgrees/);
+  assert.equal(rpc.spawns.length, 0);
+  assert.equal(store.getActiveRun(), undefined);
+  assert.ok((await orchestrator.executionCapabilities()).executionLifetime);
+});
+
+test("native ownership route downgrade remains an unresolved launch", async (t) => {
+  const rpc = new NativeRuntime();
+  const originalSpawn = rpc.spawn.bind(rpc);
+  rpc.spawn = async (params) => {
+    await originalSpawn(params);
+    return { ...rpc.identity, runId: "native-panel", effectiveExecutionLifetime: lifetime, effectiveExecutionOwnership: { mode: "kernel" }, executionRoute: "single-async" };
+  };
+  rpc.lookup = async () => ({ ...rpc.identity, state: "found", runId: "native-panel", effectiveExecutionLifetime: lifetime, effectiveExecutionOwnership: { mode: "kernel" }, executionRoute: "single-async" });
+  const store = new FusionRunStore();
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  t.after(() => orchestrator.dispose());
+  const result = await orchestrator.startRun({ prompt: "Review", executionLifetime: lifetime }, new FakePi().createContext());
+  assert.equal(result.status, "started");
+  assert.equal(store.getActiveRun()?.panelRunId, undefined);
+  assert.equal(store.getActiveRun()?.effectiveExecutionLifetime, undefined);
+  await orchestrator.getStatusReport();
+  assert.equal(store.getActiveRun()?.panelRunId, undefined);
+  assert.equal(rpc.spawns.length, 1);
+  assert.ok(rpc.spawns[0] && "ownedWorkflow" in rpc.spawns[0]);
+  assert.equal("workflowScript" in rpc.spawns[0], false);
+});
+
+test("owned panel and direct judge close under separate native identities bound to one caller", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-owned-stages-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const panelConfig: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel: [{ id: "one", agent: "panelist" }, { id: "two", agent: "panelist" }], judge: { agent: "judge" }, concurrency: 2 } } };
+  class StageRuntime extends NativeRuntime {
+    override async spawn(params: object): Promise<unknown> {
+      const result = await super.spawn(params);
+      this.statusValue = "running";
+      this.proof = undefined;
+      return result;
+    }
+    override payload(): unknown {
+      return {
+        runId: this.runId, state: this.statusValue,
+        ...(this.proof ? { processTerminalProof: this.proof } : {}),
+        results: this.route === "parallel-data"
+          ? [{ agent: "panelist", workflowKey: "panel-1", output: "NO_FINDINGS", success: true }, { agent: "panelist", workflowKey: "panel-2", output: "NO_FINDINGS", success: true }]
+          : [{ agent: "judge", output: "NO_FINDINGS", success: true }],
+      };
+    }
+  }
+  const rpc = new StageRuntime();
+  const fixture = rpcHarness(t, cwd, rpc, panelConfig);
+  const input = { operationId: "caller-operation", digest: "caller-frozen-digest", prompt: "Review", outputContract: "plan-review-v1", executionLifetime: lifetime };
+  const started = responseData(await fixture.request("start", input));
+  assert.deepEqual(started.effectiveExecutionOwnership, { mode: "kernel" });
+  assert.equal(started.executionRoute, "parallel-data");
+  rpc.statusValue = "completed";
+  rpc.proof = proof(rpc);
+  await fixture.orchestrator.getStatusReport();
+  assert.equal(fixture.store.getActiveRun()?.phase, "judge");
+  assert.equal(rpc.spawns.length, 2);
+  assert.ok(rpc.spawns[0] && "ownedWorkflow" in rpc.spawns[0]);
+  assert.ok(rpc.spawns[1] && "agent" in rpc.spawns[1]);
+  assert.equal("workflowScript" in rpc.spawns[0], false);
+  assert.equal("workflowScript" in rpc.spawns[1], false);
+  rpc.statusValue = "completed";
+  const retired = proof(rpc);
+  rpc.proof = { ...retired, kernelProof: { ...retired.kernelProof, status: "active" } };
+  await fixture.orchestrator.getStatusReport();
+  assert.equal(fixture.store.getActiveRun()?.phase, "judge");
+  rpc.proof = retired;
+  await fixture.orchestrator.getStatusReport();
+  const completed = responseData(await fixture.request("result", { operationId: input.operationId }));
+  assert.deepEqual(completed.callerOutput, { contract: "plan-review-v1", output: "NO_FINDINGS" });
+  const closure = completed.workflowTerminalProof;
+  assert.ok(typeof closure === "object" && closure !== null && "callerBinding" in closure && "children" in closure);
+  assert.deepEqual(closure.callerBinding, { operationId: input.operationId, requestDigest: input.digest });
+  assert.ok(Array.isArray(closure.children));
+  assert.equal(closure.children.length, 2);
+  const children: unknown[] = closure.children;
+  for (const child of children) {
+    assert.ok(typeof child === "object" && child !== null && "nativeOperation" in child && "kernelBinding" in child);
+    assert.notDeepEqual(child.nativeOperation, closure.callerBinding);
+    assert.notDeepEqual(child.kernelBinding, closure.callerBinding);
+  }
 });

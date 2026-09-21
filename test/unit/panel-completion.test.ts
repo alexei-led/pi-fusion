@@ -195,6 +195,7 @@ test("decidePanelCompletion prepares a standard judge spawn when multiple paneli
 
   assert.equal(decision.kind, "judge");
   if (decision.kind !== "judge") return;
+  assert.ok("workflowScript" in decision.params);
   const params = judgeWorkflowTask(decision.params.workflowScript);
   assert.equal(params.agent, "judge-agent");
   assert.match(params.task, /Architect says A/);
@@ -218,6 +219,7 @@ test("decidePanelCompletion restores caller-contract instructions for legacy jud
 
   assert.equal(decision.kind, "judge");
   if (decision.kind !== "judge") return;
+  assert.ok("workflowScript" in decision.params);
   const params = judgeWorkflowTask(decision.params.workflowScript);
   assert.match(params.task, /exact output contract in the original task/);
 });
@@ -291,6 +293,7 @@ test("merge synthesis spawns the composer for a full panel", () => {
 
   assert.equal(decision.kind, "judge");
   if (decision.kind !== "judge") return;
+  assert.ok("workflowScript" in decision.params);
   const params = judgeWorkflowTask(decision.params.workflowScript);
   assert.match(params.task, /You are the fusion composer\./);
   assert.match(params.task, /## Coverage Map/);

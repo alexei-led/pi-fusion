@@ -66,8 +66,7 @@ export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
   key: string;
 }
 
-export interface PanelSpawnParams {
-  workflowScript: string;
+interface SpawnEnvelope {
   async: true;
   context: "fresh" | "fork";
   output: true;
@@ -76,6 +75,22 @@ export interface PanelSpawnParams {
   timeoutMs?: number;
   executionLifetime?: ExecutionLifetime;
 }
+
+export interface LegacyPanelSpawnParams extends SpawnEnvelope {
+  workflowScript: string;
+}
+
+export interface OwnedPanelSpawnParams extends SpawnEnvelope {
+  executionOwnership: { mode: "kernel" };
+  ownedWorkflow: {
+    version: 1;
+    kind: "parallel";
+    tasks: PanelWorkflowTaskParams[];
+    concurrency: number;
+  };
+}
+
+export type PanelSpawnParams = LegacyPanelSpawnParams | OwnedPanelSpawnParams;
 
 export interface JudgeWorkflowTaskParams {
   agent: string;
@@ -93,16 +108,16 @@ export interface JudgeWorkflowTaskParams {
   executionLifetime?: ExecutionLifetime;
 }
 
-export interface JudgeSpawnParams {
+export interface LegacyJudgeSpawnParams extends SpawnEnvelope {
   workflowScript: string;
-  async: true;
-  context: "fresh" | "fork";
-  output: true;
-  outputMode: "inline";
-  acceptance: FusionAcceptanceDisabled;
-  timeoutMs?: number;
-  executionLifetime?: ExecutionLifetime;
 }
+
+export interface OwnedJudgeSpawnParams extends SpawnEnvelope, JudgeWorkflowTaskParams {
+  async: true;
+  executionOwnership: { mode: "kernel" };
+}
+
+export type JudgeSpawnParams = LegacyJudgeSpawnParams | OwnedJudgeSpawnParams;
 
 export type { FailedPanelSummary, PanelOutput } from "./types.js";
 
@@ -191,8 +206,30 @@ export function buildPanelSpawnParams(
   prompt: string,
   callerContract?: CallerOutputContract,
   timeoutOverrides?: FusionTimeoutOverrides,
+  executionLifetime?: undefined,
+): LegacyPanelSpawnParams;
+export function buildPanelSpawnParams(
+  profile: FusionProfile,
+  prompt: string,
+  callerContract: CallerOutputContract | undefined,
+  timeoutOverrides: FusionTimeoutOverrides | undefined,
+  executionLifetime: ExecutionLifetime,
+): OwnedPanelSpawnParams;
+export function buildPanelSpawnParams(
+  profile: FusionProfile,
+  prompt: string,
+  callerContract?: CallerOutputContract,
+  timeoutOverrides?: FusionTimeoutOverrides,
+  executionLifetime?: ExecutionLifetime,
+): PanelSpawnParams;
+export function buildPanelSpawnParams(
+  profile: FusionProfile,
+  prompt: string,
+  callerContract?: CallerOutputContract,
+  timeoutOverrides?: FusionTimeoutOverrides,
   executionLifetime?: ExecutionLifetime,
 ): PanelSpawnParams {
+  if (executionLifetime && profile.stopWhenPanelAgrees) throw new FusionArgsError("stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.");
   const timeouts = executionLifetime
     ? undefined
     : resolveEffectiveTimeouts(profile, timeoutOverrides);
@@ -219,6 +256,24 @@ export function buildPanelSpawnParams(
     profile.minimumSuccessfulPanelists,
     profile.panel.length,
   );
+
+  if (executionLifetime) {
+    return {
+      ownedWorkflow: { version: 1, kind: "parallel", tasks: tasks.map((task) => {
+        const ownedTask = { ...task };
+        delete ownedTask.async;
+        delete ownedTask.timeoutMs;
+        return ownedTask;
+      }), concurrency },
+      executionOwnership: { mode: "kernel" },
+      async: true,
+      context: profile.context ?? "fresh",
+      output: true,
+      outputMode: "inline",
+      acceptance: FUSION_ACCEPTANCE_DISABLED,
+      ...executionLifetimeFields(executionLifetime, undefined),
+    };
+  }
 
   return {
     workflowScript: buildPanelWorkflowScript(
@@ -261,6 +316,15 @@ export function buildJudgeSpawnParams(
     toolBudget: input.profile.judgeToolBudget ?? DEFAULT_TOOL_BUDGET,
     ...judgeLifetimeFields,
   };
+
+  if (input.executionLifetime) {
+    return {
+      ...task,
+      async: true,
+      context: input.profile.context ?? "fresh",
+      executionOwnership: { mode: "kernel" },
+    };
+  }
 
   return {
     workflowScript: `return runs.run("judge", ${JSON.stringify(task)});`,
@@ -459,7 +523,6 @@ function executionLifetimeFields(
     return {
       async: true,
       executionLifetime,
-      timeoutMs: executionLifetime.timeoutMs,
     };
   }
   return timeoutMs !== undefined ? { timeoutMs } : {};

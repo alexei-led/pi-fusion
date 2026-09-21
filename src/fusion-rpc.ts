@@ -5,7 +5,7 @@ import {
 } from "./caller-contract.js";
 import { join } from "node:path";
 import { FusionOperationJournal, type FusionOperationEvidence } from "./operation-journal.js";
-import { isExecutionLifetime, requestDigest } from "./runtime-contract.js";
+import { expectedExecutionRoute, isExecutionLifetime, requestDigest } from "./runtime-contract.js";
 import type {
   FusionCommandContext,
   FusionCommandResult,
@@ -199,6 +199,7 @@ type ObservableRun = Pick<
   | "error"
   | "executionLifetime" | "effectiveExecutionLifetime" | "requestDigest"
   | "processTerminalProof" | "cancellationRequested" | "observation"
+  | "spawnIntent" | "panelRunId" | "judgeRunId"
 >;
 
 const TERMINAL_PHASES = new Set<FusionPhase>(["done", "failed", "cancelled"]);
@@ -720,9 +721,12 @@ function stateFor(run: ObservableRun): FusionRunState {
   return state;
 }
 
-function runtimeData(run: ObservableRun): { effectiveExecutionLifetime?: ExecutionLifetime; processTerminalProof?: unknown; workflowTerminalProof?: unknown; neverStarted?: boolean } {
+function runtimeData(run: ObservableRun): { effectiveExecutionLifetime?: ExecutionLifetime; effectiveExecutionOwnership?: { mode: "kernel" }; executionRoute?: "parallel-data" | "single-async"; processTerminalProof?: unknown; workflowTerminalProof?: unknown; neverStarted?: boolean } {
+  const nativeId = run.spawnIntent?.stage === "judge" ? run.judgeRunId : run.panelRunId;
+  const route = nativeId ? expectedExecutionRoute(run.spawnIntent?.params) : undefined;
   return {
     ...(run.effectiveExecutionLifetime ? { effectiveExecutionLifetime: run.effectiveExecutionLifetime } : {}),
+    ...(run.effectiveExecutionLifetime && route ? { effectiveExecutionOwnership: { mode: "kernel" as const }, executionRoute: route } : {}),
     ...(TERMINAL_PHASES.has(run.phase) && run.processTerminalProof ? { processTerminalProof: run.processTerminalProof, workflowTerminalProof: run.processTerminalProof } : {}),
     ...(TERMINAL_PHASES.has(run.phase) && isRecord(run.observation) && run.observation.neverStarted === true ? { neverStarted: true } : {}),
   };

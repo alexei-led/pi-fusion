@@ -1,7 +1,7 @@
 import { deadlineSteerMessage, planPanelDeadlines, PANEL_DECISION_WAIT_MS } from "./panel-deadlines.js";
 import { join } from "node:path";
 import { FusionOperationJournal } from "./operation-journal.js";
-import { aggregateTerminalProof, isExecutionLifetime, nativeTerminalProof, requestDigest, sameLifetime, supportsExecutionContract, supportsTreeOwnership } from "./runtime-contract.js";
+import { aggregateTerminalProof, expectedExecutionRoute, isExecutionLifetime, nativeTerminalProof, requestDigest, sameLifetime, supportsExecutionContract, supportsOwnedFusionRoutes, supportsTreeOwnership, verifiesExecutionOwnership } from "./runtime-contract.js";
 import { applyClaudeAliasShorthand } from "./claude-aliases.js";
 import {
   detectCallerOutputContract,
@@ -203,9 +203,11 @@ export class FusionOrchestrator {
       if (args.executionLifetime && !supportsTreeOwnership(subagentsInfo)) {
         throw new FusionArgsError("pi-subagents processTreeOwnership does not prove containment of escaped descendants; explicit execution cannot start safely.");
       }
+      if (args.executionLifetime && !supportsOwnedFusionRoutes(subagentsInfo)) throw new FusionArgsError("pi-subagents does not expose kernel-owned single-async and parallel-data routes required by Fusion.");
       const config = await this.loadConfig(ctx);
       resolved = this.resolveProfile(config, args.profile);
       baseProfileName = resolved.name;
+      if (args.executionLifetime && resolved.profile.stopWhenPanelAgrees) throw new FusionArgsError("stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.");
       if (args.panel?.length) {
         // The named profile still supplies the judge and every other setting;
         // only the panel is replaced. Inline models skip the alias pass that
@@ -421,8 +423,8 @@ export class FusionOrchestrator {
       throw new FusionArgsError("Cancellation won native dispatch admission.");
     }
     const reply = await this.rpc.spawn({ ...params, ...(run.executionLifetime ? { operationId: requestId, digest } : {}) });
-    if (run.executionLifetime && (!isRecord(reply) || reply.operationId !== requestId || reply.digest !== digest || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime))) {
-      throw new FusionArgsError("pi-subagents did not verify the requested effectiveExecutionLifetime; launch remains unresolved.");
+    if (run.executionLifetime && (!isRecord(reply) || reply.operationId !== requestId || reply.digest !== digest || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) || !verifiesExecutionOwnership(reply, params))) {
+      throw new FusionArgsError("pi-subagents did not verify the requested execution lifetime and kernel-owned route; launch remains unresolved.");
     }
     return reply;
   }
@@ -460,7 +462,7 @@ export class FusionOrchestrator {
       reply = await this.rpc.spawn({ ...intent.params, operationId: intent.requestId, digest: intent.requestDigest });
     }
     const nativeId = extractSubagentRunId(reply);
-    if (!nativeId || !isRecord(reply) || reply.operationId !== intent.requestId || reply.digest !== intent.requestDigest || !run.executionLifetime || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime)) return undefined;
+    if (!nativeId || !isRecord(reply) || reply.operationId !== intent.requestId || reply.digest !== intent.requestDigest || !run.executionLifetime || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) || !verifiesExecutionOwnership(reply, intent.params)) return undefined;
     const asyncDir = extractSubagentAsyncDir(reply);
     return this.runStore.updateRun(run.id, {
       ...(intent.stage === "panel" ? { panelRunId: nativeId, ...(asyncDir ? { panelAsyncDir: asyncDir } : {}) }
@@ -474,7 +476,7 @@ export class FusionOrchestrator {
     const admission = run.operationId ? this.operationJournal().lookup(run.operationId) : undefined;
     if (admission?.state === "cancelled" && admission.neverStarted === true) {
       const proof = { version: 1, kind: "workflow", state: "observed", runId: run.id, dispatchClosed: true, observedAt: Date.now(), children: [] };
-      this.runStore.updateRun(run.id, { observation: admission, processTerminalProof: proof });
+      this.runStore.updateRun(run.id, { observation: admission, processTerminalProof: this.bindCallerProof(run, proof) });
       const report = `Fusion run ${run.id} cancelled before native dispatch admission.`;
       const cancelled = this.runStore.cancelRun(run.id, { report });
       this.clearActiveRuntime();
@@ -487,7 +489,7 @@ export class FusionOrchestrator {
       if (isRecord(receipt) && receipt.neverStarted === true && receipt.state === "cancelled" &&
         receipt.operationId === intent.requestId && receipt.digest === intent.requestDigest) {
         const proof = { version: 1, kind: "workflow", state: "observed", runId: typeof receipt.runId === "string" ? receipt.runId : intent.requestId, dispatchClosed: true, observedAt: Date.now(), children: [] };
-        this.runStore.updateRun(run.id, { observation: receipt, processTerminalProof: aggregateTerminalProof(run, proof) });
+        this.runStore.updateRun(run.id, { observation: receipt, processTerminalProof: this.bindCallerProof(run, aggregateTerminalProof(run, proof)) });
         const report = `Fusion run ${run.id} cancelled before the native stage launched.`;
         const cancelled = this.runStore.cancelRun(run.id, { report });
         this.clearActiveRuntime();
@@ -498,10 +500,10 @@ export class FusionOrchestrator {
     const target = hasUnresolvedSpawnIntent(run) ? undefined : activeRunId(run);
     if (!target) return { status: "started", run };
     const payload = await this.nativeStatus(run, target);
-    const proof = nativeTerminalProof(payload, target);
+    const proof = this.stageTerminalProof(run, payload, target);
     this.persistNativeObservation(run, payload);
     if (!proof) return { status: "started", run };
-    this.runStore.updateRun(run.id, { processTerminalProof: aggregateTerminalProof(run, proof) });
+    this.runStore.updateRun(run.id, { processTerminalProof: this.bindCallerProof(run, aggregateTerminalProof(run, proof)) });
     const report = `Fusion run ${run.id} cancelled after native process-tree exit was observed.`;
     const cancelled = this.runStore.cancelRun(run.id, { report });
     this.clearActiveRuntime();
@@ -520,6 +522,23 @@ export class FusionOrchestrator {
 
   private persistNativeObservation(run: FusionRun, payload: unknown): void {
     if (JSON.stringify(run.observation) !== JSON.stringify(payload)) this.runStore.updateRun(run.id, { observation: payload });
+  }
+
+  private stageTerminalProof(run: FusionRun, payload: unknown, target: string): Record<string, unknown> | undefined {
+    const intent = run.spawnIntent;
+    if (expectedExecutionRoute(intent?.params)) {
+      if (!intent?.requestId || !intent.requestDigest) return undefined;
+      return nativeTerminalProof(payload, target, { operationId: intent.requestId, digest: intent.requestDigest });
+    }
+    return nativeTerminalProof(payload, target);
+  }
+
+  private bindCallerProof(run: FusionRun, proof: Record<string, unknown>): Record<string, unknown> {
+    if (!run.operationId) return proof;
+    const evidence = this.operationJournal().lookup(run.operationId);
+    if (!evidence.requestDigest) return proof;
+    if (evidence.fusionRequestDigest !== run.requestDigest) throw new FusionArgsError("Fusion caller proof binding does not match the durable request digest.");
+    return { ...proof, callerBinding: { operationId: run.operationId, requestDigest: evidence.requestDigest } };
   }
 
   async handleSubagentComplete(payload: unknown): Promise<FusionCommandResult> {
@@ -917,10 +936,10 @@ export class FusionOrchestrator {
         const target = activeRunId(active);
         if (!target) return { status: "ignored" };
         const payload = await this.nativeStatus(active, target);
-        const proof = nativeTerminalProof(payload, target);
+        const proof = this.stageTerminalProof(active, payload, target);
         this.persistNativeObservation(active, payload);
         if (!proof) return { status: "ignored" };
-        active = this.runStore.updateRun(active.id, { processTerminalProof: aggregateTerminalProof(active, proof) });
+        active = this.runStore.updateRun(active.id, { processTerminalProof: this.bindCallerProof(active, aggregateTerminalProof(active, proof)) });
         if (active.cancellationRequested) return await this.reconcileContractCancellation(active);
       }
       if (active.phase === "panel") {
