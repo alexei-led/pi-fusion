@@ -299,15 +299,18 @@ export function registerFusionRpc({
     }
 
     const context = requireContext(getContext());
+    const args = { ...toParsedFusionArgs(input), requestDigest: digest };
     if (input.executionLifetime) {
-      const claim = journal().claim(input.operationId, digest, input.digest);
+      const claim = journal().claim(input.operationId, digest, input.digest, args);
       if (claim === "cancelled") throw new RpcFailure({ code: "start_failed", message: "Fusion operation was cancelled before launch." });
-      if (claim === "existing") throw new RpcFailure({ code: "not_ready", message: "Fusion operation launch is unresolved; retry lookup with the same operationId." });
+      if (claim === "existing" && !journal().preflight(input.operationId)) throw new RpcFailure({ code: "not_ready", message: "Fusion operation launch is unresolved; retry lookup with the same operationId." });
     }
+    const preflight = input.executionLifetime ? journal().preflight(input.operationId) : undefined;
     const pending = orchestrator
-      .startRun({ ...toParsedFusionArgs(input), requestDigest: digest }, context)
+      .startRun(preflight?.args ?? args, context)
       .then((result) => {
-        if (input.executionLifetime && (result.status === "failed" || result.status === "conflict") && !store.getRunByOperationId(input.operationId)) journal().releaseBeforeLaunch(input.operationId);
+        store.refreshDurable?.();
+        if (input.executionLifetime && (result.status === "failed" || result.status === "conflict") && !store.getRunByOperationId(input.operationId)) journal().releaseBeforeLaunch(input.operationId, preflight?.runId);
         return startData(
           input.operationId,
           runFromStartResult(result, input.operationId, store),

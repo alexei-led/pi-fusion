@@ -57,6 +57,7 @@ export type FusionRunSummary = Omit<
 
 export interface FusionRunStartInput {
   id?: string;
+  spawnIntent?: FusionRun["spawnIntent"];
   reviewContext?: FusionRun["reviewContext"];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
@@ -293,6 +294,7 @@ export class FusionRunStore {
     const createdAt = input.createdAt ?? this.now();
     const run: FusionRun = {
       id: input.id ?? this.idFactory(),
+      ...(input.spawnIntent ? { spawnIntent: cloneSpawnIntent(input.spawnIntent) } : {}),
       ...(input.reviewContext ? { reviewContext: { ...input.reviewContext } } : {}),
       ...(input.executionLifetime !== undefined
         ? { executionLifetime: cloneExecutionLifetime(input.executionLifetime) }
@@ -348,7 +350,7 @@ export class FusionRunStore {
       createdAt,
       updatedAt: createdAt,
     };
-    this.persistRun(run);
+    this.persistRun(run, run, true);
     this.activeRun = run;
     this.rememberRun(run);
     return cloneRun(run);
@@ -455,8 +457,9 @@ export class FusionRunStore {
   private persistRun(
     run: FusionRun,
     sessionEntry: FusionRun | FusionRunSummary = run,
+    exclusive = false,
   ): void {
-    this.durableStore?.write(run.id, cloneRun(run));
+    this.durableStore?.write(run.id, cloneRun(run), exclusive);
     if (this.durableStore) {
       this.durableRunsById.set(run.id, cloneRun(run));
     }

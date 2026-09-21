@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdirSync,
+  linkSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -69,7 +70,7 @@ export class DurableRunSnapshotStore {
     return { snapshots, errors };
   }
 
-  write(key: string, data: unknown): void {
+  write(key: string, data: unknown, exclusive = false): void {
     const serialized = JSON.stringify(data);
     if (serialized === undefined) {
       throw new Error("Durable fusion run snapshot is not JSON serializable.");
@@ -86,8 +87,12 @@ export class DurableRunSnapshotStore {
       writeFileSync(temporaryPath, `${serialized}\n`, {
         encoding: "utf8",
         mode: 0o600,
+        flush: true,
       });
-      renameSync(temporaryPath, targetPath);
+      if (exclusive) {
+        linkSync(temporaryPath, targetPath);
+        unlinkSync(temporaryPath);
+      } else renameSync(temporaryPath, targetPath);
     } catch (error: unknown) {
       try {
         unlinkSync(temporaryPath);

@@ -1,6 +1,9 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { requestDigest } from "./runtime-contract.js";
+import { isExecutionLifetime, requestDigest } from "./runtime-contract.js";
+import { isReviewContext } from "./review-context.js";
+import type { ParsedFusionArgs } from "./types.js";
 import { isRecord } from "./utils.js";
 
 interface OperationIntent {
@@ -8,6 +11,14 @@ interface OperationIntent {
   operationId: string;
   digest: string;
   requestDigest?: string;
+  recovery?: FusionPreflight;
+}
+
+export interface FusionPreflight {
+  runId: string;
+  createdAt: number;
+  args: ParsedFusionArgs;
+  argsDigest: string;
 }
 
 interface Admission {
@@ -36,12 +47,15 @@ export class FusionOperationJournal {
     return join(this.directory, `${requestDigest(operationId).slice(7)}.${suffix}`);
   }
 
-  claim(operationId: string, digest: string, callerDigest?: string): "claimed" | "existing" | "cancelled" {
+  claim(operationId: string, digest: string, callerDigest?: string, args?: ParsedFusionArgs): "claimed" | "existing" | "cancelled" {
     this.ensureDirectory();
     if (this.cancelled(operationId)) return "cancelled";
-    const intent: OperationIntent = { version: 2, operationId, digest, ...(callerDigest ? { requestDigest: callerDigest } : {}) };
+    const intent: OperationIntent = {
+      version: 2, operationId, digest, ...(callerDigest ? { requestDigest: callerDigest } : {}),
+      ...(args ? { recovery: { runId: randomUUID(), createdAt: Date.now(), args, argsDigest: requestDigest(args) } } : {}),
+    };
     try {
-      writeFileSync(this.path(operationId, "intent"), JSON.stringify(intent), { flag: "wx", mode: 0o600, flush: true });
+      this.publish(operationId, "intent", intent);
     } catch (error: unknown) {
       if (!isExists(error)) throw error;
       const saved = this.readIntent(operationId);
@@ -51,6 +65,26 @@ export class FusionOperationJournal {
       return this.cancelled(operationId) ? "cancelled" : "existing";
     }
     return this.cancelled(operationId) ? "cancelled" : "claimed";
+  }
+
+  preflight(operationId: string): FusionPreflight | undefined {
+    return this.readIntent(operationId)?.recovery;
+  }
+
+  hasDispatchAdmission(operationId: string): boolean {
+    return this.readAdmission(operationId)?.state === "dispatching";
+  }
+
+  pendingPreflights(): FusionPreflight[] {
+    this.ensureDirectory();
+    const pending: FusionPreflight[] = [];
+    for (const file of readdirSync(this.directory).filter((name) => name.endsWith(".intent"))) {
+      const raw: unknown = JSON.parse(readFileSync(join(this.directory, file), "utf8"));
+      if (!isRecord(raw) || typeof raw.operationId !== "string" || this.path(raw.operationId, "intent") !== join(this.directory, file)) throw new Error("Corrupt Fusion preflight intent.");
+      const saved = this.readIntent(raw.operationId);
+      if (saved?.recovery && !this.cancelled(raw.operationId)) pending.push(saved.recovery);
+    }
+    return pending;
   }
 
   /** Must win this durable gate before invoking any native spawn or replay. */
@@ -79,8 +113,9 @@ export class FusionOperationJournal {
     return this.lookup(operationId);
   }
 
-  releaseBeforeLaunch(operationId: string): void {
+  releaseBeforeLaunch(operationId: string, runId?: string): void {
     if (this.readAdmission(operationId)?.state === "dispatching") return;
+    if (runId !== undefined && this.preflight(operationId)?.runId !== runId) return;
     try { unlinkSync(this.path(operationId, "intent")); }
     catch (error: unknown) { if (!isMissing(error)) throw error; }
   }
@@ -115,7 +150,7 @@ export class FusionOperationJournal {
 
   private admit(value: Admission): Admission {
     try {
-      writeFileSync(this.path(value.operationId, "admission"), JSON.stringify(value), { flag: "wx", mode: 0o600, flush: true });
+      this.publish(value.operationId, "admission", value);
       return value;
     } catch (error: unknown) {
       if (!isExists(error)) throw error;
@@ -125,12 +160,24 @@ export class FusionOperationJournal {
     }
   }
 
+  private publish(operationId: string, suffix: string, value: unknown): void {
+    const target = this.path(operationId, suffix);
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600, flush: true });
+      linkSync(temporary, target);
+    } finally {
+      try { unlinkSync(temporary); } catch { /* An unpublished temporary file cannot authorize dispatch. */ }
+    }
+  }
+
   private readIntent(operationId: string): OperationIntent | undefined {
     const saved = this.readJson(operationId, "intent");
     if (saved === undefined) return undefined;
     if (!isRecord(saved) || saved.operationId !== operationId || typeof saved.digest !== "string" || !saved.digest ||
       (saved.version !== undefined && saved.version !== 2) || (saved.requestDigest !== undefined && typeof saved.requestDigest !== "string")) throw new Error("Corrupt Fusion operation intent.");
-    return { operationId, digest: saved.digest, ...(saved.version === 2 ? { version: 2 } : {}), ...(typeof saved.requestDigest === "string" ? { requestDigest: saved.requestDigest } : {}) };
+    if (saved.recovery !== undefined && (!isPreflight(saved.recovery) || saved.recovery.args.operationId !== operationId || saved.recovery.args.requestDigest !== saved.digest)) throw new Error("Corrupt Fusion preflight request.");
+    return { operationId, digest: saved.digest, ...(saved.version === 2 ? { version: 2 } : {}), ...(typeof saved.requestDigest === "string" ? { requestDigest: saved.requestDigest } : {}), ...(saved.recovery !== undefined ? { recovery: saved.recovery } : {}) };
   }
 
   private readAdmission(operationId: string): Admission | undefined {
@@ -145,6 +192,17 @@ export class FusionOperationJournal {
     try { return JSON.parse(readFileSync(this.path(operationId, suffix), "utf8")) as unknown; }
     catch (error: unknown) { if (isMissing(error)) return undefined; throw error; }
   }
+}
+
+function isPreflight(value: unknown): value is FusionPreflight {
+  if (!isRecord(value) || typeof value.runId !== "string" || !value.runId || typeof value.createdAt !== "number" || !Number.isFinite(value.createdAt) || !isRecord(value.args) || value.argsDigest !== requestDigest(value.args)) return false;
+  const args = value.args;
+  return typeof args.prompt === "string" && args.prompt.trim().length > 0 &&
+    typeof args.operationId === "string" && typeof args.requestDigest === "string" && isExecutionLifetime(args.executionLifetime) &&
+    (args.profile === undefined || (typeof args.profile === "string" && args.profile.trim().length > 0)) &&
+    (args.reviewContext === undefined || isReviewContext(args.reviewContext)) &&
+    (args.outputContract === undefined || args.outputContract === "plan-review-v1") &&
+    args.panel === undefined && args.timeoutOverrides === undefined;
 }
 
 function isExists(error: unknown): boolean {

@@ -8,7 +8,7 @@ import { registerFusionRpc, FUSION_RPC_REQUEST_EVENT, fusionRpcReplyEvent } from
 import { FusionOperationJournal } from "../../src/operation-journal.js";
 import { requestDigest } from "../../src/runtime-contract.js";
 import { FusionOrchestrator, type FusionRpcClientLike } from "../../src/orchestrator.js";
-import { FusionRunStore } from "../../src/run-store.js";
+import { FusionRunStore, type FusionRunStorePersistence } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
 import { FakePi } from "../support/fake-pi.js";
 
@@ -318,11 +318,11 @@ test("cancellation arriving during native lookup prevents an absent-intent repla
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
 });
 
-function rpcHarness(t: TestContext, cwd: string, rpc = new NativeRuntime(), configuration = config) {
+function rpcHarness(t: TestContext, cwd: string, rpc = new NativeRuntime(), configuration = config, loadConfig = async () => configuration, persistence?: FusionRunStorePersistence) {
   const pi = new FakePi();
   const ctx = pi.createContext(cwd);
-  const store = new FusionRunStore({ directory: join(cwd, "runs") });
-  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => configuration });
+  const store = new FusionRunStore({ directory: join(cwd, "runs"), ...(persistence ? { persistence } : {}) });
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig });
   const unregister = registerFusionRpc({ events: pi.events, orchestrator, store, getContext: () => ctx });
   const dispose = () => { unregister(); orchestrator.dispose(); };
   t.after(dispose);
@@ -344,6 +344,187 @@ function responseData(reply: Record<string, unknown>): Record<string, unknown> {
   assert.ok(typeof reply.data === "object" && reply.data !== null);
   return reply.data as Record<string, unknown>;
 }
+
+for (const boundary of ["ping", "config"] as const) {
+  test(`RPC preflight interrupted at ${boundary} resumes on restore and late original adopts one run`, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-preflight-restart-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const rpc = new NativeRuntime();
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    if (boundary === "ping") rpc.ping = async () => { entered(); await blocked; return { capabilities }; };
+    const first = rpcHarness(t, cwd, rpc, config, async () => {
+      if (boundary === "config") { entered(); await blocked; }
+      return config;
+    });
+    const input = { operationId: `recover-${boundary}`, prompt: "Frozen review", profile: "quality", digest: "caller-digest", executionLifetime: lifetime };
+    const starting = first.request("start", input);
+    await waiting;
+    assert.equal(responseData(await first.request("status", { operationId: input.operationId })).state, "pending");
+    rpc.ping = async () => ({ capabilities });
+    const restarted = rpcHarness(t, cwd, rpc);
+    await restarted.orchestrator.restore(new FakePi().createContext(cwd));
+    assert.equal(restarted.store.getActiveRun()?.panelRunId, "native-panel");
+    const runId = restarted.store.getActiveRun()?.id;
+    const replay = await restarted.request("start", input);
+    assert.equal(replay.success, true);
+    release();
+    assert.equal((await starting).success, true);
+    assert.equal(first.store.getActiveRun()?.id, runId);
+    assert.equal(rpc.spawns.length, 1);
+    assert.equal(new FusionRunStore({ directory: join(cwd, "runs") }).getRunByOperationId(input.operationId)?.id, runId);
+  });
+}
+
+test("simultaneous RPC preflight replays freeze one profile and one native identity", async (t) => {
+  const candidate = await candidateRepositories(t);
+  const rpc = new NativeRuntime();
+  const gates: (() => void)[] = [];
+  rpc.ping = () => new Promise((resolve) => { gates.push(() => resolve({ capabilities })); });
+  const first = rpcHarness(t, candidate.sessionCwd, rpc);
+  const changedConfig: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel: [{ id: "changed", agent: "changed-panelist" }], judge: { agent: "changed-judge" } } } };
+  const second = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
+  const third = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
+  const input = { operationId: "concurrent-preflight", prompt: "Frozen prompt", profile: "quality", digest: "frozen-caller", executionLifetime: lifetime, cwd: candidate.candidateCwd, reviewedCommit: candidate.reviewedCommit };
+  const starts = [first.request("start", input), second.request("start", input), third.request("start", input)];
+  assert.equal(gates.length, 3);
+  for (const release of gates) release();
+  for (const reply of await Promise.all(starts)) assert.equal(reply.success, true);
+  const run = first.store.getActiveRun();
+  assert.ok(run);
+  assert.equal(second.store.getActiveRun()?.id, run.id);
+  assert.equal(third.store.getActiveRun()?.id, run.id);
+  assert.equal(rpc.spawns.length, 1);
+  assert.equal(run.profileSnapshot?.panel[0]?.agent, "panelist");
+  assert.equal(run.prompt, input.prompt);
+  assert.deepEqual(run.reviewContext, { cwd: input.cwd, reviewedCommit: input.reviewedCommit });
+  assert.equal(responseData(await second.request("status", { operationId: input.operationId })).requestDigest, input.digest);
+  assert.equal((await second.request("start", { ...input, prompt: "Changed" })).success, false);
+  first.dispose();
+  third.dispose();
+  rpc.statusValue = "completed";
+  rpc.proof = proof(rpc);
+  await second.orchestrator.getStatusReport();
+  assert.equal(second.store.getLastRunSummary()?.phase, "done");
+  assert.equal(second.store.getLastRunSummary()?.error, undefined);
+  assert.equal(rpc.spawns.length, 1);
+});
+
+test("cancel during restarted preflight fences simultaneous replay and late original", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-restarted-cancel-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const rpc = new NativeRuntime();
+  const gates: (() => void)[] = [];
+  rpc.ping = () => new Promise((resolve) => { gates.push(() => resolve({ capabilities })); });
+  const first = rpcHarness(t, cwd, rpc);
+  const input = { operationId: "restarted-cancel", prompt: "Frozen", digest: "caller", executionLifetime: lifetime };
+  const original = first.request("start", input);
+  const restarted = rpcHarness(t, cwd, rpc);
+  const restoring = restarted.orchestrator.restore(new FakePi().createContext(cwd));
+  const replay = restarted.request("start", input);
+  assert.equal(gates.length, 3);
+  const cancellation = responseData(await restarted.request("cancel", { operationId: input.operationId }));
+  assert.equal(cancellation.neverStarted, true);
+  for (const release of gates) release();
+  await restoring;
+  assert.equal((await original).success, false);
+  assert.equal((await replay).success, false);
+  assert.equal(rpc.spawns.length, 0);
+  assert.equal(new FusionRunStore({ directory: join(cwd, "runs") }).getActiveRun(), undefined);
+  const final = rpcHarness(t, cwd, rpc);
+  await final.orchestrator.restore(new FakePi().createContext(cwd));
+  assert.equal(responseData(await final.request("status", { operationId: input.operationId })).neverStarted, true);
+  assert.equal((await final.request("start", input)).success, false);
+});
+
+test("restart after initial snapshot publication replays its frozen panel intent", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-initial-snapshot-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const rpc = new NativeRuntime();
+  const first = rpcHarness(t, cwd, rpc, config, undefined, { appendEntry() { throw new Error("interrupted after durable snapshot publication"); } });
+  const input = { operationId: "initial-snapshot", prompt: "Frozen", profile: "quality", digest: "caller", executionLifetime: lifetime };
+  await first.request("start", input);
+  const run = first.store.getActiveRun();
+  assert.ok(run?.spawnIntent?.requestId);
+  assert.equal(rpc.spawns.length, 0);
+  first.dispose();
+  const originalLookup = rpc.lookup.bind(rpc);
+  rpc.lookup = async () => rpc.identity ? originalLookup() : { state: "absent", operationId: run.spawnIntent?.requestId };
+  const restarted = rpcHarness(t, cwd, rpc, config, async () => { throw new Error("configuration must remain frozen"); });
+  await restarted.orchestrator.restore(new FakePi().createContext(cwd));
+  assert.equal(restarted.store.getActiveRun()?.id, run.id);
+  assert.equal(restarted.store.getActiveRun()?.panelRunId, "native-panel");
+  assert.deepEqual(restarted.store.getActiveRun()?.profileSnapshot, run.profileSnapshot);
+  assert.equal(rpc.spawns.length, 1);
+});
+
+test("recoverable intent with dispatch admission and missing run never infers an absent child", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-missing-construction-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const rpc = new NativeRuntime();
+  let release!: () => void;
+  rpc.ping = () => new Promise((resolve) => { release = () => resolve({ capabilities }); });
+  const first = rpcHarness(t, cwd, rpc);
+  const input = { operationId: "missing-construction", prompt: "Review", digest: "caller", executionLifetime: lifetime };
+  const starting = first.request("start", input);
+  const journal = new FusionOperationJournal(join(cwd, ".pi", "fusion", "operations"));
+  assert.equal(journal.beginDispatch(input.operationId, requestDigest(input)), true);
+  rpc.ping = async () => ({ capabilities });
+  const restarted = rpcHarness(t, cwd, rpc);
+  await restarted.orchestrator.restore(new FakePi().createContext(cwd));
+  assert.equal((await restarted.request("start", input)).success, false);
+  release();
+  assert.equal((await starting).success, false);
+  assert.equal(rpc.spawns.length, 0);
+  assert.equal(responseData(await restarted.request("cancel", { operationId: input.operationId })).neverStarted, false);
+});
+
+test("restored preflights retry unavailable native service and drain after prior completion", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 1_000 });
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-preflight-drain-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const originalRpc = new NativeRuntime();
+  const releases: (() => void)[] = [];
+  originalRpc.ping = () => new Promise((resolve) => { releases.push(() => resolve({ capabilities })); });
+  const original = rpcHarness(t, cwd, originalRpc);
+  const starts = ["queued-one", "queued-two"].map((operationId) => original.request("start", { operationId, prompt: "Frozen", digest: `caller-${operationId}`, executionLifetime: lifetime }));
+  assert.equal(releases.length, 2);
+  const rpc = new NativeRuntime();
+  rpc.ping = async () => { throw new Error("temporarily unavailable"); };
+  const restarted = rpcHarness(t, cwd, rpc);
+  await restarted.orchestrator.restore(new FakePi().createContext(cwd));
+  assert.equal(rpc.spawns.length, 0);
+  rpc.ping = async () => ({ capabilities });
+  let launched!: () => void;
+  const launch = new Promise<void>((resolve) => { launched = resolve; });
+  const spawn = rpc.spawn.bind(rpc);
+  rpc.spawn = async (params) => { const reply = await spawn(params); launched(); return reply; };
+  t.mock.timers.tick(2_000);
+  await launch;
+  await restarted.orchestrator.getStatusReport();
+  const firstId = restarted.store.getActiveRun()?.id;
+  assert.ok(firstId);
+  rpc.statusValue = "completed";
+  rpc.proof = proof(rpc);
+  await restarted.orchestrator.getStatusReport();
+  assert.equal(restarted.store.getLastRunSummary()?.phase, "done");
+  rpc.statusValue = "running";
+  rpc.proof = undefined;
+  rpc.identity = undefined;
+  const nextLaunch = new Promise<void>((resolve) => { launched = resolve; });
+  t.mock.timers.tick(2_000);
+  await nextLaunch;
+  await restarted.orchestrator.getStatusReport();
+  assert.ok(restarted.store.getActiveRun()?.id);
+  assert.notEqual(restarted.store.getActiveRun()?.id, firstId);
+  assert.equal(new FusionRunStore({ directory: join(cwd, "runs") }).getActiveRun()?.id, restarted.store.getActiveRun()?.id);
+  assert.equal(rpc.spawns.length, 2);
+  for (const release of releases) release();
+  for (const reply of await Promise.all(starts)) assert.equal(reply.success, true);
+  assert.equal(originalRpc.spawns.length, 0);
+});
 
 test("RPC cancellation before claim proves no launch across restart and delayed start", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "fusion-before-claim-"));

@@ -33,6 +33,19 @@ test("FusionRunStore starts one active run at a time", () => {
   );
 });
 
+test("stale constructors cannot overwrite an atomically published run identity", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-atomic-construction-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = new FusionRunStore({ directory });
+  const stale = new FusionRunStore({ directory });
+  const run = first.startRun({ id: "same-run", prompt: "Frozen", profileName: "quality" });
+  first.updateRun(run.id, { cancellationRequested: true });
+  assert.throws(() => stale.startRun({ id: "same-run", prompt: "Changed", profileName: "changed" }), { code: "EEXIST" });
+  const saved = new FusionRunStore({ directory }).getRunById(run.id);
+  assert.equal(saved?.prompt, "Frozen");
+  assert.equal(saved?.cancellationRequested, true);
+});
+
 test("FusionRunStore leaves no in-memory run after initial persistence fails", () => {
   const persistenceError = new Error("persistence unavailable");
   let appendAttempts = 0;

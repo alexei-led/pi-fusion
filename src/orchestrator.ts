@@ -154,6 +154,8 @@ export class FusionOrchestrator {
   private configWarning: string | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconciling = false;
+  private recoveringPreflight = false;
+  private preflightRecoveryEnabled = false;
   private pendingCompletionPayload: unknown;
   private readonly incompleteTerminalSince = new Map<string, number>();
 
@@ -171,7 +173,9 @@ export class FusionOrchestrator {
   ): Promise<FusionCommandResult> {
     this.context = ctx;
 
-    const args = typeof input === "string" ? parseFusionArgs(input) : input;
+    let args = typeof input === "string" ? parseFusionArgs(input) : input;
+    const preflight = args.operationId && args.executionLifetime ? this.operationJournal().preflight(args.operationId) : undefined;
+    if (preflight) args = preflight.args;
     const inputError = validateStartArgs(args);
     if (inputError) {
       this.notify(ctx, inputError, "error");
@@ -179,6 +183,7 @@ export class FusionOrchestrator {
     }
     const existing = this.runStore.getActiveRun();
     if (existing) {
+      if (preflight && existing.id === preflight.runId) return this.adoptPreflightRun(existing);
       const message = `Fusion run ${existing.id} is already active.`;
       this.notify(ctx, message, "warning");
       return { status: "conflict", activeRunId: existing.id };
@@ -245,12 +250,31 @@ export class FusionOrchestrator {
     const outputContract =
       args.outputContract ?? detectCallerOutputContract(args.prompt);
     const profileSnapshot = snapshotProfile(resolved.profile);
+    this.runStore.refreshDurable();
+    if (preflight) {
+      const persisted = this.runStore.getRunById(preflight.runId);
+      if (persisted) return this.adoptPreflightRun(persisted);
+      if (!args.operationId || this.operationJournal().preflight(args.operationId)?.runId !== preflight.runId) return { status: "failed", error: "Fusion preflight was superseded before launch." };
+      if (this.operationJournal().hasDispatchAdmission(args.operationId)) return { status: "failed", error: "Fusion dispatch was admitted but its frozen run snapshot is missing; launch remains unresolved." };
+    }
     if (args.operationId && this.operationCancelled(args.operationId)) {
       return { status: "failed", error: "Fusion operation was cancelled before launch." };
     }
     let run: FusionRun;
+    const spawnParams = {
+      ...buildPanelSpawnParams(resolved.profile, args.prompt, outputContract, args.timeoutOverrides, args.executionLifetime),
+      ...(args.reviewContext ? { cwd: args.reviewContext.cwd } : {}),
+    };
     try {
       run = this.runStore.startRun({
+        ...(preflight ? {
+          id: preflight.runId,
+          spawnIntent: {
+            stage: "panel", requestedAt: Date.now(), requestId: `${preflight.runId}:panel`,
+            requestDigest: requestDigest(args.reviewContext ? { params: spawnParams, reviewContext: args.reviewContext } : spawnParams),
+            params: spawnParams,
+          },
+        } : {}),
         ...(args.reviewContext ? { reviewContext: args.reviewContext } : {}),
         ...(args.executionLifetime ? { executionLifetime: args.executionLifetime } : {}),
         ...(args.requestDigest ? { requestDigest: args.requestDigest } : {}),
@@ -276,6 +300,9 @@ export class FusionOrchestrator {
         phase: "panel",
       });
     } catch (error: unknown) {
+      this.runStore.refreshDurable();
+      const persisted = preflight ? this.runStore.getRunById(preflight.runId) : undefined;
+      if (persisted) return this.adoptPreflightRun(persisted);
       if (!(error instanceof FusionRunStoreError)) {
         const message = errorMessage(error);
         this.notify(ctx, message, "error");
@@ -299,13 +326,6 @@ export class FusionOrchestrator {
 
     try {
       // The native correlation identity is persisted before the launch.
-      const spawnParams = buildPanelSpawnParams(
-          resolved.profile,
-          args.prompt,
-          outputContract,
-          args.timeoutOverrides,
-          args.executionLifetime,
-        );
       const spawnResult = await this.spawnStage(run, "panel", spawnParams);
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
@@ -316,6 +336,7 @@ export class FusionOrchestrator {
         );
       }
       const panelAsyncDir = extractSubagentAsyncDir(spawnResult);
+      this.runStore.refreshDurable();
       const current = this.runStore.getActiveRun();
       if (!current || current.id !== run.id) {
         await this.stopOrphanedRun(panelRunId);
@@ -364,6 +385,15 @@ export class FusionOrchestrator {
       if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
       return this.failActiveRun(errorMessage(error));
     }
+  }
+
+  private adoptPreflightRun(run: FusionRun): FusionCommandResult {
+    if (this.runStore.getActiveRun()?.id === run.id && run.profileSnapshot) {
+      this.activeProfile = profileFromSnapshot(run.profileSnapshot);
+      publishFusionStatus(this.context, run);
+      this.ensureReconcileLoop();
+    }
+    return { status: "ignored" };
   }
 
   private async stopOrphanedRun(
@@ -675,11 +705,13 @@ export class FusionOrchestrator {
     ctx: FusionCommandContext,
   ): Promise<ReturnType<FusionRunStore["restoreFromSession"]>> {
     this.context = ctx;
+    this.preflightRecoveryEnabled = true;
     const summary = this.runStore.restoreFromSession(ctx);
     this.clearActiveRuntime();
 
     const restoreError = this.runStore.getRestoreError();
     if (restoreError) {
+      this.stopReconcileLoop();
       this.configWarning = restoreError;
       this.notify(ctx, restoreError, "warning");
       clearFusionUi(ctx);
@@ -696,6 +728,7 @@ export class FusionOrchestrator {
     if (!active) {
       this.stopReconcileLoop();
       clearFusionUi(ctx);
+      await this.resumePreflights(ctx);
       return summary;
     }
 
@@ -755,6 +788,7 @@ export class FusionOrchestrator {
   }
 
   dispose(): void {
+    this.preflightRecoveryEnabled = false;
     this.stopReconcileLoop();
   }
 
@@ -926,7 +960,10 @@ export class FusionOrchestrator {
     this.runStore.refreshDurable();
     if (this.runStore.getRestoreError()) return { status: "ignored" };
     let active = this.runStore.getActiveRun();
-    if (!active) return { status: "ignored" };
+    if (!active) {
+      if (this.preflightRecoveryEnabled && this.context) await this.resumePreflights(this.context);
+      return { status: "ignored" };
+    }
 
     this.reconciling = true;
     try {
@@ -1716,6 +1753,25 @@ export class FusionOrchestrator {
     this.incompleteTerminalSince.clear();
     this.activeProfile = undefined;
     this.stopReconcileLoop();
+    if (this.preflightRecoveryEnabled) this.ensureReconcileLoop();
+  }
+
+  private async resumePreflights(ctx: FusionCommandContext): Promise<void> {
+    if (this.recoveringPreflight) return;
+    this.recoveringPreflight = true;
+    try {
+      let pending = false;
+      for (const preflight of this.operationJournal().pendingPreflights()) {
+        if (this.runStore.getRunById(preflight.runId)) continue;
+        pending = true;
+        await this.startRun(preflight.args, ctx);
+        if (this.runStore.getActiveRun()) break;
+      }
+      if (this.preflightRecoveryEnabled && (pending || this.runStore.getActiveRun())) this.ensureReconcileLoop();
+      else this.stopReconcileLoop();
+    } finally {
+      this.recoveringPreflight = false;
+    }
   }
 
   private ensureReconcileLoop(): void {
