@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { registerFusionRpc, FUSION_RPC_REQUEST_EVENT, fusionRpcReplyEvent } from "../../src/fusion-rpc.js";
+import { FusionOperationJournal } from "../../src/operation-journal.js";
 import { FusionOrchestrator, type FusionRpcClientLike } from "../../src/orchestrator.js";
 import { FusionRunStore } from "../../src/run-store.js";
 import type { FusionConfig } from "../../src/types.js";
@@ -296,4 +298,129 @@ test("cancellation arriving during native lookup prevents an absent-intent repla
   await polling;
   assert.equal(rpc.spawns.length, 1);
   assert.equal(store.getActiveRun()?.cancellationRequested, true);
+});
+
+function rpcHarness(t: TestContext, cwd: string, rpc = new NativeRuntime()) {
+  const pi = new FakePi();
+  const ctx = pi.createContext(cwd);
+  const store = new FusionRunStore({ directory: join(cwd, "runs") });
+  const orchestrator = new FusionOrchestrator({ rpc, runStore: store, loadConfig: async () => config });
+  const unregister = registerFusionRpc({ events: pi.events, orchestrator, store, getContext: () => ctx });
+  const dispose = () => { unregister(); orchestrator.dispose(); };
+  t.after(dispose);
+  let next = 0;
+  const request = (method: string, params: object): Promise<Record<string, unknown>> => new Promise((resolve) => {
+    const requestId = `admission-${next++}`;
+    const off = pi.events.on(fusionRpcReplyEvent(requestId), (value) => {
+      assert.ok(typeof value === "object" && value !== null);
+      off();
+      resolve(value as Record<string, unknown>);
+    });
+    pi.events.emit(FUSION_RPC_REQUEST_EVENT, { version: 1, requestId, method, params });
+  });
+  return { request, rpc, store, orchestrator, dispose };
+}
+
+function responseData(reply: Record<string, unknown>): Record<string, unknown> {
+  assert.equal(reply.success, true);
+  assert.ok(typeof reply.data === "object" && reply.data !== null);
+  return reply.data as Record<string, unknown>;
+}
+
+test("RPC cancellation before claim proves no launch across restart and delayed start", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-before-claim-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const first = rpcHarness(t, cwd);
+  const selector = { operationId: "never-admitted" };
+  assert.deepEqual(responseData(await first.request("status", selector)), { ...selector, state: "absent", replaySafe: true });
+  const cancelled = responseData(await first.request("cancel", selector));
+  assert.deepEqual(cancelled, { ...selector, cancelled: true, state: "cancelled", replaySafe: false, cancellationRequested: true, neverStarted: true });
+  first.dispose();
+  const restored = rpcHarness(t, cwd, first.rpc);
+  const status = responseData(await restored.request("status", selector));
+  assert.equal(status.neverStarted, true);
+  assert.equal(status.operationId, selector.operationId);
+  assert.equal(status.replaySafe, false);
+  assert.equal((await restored.request("start", { ...selector, prompt: "Delayed", executionLifetime: lifetime, digest: "caller-digest" })).success, false);
+  assert.equal(first.rpc.spawns.length, 0);
+});
+
+test("RPC cancellation after claim beats delayed native admission and retains caller digest", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-after-claim-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const rpc = new NativeRuntime();
+  let resolvePing: ((value: unknown) => void) | undefined;
+  rpc.ping = () => new Promise((resolve) => { resolvePing = resolve; });
+  const first = rpcHarness(t, cwd, rpc);
+  const input = { operationId: "claimed", prompt: "Delayed", executionLifetime: lifetime, digest: "caller-frozen-digest" };
+  const starting = first.request("start", input);
+  assert.ok(resolvePing);
+  const beforeCancel = responseData(await first.request("status", { operationId: input.operationId }));
+  assert.equal(beforeCancel.state, "pending");
+  assert.equal(beforeCancel.replaySafe, false);
+  const cancellation = responseData(await first.request("cancel", { operationId: input.operationId }));
+  assert.equal(cancellation.neverStarted, true);
+  assert.equal(cancellation.requestDigest, input.digest);
+  assert.equal(typeof cancellation.fusionRequestDigest, "string");
+  resolvePing({ capabilities });
+  assert.equal((await starting).success, false);
+  assert.equal(rpc.spawns.length, 0);
+  first.dispose();
+  const restored = rpcHarness(t, cwd, rpc);
+  const status = responseData(await restored.request("status", { operationId: input.operationId }));
+  assert.equal(status.neverStarted, true);
+  assert.equal(status.requestDigest, input.digest);
+  assert.equal((await restored.request("start", input)).success, false);
+  assert.equal(rpc.spawns.length, 0);
+});
+
+test("RPC cancellation after native admission cannot claim never started", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-after-admission-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const rpc = new NativeRuntime();
+  let resolveSpawn: (() => void) | undefined;
+  let enteredSpawn: (() => void) | undefined;
+  const entered = new Promise<void>((resolve) => { enteredSpawn = resolve; });
+  const actualSpawn = rpc.spawn.bind(rpc);
+  rpc.spawn = async (params) => {
+    const result = await actualSpawn(params);
+    enteredSpawn?.();
+    await new Promise<void>((resolve) => { resolveSpawn = resolve; });
+    return result;
+  };
+  const first = rpcHarness(t, cwd, rpc);
+  const input = { operationId: "native-admitted", prompt: "Delayed", executionLifetime: lifetime, digest: "caller-digest" };
+  const starting = first.request("start", input);
+  await entered;
+  const cancel = responseData(await first.request("cancel", { operationId: input.operationId }));
+  assert.notEqual(cancel.neverStarted, true);
+  assert.equal(cancel.cancelled, false);
+  assert.equal(first.store.getActiveRun()?.cancellationRequested, true);
+  assert.ok(resolveSpawn);
+  resolveSpawn();
+  await starting;
+  first.dispose();
+  const restored = rpcHarness(t, cwd, rpc);
+  const status = responseData(await restored.request("status", { operationId: input.operationId }));
+  assert.notEqual(status.neverStarted, true);
+  const journal = new FusionOperationJournal(join(cwd, ".pi", "fusion", "operations"));
+  assert.equal(journal.lookup(input.operationId).neverStarted, false);
+  assert.equal(rpc.spawns.length, 1);
+});
+
+test("RPC restart with admitted identity but no bound run stays unresolved", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "fusion-orphan-admission-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const journal = new FusionOperationJournal(join(cwd, ".pi", "fusion", "operations"));
+  journal.claim("admitted", "internal-digest", "caller-digest");
+  assert.equal(journal.beginDispatch("admitted", "internal-digest"), true);
+  const restarted = rpcHarness(t, cwd);
+  const evidence = responseData(await restarted.request("cancel", { operationId: "admitted" }));
+  assert.equal(evidence.neverStarted, false);
+  assert.equal(evidence.cancelled, false);
+  assert.equal(evidence.requestDigest, "caller-digest");
+  const status = responseData(await restarted.request("status", { operationId: "admitted" }));
+  assert.equal(status.neverStarted, false);
+  assert.equal(status.replaySafe, false);
+  assert.equal(restarted.rpc.spawns.length, 0);
 });

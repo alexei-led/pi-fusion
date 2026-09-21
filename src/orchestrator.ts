@@ -241,7 +241,7 @@ export class FusionOrchestrator {
     const outputContract =
       args.outputContract ?? detectCallerOutputContract(args.prompt);
     const profileSnapshot = snapshotProfile(resolved.profile);
-    if (args.executionLifetime && args.operationId && this.operationCancelled(args.operationId)) {
+    if (args.operationId && this.operationCancelled(args.operationId)) {
       return { status: "failed", error: "Fusion operation was cancelled before launch." };
     }
     let run: FusionRun;
@@ -392,7 +392,7 @@ export class FusionOrchestrator {
         return {
           executionLifetime: { version: 1, modes: ["unbounded", "bounded"] },
           durableOperationLookup: { version: 1 },
-          durableOperations: { version: 1, lookup: true, replay: true, cancelFence: true, scope: "repository" },
+          durableOperations: { version: 1, lookup: true, replay: true, cancelFence: true, neverStartedFence: true, absentReplay: true, requestDigestEcho: true, scope: "repository" },
           processTerminalProof: { version: 1 },
           workflowTerminalProof: { version: 1 },
           ...(ownership !== undefined ? { processTreeOwnership: ownership } : {}),
@@ -403,7 +403,7 @@ export class FusionOrchestrator {
   }
 
   private async spawnStage(run: FusionRun, stage: "panel" | "judge", params: object): Promise<unknown> {
-    if (this.runStore.getActiveRun()?.cancellationRequested || (run.executionLifetime && run.operationId && this.operationCancelled(run.operationId))) {
+    if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError("Cancellation fenced further stage launches.");
     }
@@ -412,9 +412,13 @@ export class FusionOrchestrator {
     this.runStore.updateRun(run.id, {
       spawnIntent: { stage, requestedAt: Date.now(), ...(run.executionLifetime ? { requestId, requestDigest: digest, params } : {}) },
     });
-    if (run.executionLifetime && run.operationId && this.operationCancelled(run.operationId)) {
+    if (run.operationId && this.operationCancelled(run.operationId)) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError("Cancellation fenced native dispatch.");
+    }
+    if (run.operationId && !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)) {
+      this.runStore.updateRun(run.id, { cancellationRequested: true });
+      throw new FusionArgsError("Cancellation won native dispatch admission.");
     }
     const reply = await this.rpc.spawn({ ...params, ...(run.executionLifetime ? { operationId: requestId, digest } : {}) });
     if (run.executionLifetime && (!isRecord(reply) || reply.operationId !== requestId || reply.digest !== digest || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime))) {
@@ -424,7 +428,12 @@ export class FusionOrchestrator {
   }
 
   private operationCancelled(operationId: string): boolean {
-    return Boolean(this.context && new FusionOperationJournal(join(this.context.cwd, ".pi", "fusion", "operations")).cancelled(operationId));
+    return this.operationJournal().cancelled(operationId);
+  }
+
+  private operationJournal(): FusionOperationJournal {
+    if (!this.context) throw new FusionArgsError("Fusion session context is unavailable.");
+    return new FusionOperationJournal(join(this.context.cwd, ".pi", "fusion", "operations"));
   }
 
   private retainUnresolvedRun(runId: string, error: string): FusionCommandResult {
@@ -447,6 +456,7 @@ export class FusionOrchestrator {
       if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
         return this.runStore.updateRun(run.id, { cancellationRequested: true });
       }
+      if (run.operationId && !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)) return this.runStore.updateRun(run.id, { cancellationRequested: true });
       reply = await this.rpc.spawn({ ...intent.params, operationId: intent.requestId, digest: intent.requestDigest });
     }
     const nativeId = extractSubagentRunId(reply);
@@ -461,6 +471,16 @@ export class FusionOrchestrator {
   }
 
   private async reconcileContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
+    const admission = run.operationId ? this.operationJournal().lookup(run.operationId) : undefined;
+    if (admission?.state === "cancelled" && admission.neverStarted === true) {
+      const proof = { version: 1, kind: "workflow", state: "observed", runId: run.id, dispatchClosed: true, observedAt: Date.now(), children: [] };
+      this.runStore.updateRun(run.id, { observation: admission, processTerminalProof: proof });
+      const report = `Fusion run ${run.id} cancelled before native dispatch admission.`;
+      const cancelled = this.runStore.cancelRun(run.id, { report });
+      this.clearActiveRuntime();
+      this.clearUi();
+      return { status: "cancelled", run: cancelled, report };
+    }
     const intent = run.spawnIntent;
     if (intent?.requestId && intent.requestDigest && this.rpc.cancel) {
       const receipt = await this.rpc.cancel({ operationId: intent.requestId, digest: intent.requestDigest });
@@ -559,7 +579,7 @@ export class FusionOrchestrator {
 
     if (active.executionLifetime) {
       if (active.operationId) {
-        new FusionOperationJournal(join(ctx.cwd, ".pi", "fusion", "operations")).cancel(active.operationId);
+        this.operationJournal().cancel(active.operationId, true);
         this.runStore.refreshDurable();
         active = this.runStore.getActiveRun() ?? active;
       }

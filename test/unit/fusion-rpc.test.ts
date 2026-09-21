@@ -458,10 +458,10 @@ test("Fusion RPC returns typed validation, lookup, availability, and busy errors
     await fixture.request("status-missing", "status", {
       operationId: "missing",
     }),
-    failure("status-missing", "status", {
-      code: "not_found",
-      message: "Fusion run was not found.",
-      details: { operationId: "missing" },
+    success("status-missing", "status", {
+      operationId: "missing",
+      state: "absent",
+      replaySafe: true,
     }),
   );
 

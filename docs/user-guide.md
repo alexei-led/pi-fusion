@@ -202,6 +202,20 @@ means cleanup is still pending. A terminal `workflowTerminalProof` contains
 closed dispatch and recursively verified native child proofs. Status also
 retains the last native observation for phase and activity diagnosis.
 
+Cancellation before native dispatch has a separate durable outcome. Fusion
+atomically arbitrates launch admission against cancellation; only a cancellation
+that wins before dispatch returns `state: "cancelled"`, `neverStarted: true`,
+and the matching `operationId`. The same receipt is available from `status`
+after restart, and delayed starts remain fenced. A claimed or admitted operation
+without this evidence is not proof that no child exists.
+
+When no run, intent, admission, or cancellation exists, `status` returns
+`{ operationId, state: "absent", replaySafe: true }`. This authorizes replay of
+the exact original request under the same immutable identity; a timeout or
+generic lookup failure does not. A caller may send its frozen request hash as
+start parameter `digest`. Fusion echoes it unchanged as `requestDigest` and
+reports its own canonical hash separately as `fusionRequestDigest`.
+
 ### Soft deadline decisions
 
 For a six-member panel with concurrency four, a bounded review budget can be:
