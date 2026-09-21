@@ -266,7 +266,7 @@ export class FusionOrchestrator {
     let run: FusionRun;
     const spawnParams = {
       ...buildPanelSpawnParams(resolved.profile, args.prompt, outputContract, args.timeoutOverrides, args.executionLifetime),
-      ...(args.reviewContext ? { cwd: args.reviewContext.cwd } : {}),
+      ...(args.reviewContext ? { cwd: args.reviewContext.cwd, worktree: false } : {}),
     };
     const runId = preflight?.runId ?? (args.executionLifetime ? randomUUID() : undefined);
     try {
@@ -452,7 +452,7 @@ export class FusionOrchestrator {
     this.runStore.refreshDurable();
     if (this.runStore.getActiveRun()?.id !== run.id) throw new FusionArgsError("Fusion run is no longer active; refusing a stale stage launch.");
     verifyReviewContext(run.reviewContext);
-    params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd } : {}) };
+    params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd, worktree: false } : {}) };
     if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError("Cancellation fenced further stage launches.");
