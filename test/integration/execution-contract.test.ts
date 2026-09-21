@@ -275,6 +275,88 @@ test("lost native spawn reply is adopted across restart without duplicate spawn"
   assert.deepEqual(store.getActiveRun()?.effectiveExecutionLifetime, lifetime);
 });
 
+for (const lateCallback of [false, true]) {
+  test(`shared-store refresh uses the new run profile${lateCallback ? " after late old-run callbacks" : ""}`, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-shared-profile-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const panel = [{ id: "one", agent: "panelist" }, { id: "two", agent: "panelist" }];
+    const profileA: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel, judge: { agent: "judge-a", model: "provider/model-a" } } } };
+    const profileB: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel, judge: { agent: "judge-b", model: "provider/model-b" } } } };
+    class SharedRuntime extends NativeRuntime {
+      override async spawn(params: object): Promise<unknown> {
+        const reply = await super.spawn(params);
+        assert.ok(isRecord(reply) && typeof reply.operationId === "string");
+        this.runId = reply.operationId;
+        this.statusValue = "running";
+        this.proof = undefined;
+        return { ...reply, runId: this.runId };
+      }
+      override payload(): unknown {
+        return { runId: this.runId, state: this.statusValue, ...(this.proof ? { processTerminalProof: this.proof } : {}), results: this.route === "parallel-data"
+          ? [{ agent: "panelist", output: "First", success: true }, { agent: "panelist", output: "Second", success: true }]
+          : [{ agent: "judge-a", output: "# Fusion Report\n\n## Summary\nReviewed.", success: true }] };
+      }
+    }
+    const rpc = new SharedRuntime();
+    let currentConfig = profileA;
+    const first = rpcHarness(t, cwd, rpc, profileA, async () => currentConfig);
+    assert.equal((await first.request("start", { operationId: "profile-first", prompt: "First", executionLifetime: lifetime, digest: "caller-first" })).success, true);
+    const observer = rpcHarness(t, cwd, rpc, profileA);
+    await observer.orchestrator.restore(new FakePi().createContext(cwd));
+    const oldPanelId = rpc.runId;
+    let release!: (reply: unknown) => void;
+    let oldReply: unknown;
+    let oldCompletion: Promise<unknown> | undefined;
+    if (lateCallback) {
+      const lookup = rpc.lookup.bind(rpc);
+      oldReply = await lookup();
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => { entered = resolve; });
+      let delayed = false;
+      rpc.lookup = async () => {
+        if (delayed) return lookup();
+        delayed = true;
+        return new Promise((resolve) => { release = resolve; entered(); });
+      };
+      oldCompletion = observer.orchestrator.handleSubagentComplete({ runId: oldPanelId });
+      await waiting;
+      await observer.orchestrator.handleSubagentComplete({ runId: oldPanelId });
+    }
+    rpc.statusValue = "completed";
+    rpc.proof = proof(rpc);
+    await first.orchestrator.getStatusReport();
+    assert.equal(first.store.getActiveRun()?.phase, "judge");
+    rpc.statusValue = "completed";
+    rpc.proof = proof(rpc);
+    await first.orchestrator.getStatusReport();
+    assert.equal(first.store.getLastRunSummary()?.phase, "done");
+    currentConfig = profileB;
+    assert.equal((await first.request("start", { operationId: "profile-second", prompt: "Second", executionLifetime: lifetime, digest: "caller-second" })).success, true);
+    const secondRun = first.store.getActiveRun();
+    assert.ok(secondRun);
+    if (lateCallback) {
+      release(oldReply);
+      await oldCompletion;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(new FusionRunStore({ directory: join(cwd, "runs") }).getRunById(secondRun.id), secondRun);
+      assert.equal((await observer.orchestrator.handleSubagentComplete({ runId: oldPanelId })).status, "ignored");
+    }
+    rpc.statusValue = "completed";
+    rpc.proof = proof(rpc);
+    await observer.orchestrator.getStatusReport();
+    const judge = rpc.spawns.at(-1);
+    assert.ok(judge && "agent" in judge && "model" in judge && "operationId" in judge && "digest" in judge);
+    assert.equal(judge.agent, "judge-b");
+    assert.equal(judge.model, "provider/model-b");
+    assert.equal(judge.operationId, `${secondRun.id}:judge`);
+    const { operationId: _operationId, digest, ...params } = judge;
+    assert.equal(digest, requestDigest(params));
+    assert.equal(observer.store.getActiveRun()?.spawnIntent?.requestDigest, digest);
+    assert.deepEqual(observer.store.getActiveRun()?.profileSnapshot, secondRun.profileSnapshot);
+    assert.equal(rpc.spawns.length, 4);
+  });
+}
+
 test("wrapper terminal and cancel receipt are not native tree exit", async (t) => {
   const rpc = new NativeRuntime();
   const store = new FusionRunStore();

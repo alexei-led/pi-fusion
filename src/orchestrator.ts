@@ -151,6 +151,7 @@ export class FusionOrchestrator {
   private readonly resolveProfile: typeof resolveFusionProfile;
   private context: FusionCommandContext | undefined;
   private activeProfile: FusionProfile | undefined;
+  private activeProfileRunId: string | undefined;
   private installWarning: string | undefined;
   private configWarning: string | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
@@ -328,6 +329,7 @@ export class FusionOrchestrator {
     // Keep runtime behavior aligned with the exact durable profile that a
     // restart will use, rather than retaining a mutable config object.
     this.activeProfile = profileFromSnapshot(profileSnapshot);
+    this.activeProfileRunId = run.id;
     publishFusionStatus(ctx, run);
 
     try {
@@ -376,6 +378,7 @@ export class FusionOrchestrator {
       );
       return { status: "started", run: updated };
     } catch (error: unknown) {
+      this.runStore.refreshDurable();
       const cancelled = this.runStore.getLastRunSummary();
       if (
         cancelled?.id === run.id &&
@@ -388,6 +391,7 @@ export class FusionOrchestrator {
           report: cancelled.report,
         };
       }
+      if (this.runStore.getActiveRun()?.id !== run.id) return { status: "ignored" };
       if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
       return this.failActiveRun(errorMessage(error));
     }
@@ -396,6 +400,7 @@ export class FusionOrchestrator {
   private adoptPreflightRun(run: FusionRun): FusionCommandResult {
     if (this.runStore.getActiveRun()?.id === run.id && run.profileSnapshot) {
       this.activeProfile = profileFromSnapshot(run.profileSnapshot);
+      this.activeProfileRunId = run.id;
       publishFusionStatus(this.context, run);
       this.ensureReconcileLoop();
     }
@@ -444,6 +449,8 @@ export class FusionOrchestrator {
   }
 
   private async spawnStage(run: FusionRun, stage: "panel" | "judge", params: object): Promise<unknown> {
+    this.runStore.refreshDurable();
+    if (this.runStore.getActiveRun()?.id !== run.id) throw new FusionArgsError("Fusion run is no longer active; refusing a stale stage launch.");
     verifyReviewContext(run.reviewContext);
     params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd } : {}) };
     if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
@@ -596,6 +603,7 @@ export class FusionOrchestrator {
   }
 
   async handleSubagentComplete(payload: unknown): Promise<FusionCommandResult> {
+    this.runStore.refreshDurable();
     const active = this.runStore.getActiveRun();
     if (!active) return { status: "ignored" };
 
@@ -633,7 +641,7 @@ export class FusionOrchestrator {
         this.context,
         active,
         progress,
-        deriveFusionStatusPhase(active, statusPayload, this.activeProfile),
+        deriveFusionStatusPhase(active, statusPayload, this.profileForRun(active)),
       );
     }
     return statusPayload;
@@ -685,6 +693,7 @@ export class FusionOrchestrator {
       return { status: "ignored" };
     }
 
+    const profile = this.profileForRun(active);
     const report = renderCancelledReport({
       run: active,
       method,
@@ -692,14 +701,14 @@ export class FusionOrchestrator {
       panelOutputs: storedPanelOutputs(active),
       failures: storedPanelFailures(active),
       ...withJudgeModel(
-        this.activeProfile
-          ? configuredJudgeModel(this.activeProfile)
+        profile
+          ? configuredJudgeModel(profile)
           : undefined,
       ),
-      ...(this.activeProfile
+      ...(profile
         ? {
-            synthesis: resolveSynthesisMode(this.activeProfile),
-            panel: this.activeProfile.panel,
+            synthesis: resolveSynthesisMode(profile),
+            panel: profile.panel,
           }
         : {}),
     });
@@ -760,6 +769,7 @@ export class FusionOrchestrator {
       // the source of truth for labels, quorum, synthesis, and judge spawning;
       // config edits made while a run is active must not rewrite that run.
       this.activeProfile = profileFromSnapshot(active.profileSnapshot);
+      this.activeProfileRunId = active.id;
       this.configWarning = undefined;
     } else {
       try {
@@ -776,6 +786,7 @@ export class FusionOrchestrator {
         this.activeProfile = active.inlinePanel?.length
           ? buildInlinePanelProfile(base, active.inlinePanel)
           : base;
+        this.activeProfileRunId = active.id;
         this.configWarning = undefined;
       } catch (error: unknown) {
         const message = `Could not restore legacy fusion profile "${active.profileName}": ${errorMessage(error)}`;
@@ -785,7 +796,7 @@ export class FusionOrchestrator {
     }
     const panelSlotError = validateFusionRunPanelSlots(
       active,
-      this.activeProfile?.panel.length ?? 0,
+      this.profileForRun(active)?.panel.length ?? 0,
     );
     if (panelSlotError) {
       this.failActiveRun(panelSlotError);
@@ -836,7 +847,7 @@ export class FusionOrchestrator {
           progress = extractFusionProgressCounts(payload);
           statusDetails = buildFusionStatusDetails(
             active,
-            this.activeProfile,
+            this.profileForRun(active),
             payload,
           );
         } catch (error: unknown) {
@@ -980,6 +991,7 @@ export class FusionOrchestrator {
       if (this.preflightRecoveryEnabled && this.context) await this.resumePreflights(this.context);
       return { status: "ignored" };
     }
+    if (eventPayload !== undefined && extractSubagentRunId(eventPayload) !== activeRunId(active)) return { status: "ignored" };
 
     this.reconciling = true;
     try {
@@ -1034,7 +1046,7 @@ export class FusionOrchestrator {
     active: FusionRun,
     payload: unknown,
   ): Promise<FusionCommandResult> {
-    const profile = this.activeProfile;
+    const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
         "Fusion chain is active, but the profile could not be restored.",
@@ -1188,7 +1200,7 @@ export class FusionOrchestrator {
     active: FusionRun,
     payload: unknown,
   ): Promise<FusionCommandResult> {
-    const profile = this.activeProfile;
+    const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
         "Fusion panel completed, but the active profile was not available.",
@@ -1415,6 +1427,7 @@ export class FusionOrchestrator {
         throw new FusionArgsError(decision.missingRunIdError);
       }
       const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
+      this.runStore.refreshDurable();
       if (this.runStore.getActiveRun()?.id !== run.id) {
         await this.stopOrphanedRun(judgeRunId, "judge");
         return { status: "ignored" };
@@ -1444,6 +1457,8 @@ export class FusionOrchestrator {
       );
       return { status: "started", run: nextRun };
     } catch (error: unknown) {
+      this.runStore.refreshDurable();
+      if (this.runStore.getActiveRun()?.id !== run.id) return { status: "ignored" };
       if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
       return this.failActiveRun(errorMessage(error));
     }
@@ -1501,7 +1516,7 @@ export class FusionOrchestrator {
     // The panel and chain handlers already treat a missing profile as fatal.
     // Without the same guard here the run "succeeds" with a degraded report:
     // blind labels are never restored, and the judge model is dropped.
-    const profile = this.activeProfile;
+    const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
         "Fusion judge completed, but the active profile was not available.",
@@ -1567,7 +1582,7 @@ export class FusionOrchestrator {
         this.context,
         input.run,
         progress,
-        deriveFusionStatusPhase(input.run, statusPayload, this.activeProfile),
+        deriveFusionStatusPhase(input.run, statusPayload, this.profileForRun(input.run)),
       );
     }
 
@@ -1705,7 +1720,6 @@ export class FusionOrchestrator {
   }
 
   private completionInterruption(run: FusionRun): FusionCommandResult | Promise<FusionCommandResult> | undefined {
-    if (!run.executionLifetime) return undefined;
     this.runStore.refreshDurable();
     const active = this.runStore.getActiveRun();
     if (active?.id !== run.id) {
@@ -1714,6 +1728,7 @@ export class FusionOrchestrator {
         ? { status: "cancelled", run: saved, report: saved.report }
         : { status: "ignored" };
     }
+    if (!run.executionLifetime) return undefined;
     if (active.cancellationRequested || (active.operationId && this.operationCancelled(active.operationId))) {
       const cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true });
       return this.reconcileContractCancellation(cancelling);
@@ -1773,28 +1788,35 @@ export class FusionOrchestrator {
   private defaultFailureReport(error: string): string {
     const active = this.runStore.getActiveRun();
     if (!active) return error;
+    const profile = this.profileForRun(active);
     return renderFailureReport({
       run: active,
       error,
       panelOutputs: storedPanelOutputs(active),
       failures: storedPanelFailures(active),
       ...withJudgeModel(
-        this.activeProfile
-          ? configuredJudgeModel(this.activeProfile)
+        profile
+          ? configuredJudgeModel(profile)
           : undefined,
       ),
-      ...(this.activeProfile
+      ...(profile
         ? {
-            synthesis: resolveSynthesisMode(this.activeProfile),
-            panel: this.activeProfile.panel,
+            synthesis: resolveSynthesisMode(profile),
+            panel: profile.panel,
           }
         : {}),
     });
   }
 
+  private profileForRun(run: FusionRun): FusionProfile | undefined {
+    if (run.profileSnapshot) return profileFromSnapshot(run.profileSnapshot);
+    return this.activeProfileRunId === run.id ? this.activeProfile : undefined;
+  }
+
   private clearActiveRuntime(): void {
     this.incompleteTerminalSince.clear();
     this.activeProfile = undefined;
+    this.activeProfileRunId = undefined;
     this.stopReconcileLoop();
     if (this.preflightRecoveryEnabled) this.ensureReconcileLoop();
   }

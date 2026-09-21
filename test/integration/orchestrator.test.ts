@@ -1419,6 +1419,30 @@ test("cancelling while the judge spawns stops the orphaned judge", async () => {
   ]);
 });
 
+for (const stage of ["panel", "judge"] as const) {
+  test(`late legacy ${stage} launch failure cannot fail the successor run`, async (t) => {
+    const fixture = makeFixture();
+    t.after(() => fixture.orchestrator.dispose());
+    if (stage === "judge") {
+      await fixture.orchestrator.startRun("compare", fixture.ctx);
+      fixture.rpc.statusResults.set("chain-1", successfulPanelStatus("chain-1"));
+    }
+    let rejectSpawn!: (error: Error) => void;
+    fixture.rpc.spawnPromise = new Promise((_resolve, reject) => { rejectSpawn = reject; });
+    const completing = stage === "panel"
+      ? fixture.orchestrator.startRun("compare", fixture.ctx)
+      : fixture.orchestrator.handleSubagentComplete({ runId: "chain-1" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const old = fixture.runStore.getActiveRun();
+    assert.ok(old);
+    fixture.runStore.completeRun(old.id, { report: "Old run complete" });
+    const successor = fixture.runStore.startRun({ id: "successor", prompt: "New", profileName: "quality", phase: "panel" });
+    rejectSpawn(new Error("Late old native request failure"));
+    assert.equal((await completing).status, "ignored");
+    assert.deepEqual(fixture.runStore.getActiveRun(), successor);
+  });
+}
+
 test("cancelActiveRun does not throw when completion wins during stop", async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun("compare", fixture.ctx);
