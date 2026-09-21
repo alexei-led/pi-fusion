@@ -9,15 +9,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { isRecord } from "./utils.js";
 
 export interface DurableRunSnapshot {
   fileName: string;
   data: unknown;
+  terminal?: true;
 }
 
 export interface DurableRunSnapshotLoad {
   snapshots: DurableRunSnapshot[];
   errors: string[];
+  admissionTail?: string;
 }
 
 /**
@@ -60,14 +63,76 @@ export class DurableRunSnapshotStore {
     for (const fileName of files) {
       try {
         const raw = readFileSync(join(this.directory, fileName), "utf8");
-        snapshots.push({ fileName, data: JSON.parse(raw) as unknown });
+        const data: unknown = JSON.parse(raw);
+        if (!isRecord(data) || typeof data.id !== "string" || durableSnapshotFileName(data.id) !== fileName) throw new Error("Fusion snapshot filename does not match its run identity.");
+        snapshots.push({ fileName, data });
       } catch (error: unknown) {
         errors.push(
           `Could not read durable fusion run snapshot ${fileName}: ${errorMessage(error)}`,
         );
       }
     }
-    return { snapshots, errors };
+    return this.loadAdmission(snapshots, errors);
+  }
+
+  admit(key: string, data: unknown, predecessor?: string): void {
+    if (predecessor && !this.readTerminal(predecessor)) throw new Error("Previous Fusion admission has no terminal receipt.");
+    publishExclusive(join(this.directory, ".admissions"), slotName(predecessor), { version: 1, key, ...(predecessor ? { predecessor } : {}), data });
+  }
+
+  finish(key: string, data: unknown): unknown {
+    try { publishExclusive(join(this.directory, ".terminals"), durableSnapshotFileName(key), { version: 1, key, data }); }
+    catch (error: unknown) { if (!isExists(error)) throw error; }
+    const terminal = this.readTerminal(key);
+    if (!terminal) throw new Error("Fusion terminal receipt disappeared.");
+    return terminal;
+  }
+
+  private readTerminal(key: string): unknown {
+    try {
+      const record: unknown = JSON.parse(readFileSync(join(this.directory, ".terminals", durableSnapshotFileName(key)), "utf8"));
+      if (!isRecord(record) || record.version !== 1 || record.key !== key || !isRecord(record.data) || record.data.id !== key || !terminalPhase(record.data.phase)) throw new Error("Invalid Fusion terminal receipt.");
+      return record.data;
+    } catch (error: unknown) { if (isMissing(error)) return undefined; throw error; }
+  }
+
+  private loadAdmission(snapshots: DurableRunSnapshot[], errors: string[]): DurableRunSnapshotLoad {
+    let admissionTail: string | undefined;
+    try {
+      const merged = new Map(snapshots.map((snapshot) => [snapshot.fileName, snapshot]));
+      const terminalFiles = jsonFiles(join(this.directory, ".terminals"));
+      for (const fileName of terminalFiles) {
+        const record: unknown = JSON.parse(readFileSync(join(this.directory, ".terminals", fileName), "utf8"));
+        if (!isRecord(record) || typeof record.key !== "string" || durableSnapshotFileName(record.key) !== fileName) throw new Error("Invalid Fusion terminal receipt identity.");
+        merged.set(fileName, { fileName, data: this.readTerminal(record.key), terminal: true });
+      }
+      const slots = jsonFiles(join(this.directory, ".admissions"));
+      const seen = new Set<string>();
+      let visited = 0;
+      while (slots.includes(slotName(admissionTail))) {
+        const fileName = slotName(admissionTail);
+        const record: unknown = JSON.parse(readFileSync(join(this.directory, ".admissions", fileName), "utf8"));
+        if (!isRecord(record) || record.version !== 1 || typeof record.key !== "string" || !record.key || record.predecessor !== admissionTail || !isRecord(record.data) || record.data.id !== record.key || seen.has(record.key)) throw new Error("Invalid Fusion admission chain.");
+        if (admissionTail) {
+          const terminal = this.readTerminal(admissionTail);
+          if (!terminal) throw new Error("Fusion successor has no predecessor terminal receipt.");
+          const terminalName = durableSnapshotFileName(admissionTail);
+          merged.set(terminalName, { fileName: terminalName, data: terminal, terminal: true });
+        }
+        seen.add(record.key);
+        visited += 1;
+        admissionTail = record.key;
+        const snapshotName = durableSnapshotFileName(record.key);
+        const terminal = this.readTerminal(record.key);
+        if (terminal) merged.set(snapshotName, { fileName: snapshotName, data: terminal, terminal: true });
+        else if (!merged.has(snapshotName)) merged.set(snapshotName, { fileName: snapshotName, data: record.data });
+      }
+      if (visited !== slots.length) throw new Error("Unreachable Fusion admission record.");
+      snapshots = Array.from(merged.values());
+    } catch (error: unknown) {
+      errors.push(`Could not recover Fusion admission: ${errorMessage(error)}`);
+    }
+    return { snapshots, errors, ...(admissionTail ? { admissionTail } : {}) };
   }
 
   write(key: string, data: unknown, exclusive = false): void {
@@ -102,6 +167,38 @@ export class DurableRunSnapshotStore {
       throw error;
     }
   }
+}
+
+function slotName(predecessor?: string): string {
+  return predecessor ? `after-${durableSnapshotFileName(predecessor)}` : "root.json";
+}
+
+function terminalPhase(value: unknown): boolean {
+  return value === "done" || value === "failed" || value === "cancelled";
+}
+
+function jsonFiles(directory: string): string[] {
+  try { return readdirSync(directory).filter((name) => name.endsWith(".json")); }
+  catch (error: unknown) { if (isMissing(error)) return []; throw error; }
+}
+
+function publishExclusive(directory: string, fileName: string, value: unknown): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const temporary = join(directory, `.${fileName}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600, flush: true });
+    linkSync(temporary, join(directory, fileName));
+  } finally {
+    try { unlinkSync(temporary); } catch { /* Temporary files never admit a run. */ }
+  }
+}
+
+function isMissing(error: unknown): boolean {
+  return isRecord(error) && error.code === "ENOENT";
+}
+
+function isExists(error: unknown): boolean {
+  return isRecord(error) && error.code === "EEXIST";
 }
 
 export function durableSnapshotFileName(key: string): string {

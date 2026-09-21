@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -71,6 +72,79 @@ function proof(rpc: NativeRuntime) {
     kernelBinding: binding,
     kernelProof: { status: "retired", binding, identity, proof: { kind: "darwin-coalition-retired", ...binding, identity, observedAt: "2026-09-21T00:00:00.000Z" } },
   };
+}
+
+function admissionProcess(t: TestContext, cwd: string, operationId: string, mode: string, fault = "none") {
+  const child = spawn(process.execPath, ["--import", "jiti/register", fileURLToPath(new URL("../support/shared-admission-worker.ts", import.meta.url)), cwd, operationId, mode, fault, JSON.stringify(capabilities)], { stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  assert.ok(child.stderr);
+  let stderr = "";
+  child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
+  t.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  const ready = new Promise<void>((resolve, reject) => {
+    child.once("message", () => resolve());
+    child.once("error", reject);
+    child.once("exit", (code) => { if (code !== 0 && code !== 78) reject(new Error(`Admission worker exited ${code}: ${stderr}`)); });
+  });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0 || code === 78 ? resolve(code) : reject(new Error(`Admission worker exited ${code}: ${stderr}`)));
+  });
+  return { ready, exited };
+}
+
+for (const mode of ["rpc", "direct"] as const) {
+  test(`independent ${mode} processes arbitrate one active run and keep the loser replayable`, { timeout: 20_000 }, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-shared-admission-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const workers = ["first", "second"].map((id) => admissionProcess(t, cwd, id, mode));
+    await Promise.all(workers.map((worker) => worker.ready));
+    await writeFile(join(cwd, "release"), "release");
+    assert.deepEqual(await Promise.all(workers.map((worker) => worker.exited)), [0, 0]);
+    const starts: unknown[] = await Promise.all(["first", "second"].map(async (id) => JSON.parse(await readFile(join(cwd, `${id}.result.json`), "utf8")) as unknown));
+    assert.equal(starts.filter((reply) => isRecord(reply) && (reply.success === true || reply.status === "started")).length, 1);
+    const launches = (await readFile(join(cwd, "launches.jsonl"), "utf8")).trim().split("\n");
+    assert.equal(launches.length, 1);
+    const params: unknown = JSON.parse(launches[0]!);
+    assert.ok(isRecord(params));
+    const rpc = new NativeRuntime();
+    rpc.identity = { operationId: params.operationId, digest: params.digest };
+    rpc.statusValue = "completed";
+    rpc.proof = proof(rpc);
+    const restored = rpcHarness(t, cwd, rpc);
+    const winner = restored.store.getActiveRun();
+    assert.ok(winner);
+    const cancelled = responseData(await restored.request("cancel", winner.operationId ? { operationId: winner.operationId } : { runId: winner.id }));
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(new FusionRunStore({ directory: join(cwd, "runs") }).getRunById(winner.id)?.phase, "cancelled");
+    rpc.statusValue = "running";
+    rpc.proof = undefined;
+    const loser = winner.operationId === "first" ? "second" : "first";
+    if (mode === "rpc") assert.equal((await restored.request("start", { operationId: loser, prompt: "Concurrent", digest: `caller-${loser}`, executionLifetime: lifetime })).success, true);
+    else assert.equal((await restored.orchestrator.startRun({ prompt: "Concurrent", executionLifetime: lifetime }, new FakePi().createContext(cwd))).status, "started");
+    assert.equal(rpc.spawns.length, 1);
+    assert.notEqual(restored.store.getActiveRun()?.id, winner.id);
+    assert.equal(restored.store.getRunById(winner.id)?.phase, "cancelled");
+  });
+
+  test(`${mode} admission survives process death before the ordinary run snapshot`, { timeout: 20_000 }, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-admission-crash-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const worker = admissionProcess(t, cwd, "crashed", mode, "after-admission");
+    await worker.ready;
+    await writeFile(join(cwd, "release"), "release");
+    assert.equal(await worker.exited, 78);
+    const rpc = new NativeRuntime();
+    const restored = rpcHarness(t, cwd, rpc);
+    const run = restored.store.getActiveRun();
+    assert.ok(run?.spawnIntent?.requestId);
+    const lookup = rpc.lookup.bind(rpc);
+    rpc.lookup = async () => rpc.identity ? lookup() : { state: "absent", operationId: run.spawnIntent?.requestId };
+    await restored.orchestrator.restore(new FakePi().createContext(cwd));
+    assert.equal(restored.store.getActiveRun()?.id, run.id);
+    assert.equal(rpc.spawns.length, 1);
+    assert.equal(rpc.identity?.operationId, run.spawnIntent.requestId);
+    assert.equal(rpc.identity?.digest, run.spawnIntent.requestDigest);
+  });
 }
 
 function processProof() {

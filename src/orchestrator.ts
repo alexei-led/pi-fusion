@@ -535,7 +535,7 @@ export class FusionOrchestrator {
       const cancelled = this.runStore.cancelRun(run.id, { report });
       this.clearActiveRuntime();
       this.clearUi();
-      return { status: "cancelled", run: cancelled, report };
+      return terminalResult(cancelled, report);
     }
     const intent = run.spawnIntent;
     if (intent?.requestId && intent.requestDigest && this.rpc.cancel) {
@@ -548,7 +548,7 @@ export class FusionOrchestrator {
         const cancelled = this.runStore.cancelRun(run.id, { report });
         this.clearActiveRuntime();
         this.clearUi();
-        return { status: "cancelled", run: cancelled, report };
+        return terminalResult(cancelled, report);
       }
     }
     const target = hasUnresolvedSpawnIntent(run) ? undefined : activeRunId(run);
@@ -562,7 +562,7 @@ export class FusionOrchestrator {
     const cancelled = this.runStore.cancelRun(run.id, { report });
     this.clearActiveRuntime();
     this.clearUi();
-    return { status: "cancelled", run: cancelled, report };
+    return terminalResult(cancelled, report);
   }
 
   private async nativeStatus(run: FusionRun, target: string): Promise<unknown> {
@@ -714,7 +714,7 @@ export class FusionOrchestrator {
     this.clearActiveRuntime();
     this.clearUi();
     this.notify(ctx, `Fusion run ${cancelled.id} cancelled.`, "info");
-    return { status: "cancelled", run: cancelled, report };
+    return terminalResult(cancelled, report);
   }
 
   async restore(
@@ -1732,10 +1732,10 @@ export class FusionOrchestrator {
       ...(active.judgeRunId ? { judgeRunId: active.judgeRunId } : {}),
       report,
     });
-    this.postMessage("fusion-report", report, { runId: done.id });
+    this.postMessage("fusion-report", done.report ?? report, { runId: done.id });
     this.clearActiveRuntime();
     this.clearUi();
-    return { status: "done", run: done, report };
+    return terminalResult(done, report);
   }
 
   private failActiveRun(
@@ -1763,11 +1763,11 @@ export class FusionOrchestrator {
       if (!(storeError instanceof FusionRunStoreError)) throw storeError;
       return { status: "failed", error: errorMessage(storeError), report };
     }
-    this.postMessage("fusion-report", report, { runId: failed.id });
+    this.postMessage("fusion-report", failed.report ?? report, { runId: failed.id });
     this.clearActiveRuntime();
     this.clearUi();
     this.notify(this.context, `Fusion run ${failed.id} failed.`, "error");
-    return { status: "failed", error, report };
+    return terminalResult(failed, report);
   }
 
   private defaultFailureReport(error: string): string {
@@ -2733,6 +2733,12 @@ function firstNonBlankString(
     if (trimmed) return trimmed;
   }
   return undefined;
+}
+
+function terminalResult(run: FusionRun, fallbackReport: string): FusionCommandResult {
+  const report = run.report ?? fallbackReport;
+  if (run.phase === "done" || run.phase === "cancelled") return { status: run.phase, run, report };
+  return { status: "failed", error: run.error ?? "Fusion run failed.", report };
 }
 
 function errorMessage(error: unknown): string {

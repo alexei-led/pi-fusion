@@ -143,8 +143,8 @@ export interface FusionRunStoreOptions {
 }
 
 export class FusionRunStoreError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "FusionRunStoreError";
   }
 }
@@ -160,7 +160,10 @@ export class FusionRunStore {
   private durableStore: DurableRunSnapshotStore | undefined;
   private durableRunsById = new Map<string, FusionRun>();
   private durableRestoreError: string | undefined;
+  private admissionTail: string | undefined;
+  private readonly terminalRunIds = new Set<string>();
   private restoreError: string | undefined;
+  private activeSelectionError: string | undefined;
 
   constructor(options: FusionRunStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -183,6 +186,8 @@ export class FusionRunStore {
     this.durableRunsById.clear();
     this.durableRestoreError = undefined;
     const loaded = this.durableStore.load();
+    this.admissionTail = loaded.admissionTail;
+    this.terminalRunIds.clear();
     if (loaded.errors.length > 0) {
       this.durableRestoreError = invalidDurableLoadMessage(loaded.errors[0]);
     }
@@ -192,6 +197,7 @@ export class FusionRunStore {
         continue;
       }
       this.durableRunsById.set(snapshot.data.id, cloneRun(snapshot.data));
+      if (snapshot.terminal) this.terminalRunIds.add(snapshot.data.id);
     }
     this.resetFromDurableRuns();
   }
@@ -209,6 +215,7 @@ export class FusionRunStore {
     if (!this.durableStore) return;
     const priorDurableError = this.durableRestoreError;
     const loaded = this.durableStore.load();
+    this.admissionTail = loaded.admissionTail;
     const next = new Map<string, FusionRun>();
     let loadError =
       loaded.errors.length > 0
@@ -222,7 +229,8 @@ export class FusionRunStore {
       const previous =
         this.runsById.get(snapshot.data.id) ??
         this.durableRunsById.get(snapshot.data.id);
-      if (!previous || snapshot.data.updatedAt >= previous.updatedAt) {
+      if (snapshot.terminal) this.terminalRunIds.add(snapshot.data.id);
+      if (snapshot.terminal || !previous || snapshot.data.updatedAt >= previous.updatedAt) {
         next.set(snapshot.data.id, cloneRun(snapshot.data));
       }
     }
@@ -272,6 +280,7 @@ export class FusionRunStore {
   }
 
   startRun(input: FusionRunStartInput): FusionRun {
+    this.refreshDurable();
     const restoreError = this.getRestoreError();
     if (restoreError) {
       throw new FusionRunStoreError(
@@ -350,7 +359,15 @@ export class FusionRunStore {
       createdAt,
       updatedAt: createdAt,
     };
-    this.persistRun(run, run, true);
+    try {
+      this.durableStore?.admit(run.id, cloneRun(run), this.admissionTail);
+      this.persistRun(run, run, true);
+    } catch (error: unknown) {
+      this.refreshDurable();
+      const active = this.getActiveRun();
+      if (active && active.id !== run.id) throw new FusionRunStoreError(`Fusion run ${active.id} won shared admission.`, { cause: error });
+      throw error;
+    }
     this.activeRun = run;
     this.rememberRun(run);
     return cloneRun(run);
@@ -383,12 +400,18 @@ export class FusionRunStore {
     patch: FusionRunTransitionPatch = {},
   ): FusionRun {
     const active = this.requireActiveRun(id);
-    const finished = applyTransitionPatch(
+    let finished = applyTransitionPatch(
       active,
       phase,
       patch,
       patch.updatedAt ?? this.now(),
     );
+    if (this.durableStore) {
+      const terminal = this.durableStore.finish(id, cloneRun(finished));
+      if (!isFusionRunState(terminal) || !isTerminalPhase(terminal.phase)) throw new FusionRunStoreError("Invalid immutable Fusion terminal state.");
+      finished = { ...terminal, phase: terminal.phase };
+      this.terminalRunIds.add(id);
+    }
     const summary = toRunSummary(finished);
     this.persistRun(finished, summary);
     this.activeRun = undefined;
@@ -428,11 +451,7 @@ export class FusionRunStore {
 
     const states = readFusionRunStates(entries);
     for (const state of states) this.mergeRestoredRun(state);
-    const latestState = latestRun(Array.from(this.runsById.values()));
-    this.activeRun =
-      latestState && !isTerminalPhase(latestState.phase)
-        ? cloneRun(latestState)
-        : undefined;
+    this.selectActiveRun();
     const summary = latestRunSummary(Array.from(this.runsById.values()));
     this.lastRunSummary = summary;
     return summary ? cloneRunSummary(summary) : undefined;
@@ -488,13 +507,12 @@ export class FusionRunStore {
     for (const run of this.durableRunsById.values()) {
       this.rememberRun(run);
     }
-    const latest = latestRun(Array.from(this.runsById.values()));
-    this.activeRun =
-      latest && !isTerminalPhase(latest.phase) ? cloneRun(latest) : undefined;
+    this.selectActiveRun();
     this.lastRunSummary = latestRunSummary(Array.from(this.runsById.values()));
   }
 
   private mergeRestoredRun(run: FusionRun): void {
+    if (this.terminalRunIds.has(run.id)) return;
     const existing = this.runsById.get(run.id);
     const isDurableBaseline = this.durableRunsById.has(run.id);
     if (
@@ -504,6 +522,25 @@ export class FusionRunStore {
     ) {
       this.rememberRun(run);
     }
+  }
+
+  private selectActiveRun(): void {
+    if (this.restoreError === this.activeSelectionError) this.restoreError = undefined;
+    this.activeSelectionError = undefined;
+    const runs = Array.from(this.runsById.values());
+    if (!this.durableStore) {
+      const latest = latestRun(runs);
+      this.activeRun = latest && !isTerminalPhase(latest.phase) ? cloneRun(latest) : undefined;
+      return;
+    }
+    const active = runs.filter((run) => !isTerminalPhase(run.phase));
+    if (active.length > 1) {
+      this.activeSelectionError = `Multiple unfinished Fusion runs require recovery: ${active.map((run) => run.id).join(", ")}.`;
+      this.restoreError = this.activeSelectionError;
+      this.activeRun = undefined;
+      return;
+    }
+    this.activeRun = active[0] ? cloneRun(active[0]) : undefined;
   }
 
   private requireActiveRun(id: string): FusionRun {

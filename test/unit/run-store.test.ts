@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DurableRunSnapshotStore, durableSnapshotFileName } from "../../src/durable-run-store.js";
 import {
   FUSION_RUN_ENTRY_TYPE,
   FusionRunStore,
@@ -40,10 +41,83 @@ test("stale constructors cannot overwrite an atomically published run identity",
   const stale = new FusionRunStore({ directory });
   const run = first.startRun({ id: "same-run", prompt: "Frozen", profileName: "quality" });
   first.updateRun(run.id, { cancellationRequested: true });
-  assert.throws(() => stale.startRun({ id: "same-run", prompt: "Changed", profileName: "changed" }), { code: "EEXIST" });
+  assert.throws(() => stale.startRun({ id: "same-run", prompt: "Changed", profileName: "changed" }), /already active/);
   const saved = new FusionRunStore({ directory }).getRunById(run.id);
   assert.equal(saved?.prompt, "Frozen");
   assert.equal(saved?.cancellationRequested, true);
+});
+
+test("terminal admission survives snapshot failure and fences stale writers and sessions", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-terminal-admission-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const first = new FusionRunStore({ directory, now: () => 10 });
+  const run = first.startRun({ id: "first", prompt: "Frozen", profileName: "quality" });
+  const stale = new FusionRunStore({ directory, now: () => 100 });
+  const writer = new DurableRunSnapshotStore(directory);
+  const write = writer.write.bind(writer);
+  const fault = t.mock.method(DurableRunSnapshotStore.prototype, "write", (key: string, data: unknown, exclusive?: boolean) => {
+    if (key === run.id) throw new Error("crash after terminal admission");
+    write(key, data, exclusive);
+  });
+  assert.throws(() => first.cancelRun(run.id, { report: "cancelled" }), /crash after terminal/);
+  fault.mock.restore();
+  stale.updateRun(run.id, { panelRunId: "stale-worker", updatedAt: 999 });
+  const restarted = new FusionRunStore({ directory });
+  assert.equal(restarted.getActiveRun(), undefined);
+  assert.equal(restarted.getRunById(run.id)?.phase, "cancelled");
+  restarted.restoreFromEntries([{ type: "custom", customType: FUSION_RUN_ENTRY_TYPE, data: { ...run, updatedAt: 1000 } }]);
+  assert.equal(restarted.getActiveRun(), undefined);
+  assert.equal(restarted.getRunById(run.id)?.phase, "cancelled");
+  const next = restarted.startRun({ id: "next", prompt: "Next", profileName: "quality" });
+  assert.equal(new FusionRunStore({ directory }).getActiveRun()?.id, next.id);
+  const losingTerminal = stale.completeRun(run.id, { report: "stale success" });
+  assert.equal(losingTerminal.phase, "cancelled");
+  assert.equal(losingTerminal.report, "cancelled");
+  assert.equal(new FusionRunStore({ directory }).getActiveRun()?.id, next.id);
+});
+
+test("an older unfinished legacy snapshot is never hidden by a newer terminal run", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-legacy-active-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const writer = new DurableRunSnapshotStore(directory);
+  writer.write("older", { id: "older", prompt: "Old", profileName: "quality", phase: "panel", createdAt: 1, updatedAt: 1 });
+  writer.write("newer", { id: "newer", prompt: "New", profileName: "quality", phase: "done", createdAt: 2, updatedAt: 2 });
+  const store = new FusionRunStore({ directory });
+  assert.equal(store.getActiveRun()?.id, "older");
+  assert.throws(() => store.startRun({ prompt: "Another", profileName: "quality" }), /already active/);
+  store.cancelRun("older", { report: "Cancelled old run" });
+  assert.equal(new FusionRunStore({ directory }).getRunById("older")?.phase, "cancelled");
+});
+
+test("an aliased active snapshot cannot override an immutable terminal identity", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-aliased-snapshot-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const store = new FusionRunStore({ directory });
+  const run = store.startRun({ id: "run", prompt: "Review", profileName: "quality" });
+  store.cancelRun(run.id, { report: "cancelled" });
+  writeFileSync(join(directory, "zzz.json"), JSON.stringify({ ...run, updatedAt: run.updatedAt + 1_000 }));
+  const restored = new FusionRunStore({ directory });
+  assert.equal(restored.getActiveRun(), undefined);
+  assert.match(restored.getRestoreError() ?? "", /filename does not match/);
+});
+
+test("unknown unfinished runs and malformed admission chains fail closed", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-invalid-admission-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const store = new FusionRunStore({ directory });
+  store.startRun({ id: "admitted", prompt: "One", profileName: "quality" });
+  const writer = new DurableRunSnapshotStore(directory);
+  writer.write("unknown", { id: "unknown", prompt: "Other", profileName: "quality", phase: "panel", createdAt: 2, updatedAt: 2 });
+  const conflicted = new FusionRunStore({ directory });
+  assert.match(conflicted.getRestoreError() ?? "", /Multiple unfinished/);
+  assert.equal(conflicted.getRunById("unknown")?.phase, "panel");
+  assert.throws(() => conflicted.startRun({ prompt: "Another", profileName: "quality" }), /restore is blocked/);
+  writer.finish("unknown", { id: "unknown", prompt: "Other", profileName: "quality", phase: "cancelled", createdAt: 2, updatedAt: 3 });
+  conflicted.refreshDurable();
+  assert.equal(conflicted.getRestoreError(), undefined);
+  assert.equal(conflicted.getActiveRun()?.id, "admitted");
+  writeFileSync(join(directory, ".admissions", `after-${durableSnapshotFileName("unknown")}`), JSON.stringify({ version: 1, key: "orphan", predecessor: "unknown", data: { id: "orphan" } }));
+  assert.match(new FusionRunStore({ directory }).getRestoreError() ?? "", /Unreachable Fusion admission/);
 });
 
 test("FusionRunStore leaves no in-memory run after initial persistence fails", () => {
