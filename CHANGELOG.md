@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+- Fence concurrent durable snapshot writes with a revision chain, so a delayed recovery lookup can no longer overwrite a newer judge admission.
+- Compact revision history to one tip per run; a successor chained from the compacted revision still proves the write landed.
+- Cover delayed panel recovery across processes at the lookup, spawn, and refreshed-lookup boundaries.
+
 ## 0.9.0
 
 - Refill available panel slots immediately rather than waiting for the slowest member of a batch. Agreement-stopping panels retain quorum-sized rounds.
