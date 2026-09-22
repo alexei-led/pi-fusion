@@ -53,12 +53,12 @@ export function registerFusionCommands(
       const decision = args
         .trim()
         .match(/^(continue|finish)\s+(\S+)\s+([1-9]\d*)$/);
-      const [, action, panelist, index] = decision ?? [];
-      if (action && panelist && index && handler.resolvePanelDeadline) {
+      const [, action, runId, panelistNumber] = decision ?? [];
+      if (action && runId && panelistNumber && handler.resolvePanelDeadline) {
         try {
           await handler.resolvePanelDeadline(
-            panelist,
-            Number(index),
+            runId,
+            Number(panelistNumber),
             action === 'continue' ? 'continue' : 'finish',
           );
           ctx.ui.notify(

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { onTestFinished, type TestContext } from 'vitest';
+import type { TestContext } from 'vitest';
 import { getFusionConfigTemplate } from '../../src/config.js';
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
@@ -242,9 +242,9 @@ export class FakeUi {
   }
 }
 
-export async function createProjectDir(_t: TestContext): Promise<string> {
+export async function createProjectDir(t: TestContext): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-fusion-test-'));
-  onTestFinished(async () => {
+  t.onTestFinished(async () => {
     await rm(cwd, { recursive: true, force: true });
   });
   const configDir = join(cwd, '.pi');

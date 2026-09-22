@@ -11,9 +11,11 @@
 node_modules/
 coverage/
 dist/
-.eslintcache
 *.log
 *.tgz
 .DS_Store
 docs/posts/
 pkg/
+
+# revmux review rounds
+.revmux/
