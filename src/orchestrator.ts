@@ -44,6 +44,7 @@ import {
 import {
   FusionRunStore,
   FusionRunStoreError,
+  FusionRunConflictError,
   validateFusionRunPanelSlots,
 } from "./run-store.js";
 import {
@@ -378,6 +379,7 @@ export class FusionOrchestrator {
       );
       return { status: "started", run: updated };
     } catch (error: unknown) {
+      if (error instanceof FusionRunConflictError) return this.reconcileConflict(run.id);
       this.runStore.refreshDurable();
       const cancelled = this.runStore.getLastRunSummary();
       if (
@@ -449,8 +451,7 @@ export class FusionOrchestrator {
   }
 
   private async spawnStage(run: FusionRun, stage: "panel" | "judge", params: object): Promise<unknown> {
-    this.runStore.refreshDurable();
-    if (this.runStore.getActiveRun()?.id !== run.id) throw new FusionArgsError("Fusion run is no longer active; refusing a stale stage launch.");
+    this.assertCurrentStage(run);
     verifyReviewContext(run.reviewContext);
     params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd, worktree: false } : {}) };
     if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
@@ -488,7 +489,9 @@ export class FusionOrchestrator {
 
   private retainUnresolvedRun(runId: string, error: string): FusionCommandResult {
     if (this.runStore.getActiveRun()?.id !== runId) return { status: "ignored" };
-    const run = this.runStore.updateRun(runId, { error });
+    let run: FusionRun;
+    try { run = this.runStore.updateRun(runId, { error }); }
+    catch (conflict: unknown) { if (conflict instanceof FusionRunConflictError) return this.reconcileConflict(runId); throw conflict; }
     this.installWarning = error;
     this.ensureReconcileLoop();
     return { status: "started", run };
@@ -498,6 +501,7 @@ export class FusionOrchestrator {
     const intent = run.spawnIntent;
     if (!intent?.requestId || !intent.requestDigest || !this.rpc.lookup) return undefined;
     const lookup = await this.rpc.lookup({ operationId: intent.requestId, digest: intent.requestDigest });
+    this.assertCurrentStage(run);
     if (!isRecord(lookup)) return undefined;
     if (lookup.operationId !== intent.requestId || (lookup.state !== "absent" && lookup.digest !== intent.requestDigest)) return undefined;
     let reply: unknown = lookup;
@@ -511,6 +515,7 @@ export class FusionOrchestrator {
       }
       if (run.operationId && !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)) return this.runStore.updateRun(run.id, { cancellationRequested: true });
       reply = await this.rpc.spawn({ ...intent.params, operationId: intent.requestId, digest: intent.requestDigest });
+      this.assertCurrentStage(run);
     }
     const nativeId = extractSubagentRunId(reply);
     if (!nativeId || !isRecord(reply) || reply.operationId !== intent.requestId || reply.digest !== intent.requestDigest || !run.executionLifetime || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) || !verifiesExecutionOwnership(reply, intent.params)) return undefined;
@@ -547,6 +552,7 @@ export class FusionOrchestrator {
     const intent = run.spawnIntent;
     if (intent?.requestId && intent.requestDigest && this.rpc.cancel) {
       const receipt = await this.rpc.cancel({ operationId: intent.requestId, digest: intent.requestDigest });
+      this.assertCurrentStage(run);
       if (isRecord(receipt) && receipt.neverStarted === true && receipt.state === "cancelled" &&
         receipt.operationId === intent.requestId && receipt.digest === intent.requestDigest) {
         const proof = { version: 1, kind: "workflow", state: "observed", runId: typeof receipt.runId === "string" ? receipt.runId : intent.requestId, dispatchClosed: true, observedAt: Date.now(), children: [] };
@@ -561,6 +567,7 @@ export class FusionOrchestrator {
     const target = hasUnresolvedSpawnIntent(run) ? undefined : activeRunId(run);
     if (!target) return { status: "started", run };
     const payload = await this.nativeStatus(run, target);
+    this.assertCurrentStage(run);
     const proof = this.stageTerminalProof(run, payload, target);
     this.persistNativeObservation(run, payload);
     if (!proof) return { status: "started", run };
@@ -664,10 +671,20 @@ export class FusionOrchestrator {
         this.runStore.refreshDurable();
         active = this.runStore.getActiveRun() ?? active;
       }
-      const cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true });
+      let cancelling: FusionRun;
+      for (;;) {
+        this.runStore.refreshDurable();
+        const current = this.runStore.getActiveRun();
+        if (current?.id !== active.id) return this.reconcileConflict(active.id);
+        try { cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true }); break; }
+        catch (error: unknown) { if (!(error instanceof FusionRunConflictError)) throw error; }
+      }
       this.ensureReconcileLoop();
       try { return await this.reconcileContractCancellation(cancelling); }
-      catch (error: unknown) { return this.retainUnresolvedRun(active.id, `Cancellation pending: ${errorMessage(error)}`); }
+      catch (error: unknown) {
+        if (error instanceof FusionRunConflictError) return this.reconcileConflict(active.id);
+        return this.retainUnresolvedRun(active.id, `Cancellation pending: ${errorMessage(error)}`);
+      }
     }
 
     const targetRunId = activeRunId(active);
@@ -689,7 +706,8 @@ export class FusionOrchestrator {
       }
     }
 
-    if (this.runStore.getActiveRun()?.id !== active.id) {
+    this.runStore.refreshDurable();
+    if (!sameStage(active, this.runStore.getActiveRun())) {
       return { status: "ignored" };
     }
 
@@ -887,6 +905,7 @@ export class FusionOrchestrator {
     const state = active.panelDeadlines?.find((item) => item.index === panelist - 1);
     if (!state || state.status !== "pending") throw new FusionArgsError("No pending deadline decision for that panelist.");
     const payload = await this.rpc.status({ id: active.panelRunId });
+    this.assertCurrentStage(active);
     const matches = findStepsArray(payload).filter((step) => isRecord(step) &&
       step.runId === state.childRunId && (step.status ?? step.state) === "running" &&
       (step.workflowKey ?? step.key ?? step.agent) === `panel-${panelist}`);
@@ -916,7 +935,9 @@ export class FusionOrchestrator {
       if (!this.rpc.steer) throw new Error("pi-subagents steer RPC is unavailable.");
       return await this.rpc.steer({ id: state.childRunId, message: deadlineSteerMessage(state), mode: "auto" });
     } catch (error: unknown) {
+      if (error instanceof FusionRunConflictError) throw error;
       const message = `Could not send deadline guidance to panel-${state.index + 1}: ${errorMessage(error)}`;
+      this.runStore.refreshDurable();
       const latest = this.runStore.getActiveRun();
       if (latest?.id === runId && latest.panelDeadlines?.find((item) => item.index === state.index)?.status === state.status) {
         this.savePanelDeadline(runId, { ...state, deliveryError: message });
@@ -929,7 +950,8 @@ export class FusionOrchestrator {
   private async handlePanelDeadlines(active: FusionRun, statusPayload: unknown): Promise<void> {
     const actions = planPanelDeadlines(this.runStore.getActiveRun() ?? active, findStepsArray(statusPayload), Date.now());
     for (const action of actions) {
-      if (this.runStore.getActiveRun()?.id !== active.id) return;
+      this.assertCurrentStage(active);
+      if (requestDigest(this.runStore.getActiveRun()?.panelDeadlines?.find((item) => item.index === action.state.index)) !== requestDigest(active.panelDeadlines?.find((item) => item.index === action.state.index))) continue;
       this.savePanelDeadline(active.id, action.state);
       if (action.kind === "ask") {
         const panelist = action.state.index + 1;
@@ -947,7 +969,8 @@ export class FusionOrchestrator {
       }
       try {
         await this.steerPanelDeadline(active.id, action.state);
-      } catch {
+      } catch (error: unknown) {
+        if (error instanceof FusionRunConflictError) throw error;
         // The recorded delivery error is visible; never revive a child or reset its budget.
       }
     }
@@ -1028,6 +1051,9 @@ export class FusionOrchestrator {
         return await this.handleJudgeComplete(active, eventPayload);
       }
       return { status: "ignored" };
+    } catch (error: unknown) {
+      if (error instanceof FusionRunConflictError) return { status: "ignored" };
+      throw error;
     } finally {
       this.reconciling = false;
       const pendingPayload = this.pendingCompletionPayload;
@@ -1229,7 +1255,11 @@ export class FusionOrchestrator {
     const panelIsTerminal =
       snapshot.resultIsTerminal ||
       isTerminalSubagentState(extractSubagentState(snapshot.statusPayload));
-    if (!panelIsTerminal) await this.handlePanelDeadlines(active, snapshot.statusPayload);
+    if (!panelIsTerminal) {
+      await this.handlePanelDeadlines(active, snapshot.statusPayload);
+      const interruption = this.completionInterruption(active);
+      if (interruption) return interruption;
+    }
     if (!active.panelStopReason && !panelIsTerminal) {
       if (
         partial &&
@@ -1361,7 +1391,8 @@ export class FusionOrchestrator {
       this.installWarning = `Panel stop fell back to interrupt for ${active.panelRunId}: ${errorMessage(stopError)}`;
     }
 
-    if (this.runStore.getActiveRun()?.id !== active.id) {
+    this.runStore.refreshDurable();
+    if (!sameStage(active, this.runStore.getActiveRun())) {
       return { status: "ignored" };
     }
 
@@ -1457,6 +1488,7 @@ export class FusionOrchestrator {
       );
       return { status: "started", run: nextRun };
     } catch (error: unknown) {
+      if (error instanceof FusionRunConflictError) return { status: "ignored" };
       this.runStore.refreshDurable();
       if (this.runStore.getActiveRun()?.id !== run.id) return { status: "ignored" };
       if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
@@ -1572,6 +1604,7 @@ export class FusionOrchestrator {
       try {
         statusPayload = await this.nativeStatus(input.run, input.runId);
       } catch (error: unknown) {
+        if (error instanceof FusionRunConflictError) throw error;
         this.installWarning = `Could not refresh subagent run ${input.runId}: ${errorMessage(error)}`;
       }
     }
@@ -1728,12 +1761,26 @@ export class FusionOrchestrator {
         ? { status: "cancelled", run: saved, report: saved.report }
         : { status: "ignored" };
     }
-    if (!run.executionLifetime) return undefined;
-    if (active.cancellationRequested || (active.operationId && this.operationCancelled(active.operationId))) {
+    if (run.executionLifetime && (active.cancellationRequested || (active.operationId && this.operationCancelled(active.operationId)))) {
       const cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true });
       return this.reconcileContractCancellation(cancelling);
     }
+    if (!sameStage(run, active)) return { status: "ignored" };
     return undefined;
+  }
+
+  private assertCurrentStage(run: FusionRun): void {
+    this.runStore.refreshDurable();
+    if (!sameStage(run, this.runStore.getActiveRun())) throw new FusionRunConflictError(`Fusion run ${run.id} advanced while awaiting native work.`);
+  }
+
+  private reconcileConflict(runId: string): FusionCommandResult {
+    this.runStore.refreshDurable();
+    const run = this.runStore.getRunById(runId);
+    if (!run) return { status: "ignored" };
+    if (run.phase === "done" || run.phase === "cancelled" || run.phase === "failed") return terminalResult(run, run.report ?? "Fusion run finished.");
+    this.ensureReconcileLoop();
+    return { status: "started", run };
   }
 
   private async completeActiveRun(report: string): Promise<FusionCommandResult> {
@@ -2761,6 +2808,13 @@ function terminalResult(run: FusionRun, fallbackReport: string): FusionCommandRe
   const report = run.report ?? fallbackReport;
   if (run.phase === "done" || run.phase === "cancelled") return { status: run.phase, run, report };
   return { status: "failed", error: run.error ?? "Fusion run failed.", report };
+}
+
+function sameStage(expected: FusionRun, current: FusionRun | undefined): boolean {
+  return current !== undefined && expected.id === current.id && expected.phase === current.phase &&
+    expected.panelRunId === current.panelRunId && expected.judgeRunId === current.judgeRunId && expected.chainRunId === current.chainRunId &&
+    expected.spawnIntent?.stage === current.spawnIntent?.stage && expected.spawnIntent?.requestId === current.spawnIntent?.requestId &&
+    expected.spawnIntent?.requestDigest === current.spawnIntent?.requestDigest;
 }
 
 function errorMessage(error: unknown): string {

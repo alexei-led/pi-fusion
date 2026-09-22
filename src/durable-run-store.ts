@@ -10,12 +10,16 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "./utils.js";
+import { requestDigest } from "./runtime-contract.js";
 
 export interface DurableRunSnapshot {
   fileName: string;
   data: unknown;
   terminal?: true;
+  authoritative?: true;
 }
+
+export class DurableRunConflictError extends Error {}
 
 export interface DurableRunSnapshotLoad {
   snapshots: DurableRunSnapshot[];
@@ -80,8 +84,11 @@ export class DurableRunSnapshotStore {
     publishExclusive(join(this.directory, ".admissions"), slotName(predecessor), { version: 1, key, ...(predecessor ? { predecessor } : {}), data });
   }
 
-  finish(key: string, data: unknown): unknown {
-    try { publishExclusive(join(this.directory, ".terminals"), durableSnapshotFileName(key), { version: 1, key, data }); }
+  finish(key: string, data: unknown, expected?: unknown): unknown {
+    const existing = this.readTerminal(key);
+    if (existing) return existing;
+    const accepted = this.commitRevision(key, data, expected);
+    try { publishExclusive(join(this.directory, ".terminals"), durableSnapshotFileName(key), { version: 1, key, data: accepted }); }
     catch (error: unknown) { if (!isExists(error)) throw error; }
     const terminal = this.readTerminal(key);
     if (!terminal) throw new Error("Fusion terminal receipt disappeared.");
@@ -89,9 +96,12 @@ export class DurableRunSnapshotStore {
   }
 
   private readTerminal(key: string): unknown {
+    const revision = this.readRevision(key);
+    if (revision && isRecord(revision.data) && terminalPhase(revision.data.phase)) return revision.data;
     try {
       const record: unknown = JSON.parse(readFileSync(join(this.directory, ".terminals", durableSnapshotFileName(key)), "utf8"));
       if (!isRecord(record) || record.version !== 1 || record.key !== key || !isRecord(record.data) || record.data.id !== key || !terminalPhase(record.data.phase)) throw new Error("Invalid Fusion terminal receipt.");
+      if (revision && requestDigest(revision.data) !== requestDigest(record.data)) throw new Error("Fusion terminal receipt disagrees with its revision chain.");
       return record.data;
     } catch (error: unknown) { if (isMissing(error)) return undefined; throw error; }
   }
@@ -128,6 +138,11 @@ export class DurableRunSnapshotStore {
         else if (!merged.has(snapshotName)) merged.set(snapshotName, { fileName: snapshotName, data: record.data });
       }
       if (visited !== slots.length) throw new Error("Unreachable Fusion admission record.");
+      for (const [fileName, snapshot] of merged) {
+        if (!isRecord(snapshot.data) || typeof snapshot.data.id !== "string") continue;
+        const revision = this.readRevision(snapshot.data.id);
+        if (revision) merged.set(fileName, { fileName, data: revision.data, authoritative: true, ...(isRecord(revision.data) && terminalPhase(revision.data.phase) ? { terminal: true } : {}) });
+      }
       snapshots = Array.from(merged.values());
     } catch (error: unknown) {
       errors.push(`Could not recover Fusion admission: ${errorMessage(error)}`);
@@ -135,7 +150,54 @@ export class DurableRunSnapshotStore {
     return { snapshots, errors, ...(admissionTail ? { admissionTail } : {}) };
   }
 
-  write(key: string, data: unknown, exclusive = false): void {
+  private revisionDirectory(key: string): string {
+    return join(this.directory, ".revisions", durableSnapshotFileName(key));
+  }
+
+  private readRevision(key: string): { data: unknown; sequence: number } | undefined {
+    const directory = this.revisionDirectory(key);
+    const files = jsonFiles(directory);
+    if (files.length === 0) return undefined;
+    let data: unknown;
+    for (let sequence = 0; sequence < files.length; sequence += 1) {
+      if (!files.includes(`${sequence}.json`)) throw new Error("Noncontiguous Fusion revision chain.");
+      const record: unknown = JSON.parse(readFileSync(join(directory, `${sequence}.json`), "utf8"));
+      if (!isRecord(record) || record.version !== 1 || record.key !== key || record.sequence !== sequence || !isRecord(record.data) || record.data.id !== key ||
+        (sequence === 0 ? record.previous !== undefined : record.previous !== requestDigest(data)) ||
+        (isRecord(data) && terminalPhase(data.phase))) throw new Error("Invalid Fusion revision chain.");
+      data = record.data;
+    }
+    return { data, sequence: files.length - 1 };
+  }
+
+  private commitRevision(key: string, data: unknown, expected?: unknown): unknown {
+    let current = this.readRevision(key);
+    if (!current) {
+      const loaded = this.load();
+      if (loaded.errors.length) throw new Error(loaded.errors[0]);
+      const baseline = loaded.snapshots.find((snapshot) => snapshot.fileName === durableSnapshotFileName(key));
+      const seed = baseline?.data ?? expected;
+      if (seed === undefined) throw new Error("Cannot revise an unadmitted Fusion run.");
+      try { publishExclusive(this.revisionDirectory(key), "0.json", { version: 1, key, sequence: 0, data: seed }); }
+      catch (error: unknown) { if (!isExists(error)) throw error; }
+      current = this.readRevision(key);
+    }
+    if (!current) throw new Error("Fusion revision baseline disappeared.");
+    if ((expected !== undefined && requestDigest(expected) !== requestDigest(current.data)) ||
+      (isRecord(current.data) && terminalPhase(current.data.phase))) throw new DurableRunConflictError(`Fusion run ${key} changed concurrently.`);
+    try {
+      publishExclusive(this.revisionDirectory(key), `${current.sequence + 1}.json`, {
+        version: 1, key, sequence: current.sequence + 1, previous: requestDigest(current.data), data,
+      });
+    } catch (error: unknown) {
+      if (isExists(error)) throw new DurableRunConflictError(`Fusion run ${key} changed concurrently.`, { cause: error });
+      throw error;
+    }
+    return data;
+  }
+
+  write(key: string, data: unknown, exclusive = false, expected?: unknown): void {
+    if (expected !== undefined) this.commitRevision(key, data, expected);
     const serialized = JSON.stringify(data);
     if (serialized === undefined) {
       throw new Error("Durable fusion run snapshot is not JSON serializable.");

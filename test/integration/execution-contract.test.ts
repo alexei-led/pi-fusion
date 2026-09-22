@@ -92,6 +92,72 @@ function admissionProcess(t: TestContext, cwd: string, operationId: string, mode
   return { ready, exited };
 }
 
+function recoveryProcess(t: TestContext, cwd: string, mode: string) {
+  const child = spawn(process.execPath, ["--import", "jiti/register", fileURLToPath(new URL("../support/stale-recovery-worker.ts", import.meta.url)), cwd, mode], { stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  assert.ok(child.stderr);
+  let stderr = "";
+  child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
+  t.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  const waiting = new Promise<void>((resolve) => child.once("message", () => resolve()));
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`Recovery worker exited ${code}: ${stderr}`)));
+  });
+  return { waiting, exited };
+}
+
+for (const boundary of ["lookup", "spawn", "lookup-refreshed"]) {
+  test(`two processes preserve judge admission and cancellation after delayed panel ${boundary}`, { timeout: 20_000 }, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "fusion-stale-recovery-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const panelConfig: FusionConfig = { defaultProfile: "quality", profiles: { quality: { panel: [{ id: "one", agent: "panelist" }, { id: "two", agent: "panelist" }], judge: { agent: "judge" } } } };
+    const native = new NativeRuntime();
+    native.loseReply = true;
+    const initial = rpcHarness(t, cwd, native, panelConfig);
+    assert.equal((await initial.request("start", { operationId: "shared-recovery", prompt: "Review", digest: "caller", executionLifetime: lifetime })).success, true);
+    const run = initial.store.getActiveRun();
+    assert.ok(run?.spawnIntent?.requestId);
+    assert.equal(run.panelRunId, undefined);
+    initial.dispose();
+    native.statusValue = "completed";
+    native.proof = proof(native);
+    const panelLookup = { ...await native.lookup() as Record<string, unknown>, statusPayload: { runId: "native-panel", state: "completed", processTerminalProof: native.proof, results: [{ agent: "panelist", output: "One", success: true }, { agent: "panelist", output: "Two", success: true }] } };
+    await writeFile(join(cwd, "native-fixture.json"), JSON.stringify({ capabilities, panelLookup }));
+    const delayed = recoveryProcess(t, cwd, boundary);
+    await delayed.waiting;
+    await recoveryProcess(t, cwd, "advance").exited;
+    const admitted = new FusionRunStore({ directory: join(cwd, "runs") }).getActiveRun();
+    assert.equal(admitted?.phase, "judge");
+    assert.equal(admitted?.judgeRunId, "native-judge");
+    assert.equal(admitted?.cancellationRequested, true);
+    await writeFile(join(cwd, "release-stale"), "release");
+    await delayed.exited;
+    const current = new FusionRunStore({ directory: join(cwd, "runs") }).getActiveRun();
+    assert.equal(current?.phase, "judge");
+    assert.equal(current?.judgeRunId, "native-judge");
+    assert.deepEqual(current?.spawnIntent, admitted?.spawnIntent);
+    assert.equal(current?.cancellationRequested, true);
+    const events: unknown[] = (await readFile(join(cwd, "native-events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as unknown);
+    assert.equal(events.filter((event) => isRecord(event) && event.method === "judge-spawn").length, 1);
+    assert.equal(events.some((event) => isRecord(event) && event.method === "stop"), false);
+    for (const event of events) if (isRecord(event) && event.method === "cancel") {
+      assert.ok(isRecord(event.params));
+      assert.equal(event.params.operationId, `${run.id}:judge`);
+    }
+    const rpc = new NativeRuntime();
+    rpc.identity = { operationId: admitted?.spawnIntent?.requestId, digest: admitted?.spawnIntent?.requestDigest };
+    rpc.runId = "native-judge";
+    rpc.route = "single-async";
+    const final = rpcHarness(t, cwd, rpc, panelConfig);
+    await final.orchestrator.restore(new FakePi().createContext(cwd));
+    assert.equal(final.store.getActiveRun()?.phase, "judge");
+    rpc.statusValue = "completed";
+    rpc.proof = proof(rpc);
+    await final.orchestrator.getStatusReport();
+    assert.equal(final.store.getLastRunSummary()?.phase, "cancelled");
+  });
+}
+
 for (const mode of ["rpc", "direct"] as const) {
   test(`independent ${mode} processes arbitrate one active run and keep the loser replayable`, { timeout: 20_000 }, async (t) => {
     const cwd = await mkdtemp(join(tmpdir(), "fusion-shared-admission-"));

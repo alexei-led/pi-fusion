@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DurableRunSnapshotStore,
+  DurableRunConflictError,
   type DurableRunSnapshot,
 } from "./durable-run-store.js";
 import type {
@@ -149,6 +150,8 @@ export class FusionRunStoreError extends Error {
   }
 }
 
+export class FusionRunConflictError extends FusionRunStoreError {}
+
 export class FusionRunStore {
   private activeRun: FusionRun | undefined;
   private lastRunSummary: FusionRunSummary | undefined;
@@ -162,6 +165,7 @@ export class FusionRunStore {
   private durableRestoreError: string | undefined;
   private admissionTail: string | undefined;
   private readonly terminalRunIds = new Set<string>();
+  private readonly revisionRunIds = new Set<string>();
   private restoreError: string | undefined;
   private activeSelectionError: string | undefined;
 
@@ -188,6 +192,7 @@ export class FusionRunStore {
     const loaded = this.durableStore.load();
     this.admissionTail = loaded.admissionTail;
     this.terminalRunIds.clear();
+    this.revisionRunIds.clear();
     if (loaded.errors.length > 0) {
       this.durableRestoreError = invalidDurableLoadMessage(loaded.errors[0]);
     }
@@ -198,6 +203,7 @@ export class FusionRunStore {
       }
       this.durableRunsById.set(snapshot.data.id, cloneRun(snapshot.data));
       if (snapshot.terminal) this.terminalRunIds.add(snapshot.data.id);
+      if (snapshot.authoritative) this.revisionRunIds.add(snapshot.data.id);
     }
     this.resetFromDurableRuns();
   }
@@ -230,7 +236,8 @@ export class FusionRunStore {
         this.runsById.get(snapshot.data.id) ??
         this.durableRunsById.get(snapshot.data.id);
       if (snapshot.terminal) this.terminalRunIds.add(snapshot.data.id);
-      if (snapshot.terminal || !previous || snapshot.data.updatedAt >= previous.updatedAt) {
+      if (snapshot.authoritative) this.revisionRunIds.add(snapshot.data.id);
+      if (snapshot.authoritative || snapshot.terminal || !previous || snapshot.data.updatedAt >= previous.updatedAt) {
         next.set(snapshot.data.id, cloneRun(snapshot.data));
       }
     }
@@ -376,7 +383,7 @@ export class FusionRunStore {
   updateRun(id: string, patch: FusionRunPatch): FusionRun {
     const active = this.requireActiveRun(id);
     const updated = applyPatch(active, patch, patch.updatedAt ?? this.now());
-    this.persistRun(updated);
+    this.persistRun(updated, updated, false, active);
     this.activeRun = updated;
     this.rememberRun(updated);
     return cloneRun(updated);
@@ -407,7 +414,9 @@ export class FusionRunStore {
       patch.updatedAt ?? this.now(),
     );
     if (this.durableStore) {
-      const terminal = this.durableStore.finish(id, cloneRun(finished));
+      let terminal: unknown;
+      try { terminal = this.durableStore.finish(id, cloneRun(finished), cloneRun(active)); }
+      catch (error: unknown) { this.rethrowConflict(error); }
       if (!isFusionRunState(terminal) || !isTerminalPhase(terminal.phase)) throw new FusionRunStoreError("Invalid immutable Fusion terminal state.");
       finished = { ...terminal, phase: terminal.phase };
       this.terminalRunIds.add(id);
@@ -477,8 +486,10 @@ export class FusionRunStore {
     run: FusionRun,
     sessionEntry: FusionRun | FusionRunSummary = run,
     exclusive = false,
+    expected?: FusionRun,
   ): void {
-    this.durableStore?.write(run.id, cloneRun(run), exclusive);
+    try { this.durableStore?.write(run.id, cloneRun(run), exclusive, expected ? cloneRun(expected) : undefined); }
+    catch (error: unknown) { this.rethrowConflict(error); }
     if (this.durableStore) {
       this.durableRunsById.set(run.id, cloneRun(run));
     }
@@ -486,6 +497,14 @@ export class FusionRunStore {
       FUSION_RUN_ENTRY_TYPE,
       cloneRunOrSummary(sessionEntry),
     );
+  }
+
+  private rethrowConflict(error: unknown): never {
+    if (error instanceof DurableRunConflictError) {
+      this.refreshDurable();
+      throw new FusionRunConflictError(error.message, { cause: error });
+    }
+    throw error;
   }
 
   private rememberRun(run: FusionRun): void {
@@ -512,7 +531,7 @@ export class FusionRunStore {
   }
 
   private mergeRestoredRun(run: FusionRun): void {
-    if (this.terminalRunIds.has(run.id)) return;
+    if (this.terminalRunIds.has(run.id) || this.revisionRunIds.has(run.id)) return;
     const existing = this.runsById.get(run.id);
     const isDurableBaseline = this.durableRunsById.has(run.id);
     if (

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DurableRunSnapshotStore, durableSnapshotFileName } from "../../src/durable-run-store.js";
 import {
   FUSION_RUN_ENTRY_TYPE,
+  FusionRunConflictError,
   FusionRunStore,
   FusionRunStoreError,
   readFusionRunStates,
@@ -55,13 +56,16 @@ test("terminal admission survives snapshot failure and fences stale writers and 
   const stale = new FusionRunStore({ directory, now: () => 100 });
   const writer = new DurableRunSnapshotStore(directory);
   const write = writer.write.bind(writer);
-  const fault = t.mock.method(DurableRunSnapshotStore.prototype, "write", (key: string, data: unknown, exclusive?: boolean) => {
+  const fault = t.mock.method(DurableRunSnapshotStore.prototype, "write", (key: string, data: unknown, exclusive?: boolean, expected?: unknown) => {
     if (key === run.id) throw new Error("crash after terminal admission");
-    write(key, data, exclusive);
+    write(key, data, exclusive, expected);
   });
   assert.throws(() => first.cancelRun(run.id, { report: "cancelled" }), /crash after terminal/);
   fault.mock.restore();
-  stale.updateRun(run.id, { panelRunId: "stale-worker", updatedAt: 999 });
+  assert.throws(
+    () => stale.updateRun(run.id, { panelRunId: "stale-worker", updatedAt: 999 }),
+    FusionRunConflictError,
+  );
   const restarted = new FusionRunStore({ directory });
   assert.equal(restarted.getActiveRun(), undefined);
   assert.equal(restarted.getRunById(run.id)?.phase, "cancelled");
@@ -70,10 +74,14 @@ test("terminal admission survives snapshot failure and fences stale writers and 
   assert.equal(restarted.getRunById(run.id)?.phase, "cancelled");
   const next = restarted.startRun({ id: "next", prompt: "Next", profileName: "quality" });
   assert.equal(new FusionRunStore({ directory }).getActiveRun()?.id, next.id);
-  const losingTerminal = stale.completeRun(run.id, { report: "stale success" });
-  assert.equal(losingTerminal.phase, "cancelled");
-  assert.equal(losingTerminal.report, "cancelled");
-  assert.equal(new FusionRunStore({ directory }).getActiveRun()?.id, next.id);
+  assert.throws(
+    () => stale.completeRun(run.id, { report: "stale success" }),
+    /No active fusion run/,
+  );
+  const fenced = new FusionRunStore({ directory });
+  assert.equal(fenced.getRunById(run.id)?.phase, "cancelled");
+  assert.equal(fenced.getRunById(run.id)?.report, "cancelled");
+  assert.equal(fenced.getActiveRun()?.id, next.id);
 });
 
 test("an older unfinished legacy snapshot is never hidden by a newer terminal run", (t) => {
