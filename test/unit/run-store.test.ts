@@ -3,7 +3,8 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DurableRunSnapshotStore, durableSnapshotFileName } from "../../src/durable-run-store.js";
+import { DurableRunConflictError, DurableRunSnapshotStore, durableSnapshotFileName } from "../../src/durable-run-store.js";
+import { requestDigest } from "../../src/runtime-contract.js";
 import {
   FUSION_RUN_ENTRY_TYPE,
   FusionRunConflictError,
@@ -97,6 +98,37 @@ test("revision compaction keeps one tip snapshot per run", (t) => {
   assert.equal(restored.getRunById(run.id)?.updatedAt, 26);
   assert.equal(restored.getRunById(run.id)?.panelRunId, "panel-24");
 });
+
+for (const successor of ["chained", "unrelated"] as const) {
+  test(`recreating a compacted revision is ${successor === "chained" ? "accepted" : "rejected"} from its successor`, (t) => {
+    const directory = mkdtempSync(join(tmpdir(), "fusion-revision-recreate-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const store = new DurableRunSnapshotStore(directory);
+    const base = { id: "race", prompt: "compare", profileName: "quality", phase: "panel", createdAt: 1, updatedAt: 1 };
+    store.write("race", base);
+    const first = { ...base, updatedAt: 2 };
+    store.write("race", first, false, base);
+    const revisionDirectory = join(directory, ".revisions", durableSnapshotFileName("race"));
+    const stale = { ...base, updatedAt: 3 };
+    const internal = store as unknown as { readRevision: (key: string) => { data: unknown; sequence: number; previous?: string } | undefined };
+    const original = internal.readRevision.bind(store);
+    let calls = 0;
+    internal.readRevision = (key: string) => {
+      const tip = original(key);
+      if (++calls === 1) {
+        // Peers advance past this write and compact away the file it recreates.
+        writeFileSync(join(revisionDirectory, "3.json"), `${JSON.stringify({
+          version: 1, key, sequence: 3,
+          previous: successor === "chained" ? requestDigest(stale) : "another-write",
+          data: { ...base, updatedAt: 9 },
+        })}\n`);
+      }
+      return tip;
+    };
+    if (successor === "chained") store.write("race", stale, false, first);
+    else assert.throws(() => store.write("race", stale, false, first), DurableRunConflictError);
+  });
+}
 
 test("an older unfinished legacy snapshot is never hidden by a newer terminal run", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "fusion-legacy-active-"));

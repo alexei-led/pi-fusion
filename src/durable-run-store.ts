@@ -154,7 +154,7 @@ export class DurableRunSnapshotStore {
     return join(this.directory, ".revisions", durableSnapshotFileName(key));
   }
 
-  private readRevision(key: string): { data: unknown; sequence: number } | undefined {
+  private readRevision(key: string): { data: unknown; sequence: number; previous?: string } | undefined {
     const directory = this.revisionDirectory(key);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const files = jsonFiles(directory);
@@ -172,7 +172,7 @@ export class DurableRunSnapshotStore {
         !isRecord(record.data) || record.data.id !== key ||
         (tip.sequence === 0 ? record.previous !== undefined : typeof record.previous !== "string"))
         throw new Error("Invalid Fusion revision chain.");
-      return { data: record.data, sequence: tip.sequence };
+      return { data: record.data, sequence: tip.sequence, ...(typeof record.previous === "string" ? { previous: record.previous } : {}) };
     }
     throw new Error("Fusion revision tip disappeared during recovery.");
   }
@@ -193,6 +193,7 @@ export class DurableRunSnapshotStore {
     if ((expected !== undefined && requestDigest(expected) !== requestDigest(current.data)) ||
       (isRecord(current.data) && terminalPhase(current.data.phase))) throw new DurableRunConflictError(`Fusion run ${key} changed concurrently.`);
     const sequence = current.sequence + 1;
+    const digest = requestDigest(data);
     try {
       publishExclusive(this.revisionDirectory(key), `${sequence}.json`, {
         version: 1, key, sequence, previous: requestDigest(current.data), data,
@@ -202,11 +203,12 @@ export class DurableRunSnapshotStore {
       throw error;
     }
     // A concurrent compactor can remove this file and let a stale writer
-    // recreate the same sequence. Only the tip proves this revision landed.
+    // recreate the same sequence. The write landed when it is the tip, or when
+    // the next revision chained from its data before compacting it away.
     const tip = this.readRevision(key);
-    if (tip?.sequence !== sequence)
+    if (tip?.sequence !== sequence && !(tip?.sequence === sequence + 1 && tip.previous === digest))
       throw new DurableRunConflictError(`Fusion run ${key} advanced concurrently.`);
-    this.compactRevisions(key, sequence);
+    if (tip.sequence === sequence) this.compactRevisions(key, sequence);
     return data;
   }
 
