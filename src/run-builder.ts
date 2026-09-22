@@ -1,37 +1,37 @@
 import {
   callerOutputContractInstructions,
   detectCallerOutputContract,
-} from "./caller-contract.js";
-import { FusionArgsError } from "./errors.js";
-import { PANEL_FINALIZE_RESERVE_MS } from "./panel-deadlines.js";
-import { resolveMinimumSuccessfulPanelists } from "./panel-quorum.js";
+} from './caller-contract.js';
+import { FusionArgsError } from './errors.js';
+import { PANEL_FINALIZE_RESERVE_MS } from './panel-deadlines.js';
+import { resolveMinimumSuccessfulPanelists } from './panel-quorum.js';
 import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
-} from "./run-observations.js";
+} from './run-observations.js';
 import {
-  COMPOSER_AGENT,
-  JUDGE_AGENT,
-  memberLabel,
-  panelItemLabel,
-  resolveSynthesisMode,
   type CallerOutputContract,
+  COMPOSER_AGENT,
   type EffectiveFusionTimeouts,
   type ExecutionLifetime,
-  type FusionTimeoutOverrides,
-  THINKING_LEVELS,
   type FailedPanelSummary,
   type FusionProfile,
+  type FusionTimeoutOverrides,
+  JUDGE_AGENT,
+  memberLabel,
   type PanelMemberConfig,
   type PanelOutput,
+  panelItemLabel,
+  resolveSynthesisMode,
+  THINKING_LEVELS,
   type ThinkingLevel,
   type ToolBudget,
-} from "./types.js";
+} from './types.js';
 
 export const FUSION_ACCEPTANCE_DISABLED = {
-  level: "none",
+  level: 'none',
   reason:
-    "pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance.",
+    'pi-fusion panelists and judge are read-only advisory tasks; pi-fusion owns final synthesis and acceptance.',
 } as const;
 
 export type FusionAcceptanceDisabled = typeof FUSION_ACCEPTANCE_DISABLED;
@@ -42,7 +42,7 @@ const DEFAULT_PANEL_GRACE_MS = 5_000;
 const DEFAULT_TOOL_BUDGET: ToolBudget = {
   soft: 8,
   hard: 12,
-  block: "*",
+  block: '*',
 };
 
 export interface PanelSubagentTaskParams {
@@ -50,7 +50,7 @@ export interface PanelSubagentTaskParams {
   task: string;
   async?: true;
   output: true;
-  outputMode: "inline";
+  outputMode: 'inline';
   progress: true;
   skill: false;
   acceptance: FusionAcceptanceDisabled;
@@ -68,9 +68,9 @@ export interface PanelWorkflowTaskParams extends PanelSubagentTaskParams {
 
 interface SpawnEnvelope {
   async: true;
-  context: "fresh" | "fork";
+  context: 'fresh' | 'fork';
   output: true;
-  outputMode: "inline";
+  outputMode: 'inline';
   acceptance: FusionAcceptanceDisabled;
   timeoutMs?: number;
   executionLifetime?: ExecutionLifetime;
@@ -81,10 +81,10 @@ export interface LegacyPanelSpawnParams extends SpawnEnvelope {
 }
 
 export interface OwnedPanelSpawnParams extends SpawnEnvelope {
-  executionOwnership: { mode: "kernel" };
+  executionOwnership: { mode: 'kernel' };
   ownedWorkflow: {
     version: 1;
-    kind: "parallel";
+    kind: 'parallel';
     tasks: PanelWorkflowTaskParams[];
     concurrency: number;
   };
@@ -97,7 +97,7 @@ export interface JudgeWorkflowTaskParams {
   task: string;
   async?: true;
   output: true;
-  outputMode: "inline";
+  outputMode: 'inline';
   skill: false;
   acceptance: FusionAcceptanceDisabled;
   model?: string;
@@ -112,14 +112,16 @@ export interface LegacyJudgeSpawnParams extends SpawnEnvelope {
   workflowScript: string;
 }
 
-export interface OwnedJudgeSpawnParams extends SpawnEnvelope, JudgeWorkflowTaskParams {
+export interface OwnedJudgeSpawnParams
+  extends SpawnEnvelope,
+    JudgeWorkflowTaskParams {
   async: true;
-  executionOwnership: { mode: "kernel" };
+  executionOwnership: { mode: 'kernel' };
 }
 
 export type JudgeSpawnParams = LegacyJudgeSpawnParams | OwnedJudgeSpawnParams;
 
-export type { FailedPanelSummary, PanelOutput } from "./types.js";
+export type { FailedPanelSummary, PanelOutput } from './types.js';
 
 export interface BuildJudgeSpawnParamsInput {
   profile: FusionProfile;
@@ -140,56 +142,56 @@ export interface BuildJudgeSpawnParamsInput {
 }
 
 const PANEL_OUTPUT_CONTRACT = [
-  "## Summary",
-  "## Recommendation",
-  "## Evidence",
-  "## Risks",
-  "## Confidence",
-  "## Open Questions",
+  '## Summary',
+  '## Recommendation',
+  '## Evidence',
+  '## Risks',
+  '## Confidence',
+  '## Open Questions',
 ] as const;
 
 const JUDGE_OUTPUT_CONTRACT = [
-  "# Fusion Report",
-  "## Summary",
-  "## Agent Status",
-  "## Consensus",
-  "## Disagreements",
-  "## Contested Claims",
-  "## Unique Insights",
-  "## Blind Spots",
-  "## Recommendation",
-  "## Risks",
-  "## Next Step",
+  '# Fusion Report',
+  '## Summary',
+  '## Agent Status',
+  '## Consensus',
+  '## Disagreements',
+  '## Contested Claims',
+  '## Unique Insights',
+  '## Blind Spots',
+  '## Recommendation',
+  '## Risks',
+  '## Next Step',
 ] as const;
 
 const COMPOSER_OUTPUT_CONTRACT = [
-  "# Fusion Report",
-  "## Summary",
-  "## Coverage Map",
-  "## Combined Answer",
-  "## Gaps",
-  "## Conflicts At Seams",
-  "## Agent Status",
-  "## Risks",
-  "## Next Step",
+  '# Fusion Report',
+  '## Summary',
+  '## Coverage Map',
+  '## Combined Answer',
+  '## Gaps',
+  '## Conflicts At Seams',
+  '## Agent Status',
+  '## Risks',
+  '## Next Step',
 ] as const;
 
 const COMPOSER_INSTRUCTIONS = [
-  "You are the fusion composer.",
-  "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
-  "The panelists answered DIFFERENT facets of one task. Merge their answers; do not pick a winner.",
-  "- Do not rank panelists. They were not competing.",
-  "- Report a conflict only where facets genuinely overlap and disagree. Different subject matter is not disagreement.",
-  "- Name facets nobody covered, or covered only in passing.",
-  "- Where facets overlap and state conflicting facts about this codebase, check the claim with your read tools and cite file:line under Conflicts At Seams. Do not settle it by whose wording sounds more confident.",
+  'You are the fusion composer.',
+  'Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.',
+  'The panelists answered DIFFERENT facets of one task. Merge their answers; do not pick a winner.',
+  '- Do not rank panelists. They were not competing.',
+  '- Report a conflict only where facets genuinely overlap and disagree. Different subject matter is not disagreement.',
+  '- Name facets nobody covered, or covered only in passing.',
+  '- Where facets overlap and state conflicting facts about this codebase, check the claim with your read tools and cite file:line under Conflicts At Seams. Do not settle it by whose wording sounds more confident.',
 ] as const;
 
 const CONTESTED_CLAIMS_INSTRUCTIONS = [
-  "Contested claims:",
-  "- Where panelists state conflicting facts about this codebase, do not pick the more confident wording.",
-  "- Check the claim yourself with your read tools and cite file:line.",
-  "- Report each contested claim as: the claim, what you found, and which panelist was right.",
-  "- If you could not verify a claim, say so explicitly rather than choosing.",
+  'Contested claims:',
+  '- Where panelists state conflicting facts about this codebase, do not pick the more confident wording.',
+  '- Check the claim yourself with your read tools and cite file:line.',
+  '- Report each contested claim as: the claim, what you found, and which panelist was right.',
+  '- If you could not verify a claim, say so explicitly rather than choosing.',
 ] as const;
 
 export function appendThinkingSuffix(
@@ -229,7 +231,10 @@ export function buildPanelSpawnParams(
   timeoutOverrides?: FusionTimeoutOverrides,
   executionLifetime?: ExecutionLifetime,
 ): PanelSpawnParams {
-  if (executionLifetime && profile.stopWhenPanelAgrees) throw new FusionArgsError("stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.");
+  if (executionLifetime && profile.stopWhenPanelAgrees)
+    throw new FusionArgsError(
+      'stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.',
+    );
   const timeouts = executionLifetime
     ? undefined
     : resolveEffectiveTimeouts(profile, timeoutOverrides);
@@ -243,7 +248,7 @@ export function buildPanelSpawnParams(
         profile.stopWhenPanelAgrees === true,
         profile.panelToolBudget ?? DEFAULT_TOOL_BUDGET,
         callerContract,
-        executionLifetime?.mode === "bounded"
+        executionLifetime?.mode === 'bounded'
           ? executionLifetime.timeoutMs
           : timeouts?.panelistTimeoutMs,
         timeouts?.panelistSoftTimeoutMs !== undefined,
@@ -259,17 +264,22 @@ export function buildPanelSpawnParams(
 
   if (executionLifetime) {
     return {
-      ownedWorkflow: { version: 1, kind: "parallel", tasks: tasks.map((task) => {
-        const ownedTask = { ...task };
-        delete ownedTask.async;
-        delete ownedTask.timeoutMs;
-        return ownedTask;
-      }), concurrency },
-      executionOwnership: { mode: "kernel" },
+      ownedWorkflow: {
+        version: 1,
+        kind: 'parallel',
+        tasks: tasks.map((task) => {
+          const ownedTask = { ...task };
+          delete ownedTask.async;
+          delete ownedTask.timeoutMs;
+          return ownedTask;
+        }),
+        concurrency,
+      },
+      executionOwnership: { mode: 'kernel' },
       async: true,
-      context: profile.context ?? "fresh",
+      context: profile.context ?? 'fresh',
       output: true,
-      outputMode: "inline",
+      outputMode: 'inline',
       acceptance: FUSION_ACCEPTANCE_DISABLED,
       ...executionLifetimeFields(executionLifetime, undefined),
     };
@@ -283,9 +293,9 @@ export function buildPanelSpawnParams(
       requiredSuccessfulPanelists,
     ),
     async: true,
-    context: profile.context ?? "fresh",
+    context: profile.context ?? 'fresh',
     output: true,
-    outputMode: "inline",
+    outputMode: 'inline',
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...executionLifetimeFields(executionLifetime, timeouts?.panelTimeoutMs),
   };
@@ -300,8 +310,9 @@ export function buildJudgeSpawnParams(
   );
   const judgeTimeoutMs = input.executionLifetime
     ? undefined
-    : input.effectiveTimeouts?.judgeTimeoutMs ??
-      resolveEffectiveTimeouts(input.profile, input.timeoutOverrides).judgeTimeoutMs;
+    : (input.effectiveTimeouts?.judgeTimeoutMs ??
+      resolveEffectiveTimeouts(input.profile, input.timeoutOverrides)
+        .judgeTimeoutMs);
   const judgeLifetimeFields = input.executionLifetime
     ? executionLifetimeFields(input.executionLifetime, undefined)
     : {};
@@ -309,7 +320,7 @@ export function buildJudgeSpawnParams(
     agent: resolveSynthesisAgent(input.profile),
     task: buildJudgeTask(input),
     output: true,
-    outputMode: "inline",
+    outputMode: 'inline',
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...(model ? { model } : {}),
@@ -321,17 +332,17 @@ export function buildJudgeSpawnParams(
     return {
       ...task,
       async: true,
-      context: input.profile.context ?? "fresh",
-      executionOwnership: { mode: "kernel" },
+      context: input.profile.context ?? 'fresh',
+      executionOwnership: { mode: 'kernel' },
     };
   }
 
   return {
     workflowScript: `return runs.run("judge", ${JSON.stringify(task)});`,
     async: true,
-    context: input.profile.context ?? "fresh",
+    context: input.profile.context ?? 'fresh',
     output: true,
-    outputMode: "inline",
+    outputMode: 'inline',
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     ...executionLifetimeFields(input.executionLifetime, judgeTimeoutMs),
   };
@@ -348,22 +359,22 @@ function buildPanelWorkflowScript(
     return [
       `const tasks = ${serializedTasks};`,
       `const concurrency = ${concurrency};`,
-      "const results = new Array(tasks.length);",
-      "const pending = new Map();",
-      "let next = 0;",
-      "while (next < tasks.length || pending.size > 0) {",
-      "  while (next < tasks.length && pending.size < concurrency) {",
-      "    const index = next++;",
-      "    const { key, ...task } = tasks[index];",
-      "    const pendingRun = runs.run(key, task);",
-      "    pending.set(index, Promise.all([pendingRun]).then(([result]) => ({ index, result })));",
-      "  }",
-      "  const { index, result } = await Promise.race(pending.values());",
-      "  results[index] = result;",
-      "  pending.delete(index);",
-      "}",
-      "return results;",
-    ].join("\n");
+      'const results = new Array(tasks.length);',
+      'const pending = new Map();',
+      'let next = 0;',
+      'while (next < tasks.length || pending.size > 0) {',
+      '  while (next < tasks.length && pending.size < concurrency) {',
+      '    const index = next++;',
+      '    const { key, ...task } = tasks[index];',
+      '    const pendingRun = runs.run(key, task);',
+      '    pending.set(index, Promise.all([pendingRun]).then(([result]) => ({ index, result })));',
+      '  }',
+      '  const { index, result } = await Promise.race(pending.values());',
+      '  results[index] = result;',
+      '  pending.delete(index);',
+      '}',
+      'return results;',
+    ].join('\n');
   }
   // Agreement panels deliberately use quorum-sized rounds: starting speculative
   // replacements would spend more calls before the current votes can agree.
@@ -376,38 +387,38 @@ function buildPanelWorkflowScript(
   const stopLogic = stopWhenAgrees
     ? [
         `const requiredSuccessfulPanelists = ${requiredSuccessfulPanelists};`,
-        "const decisions = results",
-        "  .filter((result) => result && result.ok === true)",
-        "  .map((result) => {",
-        "    const text = typeof result.output === \"string\" ? result.output : \"\";",
-        "    const match = text.match(/<fusion-panel-decision>([\\s\\S]*?)<\\/fusion-panel-decision>\\s*$/);",
-        "    if (!match) return undefined;",
-        "    try { return JSON.parse(match[1]); } catch { return undefined; }",
-        "  })",
-        "  .filter((decision) => decision && typeof decision.recommendation === \"string\" && decision.confidence === \"high\" && decision.needsMoreEvidence === false);",
-        "if (decisions.length >= requiredSuccessfulPanelists && results.length < tasks.length) {",
-        "  const recommendation = decisions[0].recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim(),",
-        "    agrees = recommendation && decisions.every((decision) => decision.recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, \" \" ).trim() === recommendation);",
-        "  if (agrees) {",
-        "    emit({ type: \"pi-fusion-panel-stop\", indices: tasks.slice(results.length).map((_, index) => results.length + index) });",
-        "    return results;",
-        "  }",
-        "}",
-      ].join("\n")
-    : "";
+        'const decisions = results',
+        '  .filter((result) => result && result.ok === true)',
+        '  .map((result) => {',
+        '    const text = typeof result.output === "string" ? result.output : "";',
+        '    const match = text.match(/<fusion-panel-decision>([\\s\\S]*?)<\\/fusion-panel-decision>\\s*$/);',
+        '    if (!match) return undefined;',
+        '    try { return JSON.parse(match[1]); } catch { return undefined; }',
+        '  })',
+        '  .filter((decision) => decision && typeof decision.recommendation === "string" && decision.confidence === "high" && decision.needsMoreEvidence === false);',
+        'if (decisions.length >= requiredSuccessfulPanelists && results.length < tasks.length) {',
+        '  const recommendation = decisions[0].recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, " " ).trim(),',
+        '    agrees = recommendation && decisions.every((decision) => decision.recommendation.trim().toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, " " ).trim() === recommendation);',
+        '  if (agrees) {',
+        '    emit({ type: "pi-fusion-panel-stop", indices: tasks.slice(results.length).map((_, index) => results.length + index) });',
+        '    return results;',
+        '  }',
+        '}',
+      ].join('\n')
+    : '';
 
   return [
     `const tasks = ${serializedTasks};`,
     `const concurrency = ${effectiveConcurrency};`,
-    "const results = [];",
-    "for (let index = 0; index < tasks.length; index += concurrency) {",
-    "  results.push(...await runs.all(tasks.slice(index, index + concurrency)));",
-    stopWhenAgrees ? "  " + stopLogic.replaceAll("\n", "\n  ") : "",
-    "}",
-    "return results;",
+    'const results = [];',
+    'for (let index = 0; index < tasks.length; index += concurrency) {',
+    '  results.push(...await runs.all(tasks.slice(index, index + concurrency)));',
+    stopWhenAgrees ? `  ${stopLogic.replaceAll('\n', '\n  ')}` : '',
+    '}',
+    'return results;',
   ]
     .filter(Boolean)
-    .join("\n");
+    .join('\n');
 }
 
 function resolveStageTimeout(
@@ -452,17 +463,34 @@ export function resolveEffectiveTimeouts(
     panelTimeoutMs - panelGraceMs,
   );
   const softTimeoutMs = profile.panelistSoftTimeoutMs;
-  if (softTimeoutMs !== undefined && (!Number.isInteger(softTimeoutMs) || softTimeoutMs <= 0)) {
-    throw new FusionArgsError("panelistSoftTimeoutMs must be a positive integer.");
+  if (
+    softTimeoutMs !== undefined &&
+    (!Number.isInteger(softTimeoutMs) || softTimeoutMs <= 0)
+  ) {
+    throw new FusionArgsError(
+      'panelistSoftTimeoutMs must be a positive integer.',
+    );
   }
-  if (softTimeoutMs !== undefined && panelTimeoutMs < waves * panelistTimeoutMs + panelGraceMs) {
-    throw new FusionArgsError("The panel deadline must cover every concurrency wave plus grace when soft deadlines are enabled.");
+  if (
+    softTimeoutMs !== undefined &&
+    panelTimeoutMs < waves * panelistTimeoutMs + panelGraceMs
+  ) {
+    throw new FusionArgsError(
+      'The panel deadline must cover every concurrency wave plus grace when soft deadlines are enabled.',
+    );
   }
-  if (softTimeoutMs !== undefined && softTimeoutMs >= panelistTimeoutMs - PANEL_FINALIZE_RESERVE_MS) {
-    throw new FusionArgsError("panelistSoftTimeoutMs must leave more than one minute before the effective panelist hard deadline.");
+  if (
+    softTimeoutMs !== undefined &&
+    softTimeoutMs >= panelistTimeoutMs - PANEL_FINALIZE_RESERVE_MS
+  ) {
+    throw new FusionArgsError(
+      'panelistSoftTimeoutMs must leave more than one minute before the effective panelist hard deadline.',
+    );
   }
   return {
-    ...(softTimeoutMs !== undefined ? { panelistSoftTimeoutMs: softTimeoutMs } : {}),
+    ...(softTimeoutMs !== undefined
+      ? { panelistSoftTimeoutMs: softTimeoutMs }
+      : {}),
     panelistTimeoutMs,
     panelTimeoutMs,
     panelGraceMs,
@@ -472,12 +500,12 @@ export function resolveEffectiveTimeouts(
     ),
     usesLegacyTimeout:
       profile.timeoutMs !== undefined &&
-      (overrides?.panelistTimeoutMs === undefined &&
-        profile.panelistTimeoutMs === undefined ||
-        overrides?.panelTimeoutMs === undefined &&
-          profile.panelTimeoutMs === undefined ||
-        overrides?.judgeTimeoutMs === undefined &&
-          profile.judgeTimeoutMs === undefined),
+      ((overrides?.panelistTimeoutMs === undefined &&
+        profile.panelistTimeoutMs === undefined) ||
+        (overrides?.panelTimeoutMs === undefined &&
+          profile.panelTimeoutMs === undefined) ||
+        (overrides?.judgeTimeoutMs === undefined &&
+          profile.judgeTimeoutMs === undefined)),
   };
 }
 
@@ -502,12 +530,15 @@ function buildPanelTaskParams(
       allowSupervisor,
     ),
     output: true,
-    outputMode: "inline",
+    outputMode: 'inline',
     progress: true,
     skill: false,
     acceptance: FUSION_ACCEPTANCE_DISABLED,
     toolBudget,
-    ...executionLifetimeFields(executionLifetime, timeoutMs ? timeoutMs : undefined),
+    ...executionLifetimeFields(
+      executionLifetime,
+      timeoutMs ? timeoutMs : undefined,
+    ),
     ...(model ? { model } : {}),
   };
 }
@@ -516,10 +547,10 @@ function executionLifetimeFields(
   executionLifetime: ExecutionLifetime | undefined,
   timeoutMs: number | undefined,
 ): { async?: true; executionLifetime?: ExecutionLifetime; timeoutMs?: number } {
-  if (executionLifetime?.mode === "unbounded") {
+  if (executionLifetime?.mode === 'unbounded') {
     return { async: true, executionLifetime };
   }
-  if (executionLifetime?.mode === "bounded") {
+  if (executionLifetime?.mode === 'bounded') {
     return {
       async: true,
       executionLifetime,
@@ -535,43 +566,45 @@ function buildPanelTask(
   callerContractOverride?: CallerOutputContract,
   allowSupervisor = false,
 ): string {
-  const role = member.role?.trim() || "independent analysis and critique";
-  const callerContract =
-    callerContractForPrompt(prompt, callerContractOverride);
+  const role = member.role?.trim() || 'independent analysis and critique';
+  const callerContract = callerContractForPrompt(
+    prompt,
+    callerContractOverride,
+  );
   return [
     `Panel member: ${memberLabel(member)} (${member.id})`,
     `Role: ${role}`,
-    "",
+    '',
     ...formatMemberTask(member, prompt),
-    "",
-    "Instructions:",
-    "- Work independently from the other panelists.",
-    "- Read-only: inspect only; leave files, git state, and the workspace untouched.",
+    '',
+    'Instructions:',
+    '- Work independently from the other panelists.',
+    '- Read-only: inspect only; leave files, git state, and the workspace untouched.',
     allowSupervisor
-      ? "- Do not consult other panelists. Parent supervisor coordination is allowed only for progress updates and deadline decisions."
-      : "- Do not ask other agents.",
-    "- Do not run subagents.",
-    "- Use local inspection only when code evidence is needed.",
-    "- Be concise and cite evidence when you inspect files.",
-    "",
-    "Output contract:",
+      ? '- Do not consult other panelists. Parent supervisor coordination is allowed only for progress updates and deadline decisions.'
+      : '- Do not ask other agents.',
+    '- Do not run subagents.',
+    '- Use local inspection only when code evidence is needed.',
+    '- Be concise and cite evidence when you inspect files.',
+    '',
+    'Output contract:',
     ...(callerContract
       ? callerOutputContractInstructions(callerContract)
       : PANEL_OUTPUT_CONTRACT),
     ...(includeDecisionRecord && !callerContract
       ? [
-          "",
-          "Decision record:",
-          "- End with exactly one single-line JSON record wrapped in the tags below.",
-          "- Keep the complete human-readable answer in the Markdown sections above the record.",
-          "- recommendation: one short plain-language conclusion.",
-          "- confidence: low, medium, or high.",
-          "- needsMoreEvidence: true when the answer should not be trusted without more investigation.",
+          '',
+          'Decision record:',
+          '- End with exactly one single-line JSON record wrapped in the tags below.',
+          '- Keep the complete human-readable answer in the Markdown sections above the record.',
+          '- recommendation: one short plain-language conclusion.',
+          '- confidence: low, medium, or high.',
+          '- needsMoreEvidence: true when the answer should not be trusted without more investigation.',
           `- Format: ${PANEL_DECISION_OPEN}{"recommendation":"...","confidence":"high","needsMoreEvidence":false}${PANEL_DECISION_CLOSE}`,
-          "- Do not add Markdown or any other text after the record.",
+          '- Do not add Markdown or any other text after the record.',
         ]
       : []),
-  ].join("\n");
+  ].join('\n');
 }
 
 /**
@@ -583,13 +616,13 @@ function buildPanelTask(
  * synthesis agent means it.
  */
 function resolveSynthesisAgent(profile: FusionProfile): string {
-  if (resolveSynthesisMode(profile) !== "merge") return profile.judge.agent;
+  if (resolveSynthesisMode(profile) !== 'merge') return profile.judge.agent;
   return profile.judge.agent === JUDGE_AGENT
     ? COMPOSER_AGENT
     : profile.judge.agent;
 }
 
-const TASK_PLACEHOLDER = "{task}";
+const TASK_PLACEHOLDER = '{task}';
 
 /**
  * A member with a `question` answers that facet instead of the whole prompt.
@@ -599,17 +632,17 @@ const TASK_PLACEHOLDER = "{task}";
 function formatMemberTask(member: PanelMemberConfig, prompt: string): string[] {
   const question = member.question?.trim();
   const task = prompt.trim();
-  if (!question) return ["Original task:", task];
+  if (!question) return ['Original task:', task];
 
   const facet = question.replaceAll(TASK_PLACEHOLDER, task);
   if (question.includes(TASK_PLACEHOLDER)) {
-    return ["Your assigned facet of the task:", facet];
+    return ['Your assigned facet of the task:', facet];
   }
   return [
-    "Your assigned facet of the task:",
+    'Your assigned facet of the task:',
     facet,
-    "",
-    "Original task:",
+    '',
+    'Original task:',
     task,
   ];
 }
@@ -630,7 +663,7 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
   const blindLabels = input.profile.blindPanelLabels
     ? buildBlindLabelMap([...sortedOutputs, ...sortedFailures])
     : undefined;
-  const merging = resolveSynthesisMode(input.profile) === "merge";
+  const merging = resolveSynthesisMode(input.profile) === 'merge';
   const callerContract = callerContractForPrompt(
     input.prompt,
     input.callerContract,
@@ -639,41 +672,41 @@ function buildJudgeTask(input: BuildJudgeSpawnParamsInput): string {
     ...(merging
       ? COMPOSER_INSTRUCTIONS
       : [
-          "You are the fusion judge.",
-          "Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.",
-          "Synthesize the panel results. Preserve disagreement instead of forcing consensus.",
+          'You are the fusion judge.',
+          'Read-only synthesis only. Leave files, git state, and the workspace untouched. Do not ask other agents. Do not run subagents.',
+          'Synthesize the panel results. Preserve disagreement instead of forcing consensus.',
         ]),
-    "",
-    "Original task:",
+    '',
+    'Original task:',
     input.prompt.trim(),
-    "",
-    "Panel status:",
+    '',
+    'Panel status:',
     ...formatPanelStatus(sortedOutputs, sortedFailures, blindLabels),
-    "",
+    '',
     ...(merging
       ? [
-          "Facet assignments:",
+          'Facet assignments:',
           ...formatFacetAssignments(input.profile, input.prompt, blindLabels),
-          "",
+          '',
         ]
       : []),
-    "Successful panel outputs:",
+    'Successful panel outputs:',
     ...formatPanelOutputs(presentedOutputs, blindLabels),
-    "",
-    "Failed panelists:",
+    '',
+    'Failed panelists:',
     ...formatFailedPanelists(sortedFailures, blindLabels),
-    "",
+    '',
     // Judge-only. The composer has no Contested Claims section, so this block
     // produces content the report silently drops, and its "which panelist was
     // right" wording contradicts the composer's "do not rank panelists".
-    ...(merging ? [] : [...CONTESTED_CLAIMS_INSTRUCTIONS, ""]),
-    "Output contract:",
+    ...(merging ? [] : [...CONTESTED_CLAIMS_INSTRUCTIONS, '']),
+    'Output contract:',
     ...(callerContract
       ? callerOutputContractInstructions(callerContract)
       : merging
         ? COMPOSER_OUTPUT_CONTRACT
         : JUDGE_OUTPUT_CONTRACT),
-  ].join("\n");
+  ].join('\n');
 }
 
 /**
@@ -691,13 +724,13 @@ function formatFacetAssignments(
     const question = member.question?.trim();
     const facet = question
       ? question.replaceAll(TASK_PLACEHOLDER, prompt.trim())
-      : (member.role?.trim() ?? "the whole task");
+      : (member.role?.trim() ?? 'the whole task');
     // The blind map only covers members that produced an output or a failure.
     // A member stopped early by `stopWhenPanelAgrees` is in neither, and
     // falling back to `member.label` would leak the name into the very prompt
     // that is meant to hide it.
     const name = blindLabels
-      ? (blindLabels.get(index) ?? "Candidate (did not report)")
+      ? (blindLabels.get(index) ?? 'Candidate (did not report)')
       : memberLabel(member);
     return `- ${name}: ${facet}`;
   });
@@ -727,7 +760,7 @@ function formatPanelOutputs(
   outputs: readonly PanelOutput[],
   blindLabels?: ReadonlyMap<number, string>,
 ): string[] {
-  if (outputs.length === 0) return ["(none)"];
+  if (outputs.length === 0) return ['(none)'];
   // Agent names and artifact paths carry the member id, so they are withheld
   // when blinding. They are debugging aids for the reader, not judging inputs.
   return outputs.flatMap((output) => [
@@ -739,9 +772,9 @@ function formatPanelOutputs(
           ...(output.artifactPath ? [`Artifact: ${output.artifactPath}`] : []),
           ...(output.sessionPath ? [`Session: ${output.sessionPath}`] : []),
         ]),
-    "",
+    '',
     output.output,
-    "",
+    '',
   ]);
 }
 
@@ -749,7 +782,7 @@ function formatFailedPanelists(
   failures: readonly FailedPanelSummary[],
   blindLabels?: ReadonlyMap<number, string>,
 ): string[] {
-  if (failures.length === 0) return ["(none)"];
+  if (failures.length === 0) return ['(none)'];
   return failures.flatMap((failure) =>
     blindLabels
       ? [`- ${formatPanelName(failure, blindLabels)}: ${failure.summary}`]
@@ -764,7 +797,7 @@ function formatFailedPanelists(
 }
 
 function formatPanelName(
-  item: Pick<PanelOutput, "index" | "id" | "label">,
+  item: Pick<PanelOutput, 'index' | 'id' | 'label'>,
   blindLabels?: ReadonlyMap<number, string>,
 ): string {
   return blindLabels?.get(item.index) ?? panelItemLabel(item);
@@ -776,7 +809,7 @@ function formatPanelName(
  * real names without persisting extra run state.
  */
 export function buildBlindLabelMap(
-  items: readonly Pick<PanelOutput, "index">[],
+  items: readonly Pick<PanelOutput, 'index'>[],
 ): Map<number, string> {
   const labels = new Map<number, string>();
   const indices = [...new Set(items.map((item) => item.index))].sort(
@@ -791,7 +824,7 @@ export function buildBlindLabelMap(
 function blindLabelFor(position: number): string {
   // A..Z, then AA, AB, ... for panels larger than the alphabet.
   let remaining = position;
-  let label = "";
+  let label = '';
   do {
     label = String.fromCharCode(65 + (remaining % 26)) + label;
     remaining = Math.floor(remaining / 26) - 1;
@@ -800,8 +833,8 @@ function blindLabelFor(position: number): string {
 }
 
 function comparePanelItems(
-  left: Pick<PanelOutput, "index">,
-  right: Pick<PanelOutput, "index">,
+  left: Pick<PanelOutput, 'index'>,
+  right: Pick<PanelOutput, 'index'>,
 ): number {
   return left.index - right.index;
 }
@@ -817,7 +850,11 @@ export function shufflePanelItems<T>(items: readonly T[], seed: string): T[] {
   const nextRandom = createSeededRandom(seed);
   for (let index = shuffled.length - 1; index > 0; index--) {
     const swap = Math.floor(nextRandom() * (index + 1));
-    [shuffled[index], shuffled[swap]] = [shuffled[swap]!, shuffled[index]!];
+    const current = shuffled[index];
+    const other = shuffled[swap];
+    if (current === undefined || other === undefined) continue;
+    shuffled[index] = other;
+    shuffled[swap] = current;
   }
   return shuffled;
 }
@@ -840,11 +877,11 @@ function createSeededRandom(seed: string): () => number {
 }
 
 function firstLine(value: string): string {
-  return value.split(/\r?\n/, 1)[0]?.trim() || "unknown failure";
+  return value.split(/\r?\n/, 1)[0]?.trim() || 'unknown failure';
 }
 
 function hasThinkingSuffix(model: string): boolean {
-  const colonIndex = model.lastIndexOf(":");
+  const colonIndex = model.lastIndexOf(':');
   if (colonIndex === -1) return false;
   const suffix = model.slice(colonIndex + 1);
   return (THINKING_LEVELS as readonly string[]).includes(suffix);

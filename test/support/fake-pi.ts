@@ -1,14 +1,14 @@
-import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { TestContext } from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getFusionConfigTemplate } from "../../src/config.js";
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { onTestFinished, type TestContext } from 'vitest';
+import { getFusionConfigTemplate } from '../../src/config.js';
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
   subagentsRpcReplyChannel,
-} from "../../src/subagents-rpc.js";
+} from '../../src/subagents-rpc.js';
 
 /** The parts of a registered tool that tests assert on. */
 export interface RegisteredTool {
@@ -41,7 +41,7 @@ export interface FakeCommandContext {
 }
 
 export interface FakeCustomEntry {
-  type: "custom";
+  type: 'custom';
   customType: string;
   data?: unknown;
 }
@@ -78,7 +78,7 @@ export class FakePi {
   }
 
   registerTool(definition: unknown): void {
-    assert.ok(isRecord(definition) && typeof definition.name === "string");
+    assert.ok(isRecord(definition) && typeof definition.name === 'string');
     this.tools.set(definition.name, definition as unknown as RegisteredTool);
   }
 
@@ -96,10 +96,10 @@ export class FakePi {
   }
 
   appendEntry(customType: string, data?: unknown): void {
-    this.entries.push({ type: "custom", customType, data });
+    this.entries.push({ type: 'custom', customType, data });
   }
 
-  createContext(cwd = "/project"): FakeCommandContext {
+  createContext(cwd = '/project'): FakeCommandContext {
     return {
       cwd,
       hasUI: true,
@@ -165,11 +165,11 @@ export class FakeEventBus {
   private replyToRpcRequest(payload: unknown): void {
     assert.ok(isRecord(payload));
     assert.equal(payload.version, 1);
-    if (typeof payload.requestId !== "string") {
-      throw new TypeError("RPC requestId must be a string.");
+    if (typeof payload.requestId !== 'string') {
+      throw new TypeError('RPC requestId must be a string.');
     }
-    if (typeof payload.method !== "string") {
-      throw new TypeError("RPC method must be a string.");
+    if (typeof payload.method !== 'string') {
+      throw new TypeError('RPC method must be a string.');
     }
 
     const requestId = payload.requestId;
@@ -187,34 +187,34 @@ export class FakeEventBus {
   readonly spawns: Record<string, unknown>[] = [];
 
   private rpcData(method: string, params: unknown): unknown {
-    if (method === "ping") return { ok: true };
-    if (method === "spawn") return this.spawnData(params);
-    if (method === "status") return this.statusData(params);
-    if (method === "stop" || method === "interrupt") return { ok: true };
+    if (method === 'ping') return { ok: true };
+    if (method === 'spawn') return this.spawnData(params);
+    if (method === 'status') return this.statusData(params);
+    if (method === 'stop' || method === 'interrupt') return { ok: true };
     throw new Error(`Unexpected RPC method: ${method}`);
   }
 
   private spawnData(params: unknown): unknown {
-    if (!isRecord(params) || typeof params.workflowScript !== "string") {
-      throw new TypeError("Subagent spawn must use workflowScript.");
+    if (!isRecord(params) || typeof params.workflowScript !== 'string') {
+      throw new TypeError('Subagent spawn must use workflowScript.');
     }
-    assert.equal("clarify" in params, false);
-    assert.equal("agent" in params, false);
-    assert.equal("task" in params, false);
+    assert.equal('clarify' in params, false);
+    assert.equal('agent' in params, false);
+    assert.equal('task' in params, false);
     this.spawns.push(params);
     return {
       details: {
         runId: params.workflowScript.includes('runs.run("judge",')
-          ? "judge-1"
-          : "panel-1",
+          ? 'judge-1'
+          : 'panel-1',
       },
     };
   }
 
   private statusData(params: unknown): unknown {
     assert.ok(isRecord(params));
-    if (typeof params.id !== "string") {
-      throw new TypeError("RPC status id must be a string.");
+    if (typeof params.id !== 'string') {
+      throw new TypeError('RPC status id must be a string.');
     }
     return (
       this.statusResults.get(params.id) ?? { runId: params.id, results: [] }
@@ -226,14 +226,14 @@ export class FakeUi {
   readonly statuses: Array<{ key: string; text: string | undefined }> = [];
   readonly notifications: Array<{
     message: string;
-    type: "info" | "warning" | "error" | undefined;
+    type: 'info' | 'warning' | 'error' | undefined;
   }> = [];
 
   setStatus(key: string, text: string | undefined): void {
     this.statuses.push({ key, text });
   }
 
-  notify(message: string, type?: "info" | "warning" | "error"): void {
+  notify(message: string, type?: 'info' | 'warning' | 'error'): void {
     this.notifications.push({ message, type });
   }
 
@@ -242,14 +242,14 @@ export class FakeUi {
   }
 }
 
-export async function createProjectDir(t: TestContext): Promise<string> {
-  const cwd = await mkdtemp(join(tmpdir(), "pi-fusion-test-"));
-  t.after(async () => {
+export async function createProjectDir(_t: TestContext): Promise<string> {
+  const cwd = await mkdtemp(join(tmpdir(), 'pi-fusion-test-'));
+  onTestFinished(async () => {
     await rm(cwd, { recursive: true, force: true });
   });
-  const configDir = join(cwd, ".pi");
+  const configDir = join(cwd, '.pi');
   await mkdir(configDir, { recursive: true });
-  await writeFile(join(configDir, "fusion.json"), getFusionConfigTemplate());
+  await writeFile(join(configDir, 'fusion.json'), getFusionConfigTemplate());
   return cwd;
 }
 
@@ -258,5 +258,5 @@ export async function nextTick(): Promise<void> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

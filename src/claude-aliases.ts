@@ -1,12 +1,12 @@
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { FusionConfig } from "./types.js";
-import { FusionConfigError } from "./errors.js";
-import { isNodeErrorCode, isNonEmptyString, isRecord } from "./utils.js";
-import type { FusionConfigLoadContext } from "./config.js";
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { CONFIG_DIR_NAME, getAgentDir } from '@earendil-works/pi-coding-agent';
+import type { FusionConfigLoadContext } from './config.js';
+import { FusionConfigError } from './errors.js';
+import type { FusionConfig } from './types.js';
+import { isNodeErrorCode, isNonEmptyString, isRecord } from './utils.js';
 
-const CLAUDE_ALIAS_CONFIG_FILE = "claude-alias.json";
+const CLAUDE_ALIAS_CONFIG_FILE = 'claude-alias.json';
 
 interface ClaudeAliasDefinition {
   slug: string;
@@ -52,7 +52,12 @@ export async function applyClaudeAliasShorthand(
           judge: {
             ...profile.judge,
             ...(profile.judge.model
-              ? { model: resolveClaudeAliasModelSpec(profile.judge.model, aliases) }
+              ? {
+                  model: resolveClaudeAliasModelSpec(
+                    profile.judge.model,
+                    aliases,
+                  ),
+                }
               : {}),
           },
         },
@@ -66,7 +71,7 @@ export function resolveClaudeAliasModelSpec(
   aliases: readonly ClaudeAliasDefinition[],
 ): string {
   const trimmed = model.trim();
-  const slashIndex = trimmed.indexOf("/");
+  const slashIndex = trimmed.indexOf('/');
   if (slashIndex <= 0 || slashIndex === trimmed.length - 1) return trimmed;
 
   const handle = trimmed.slice(0, slashIndex).trim().toLowerCase();
@@ -81,12 +86,12 @@ export function normalizeAnthropicModelRef(modelRef: string): string {
   const normalized = modelRef
     .trim()
     .toLowerCase()
-    .replace(/[._\s]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/[._\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
   if (!normalized) return modelRef.trim();
-  return normalized.startsWith("claude-") ? normalized : `claude-${normalized}`;
+  return normalized.startsWith('claude-') ? normalized : `claude-${normalized}`;
 }
 
 async function loadClaudeAliases(
@@ -126,7 +131,7 @@ async function readOptionalAliasFile(
   try {
     raw = await readTextFile(path);
   } catch (error: unknown) {
-    if (isNodeErrorCode(error, "ENOENT")) return undefined;
+    if (isNodeErrorCode(error, 'ENOENT')) return undefined;
     const message = error instanceof Error ? error.message : String(error);
     throw new FusionConfigError(
       `Could not read Claude alias config at ${path}: ${message}`,
@@ -226,8 +231,8 @@ function normalizeSlug(value: unknown): string | undefined {
   const slug = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
   return slug || undefined;
 }
 
@@ -237,8 +242,8 @@ function normalizeHandle(value: unknown): string | undefined {
   const handle = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
   return handle || undefined;
 }
 
@@ -251,5 +256,5 @@ function getProjectClaudeAliasConfigPath(cwd: string): string {
 }
 
 async function readUtf8File(path: string): Promise<string> {
-  return readFile(path, "utf8");
+  return readFile(path, 'utf8');
 }

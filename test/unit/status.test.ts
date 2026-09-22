@@ -1,25 +1,25 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   clearFusionUi,
   extractFusionProgressCounts,
   formatFusionStatusText,
   isTerminalFusionProgress,
   publishFusionStatus,
-} from "../../src/status.js";
-import type { FusionRun } from "../../src/types.js";
+} from '../../src/status.js';
+import type { FusionRun } from '../../src/types.js';
 
 const RUN: FusionRun = {
-  id: "fusion-1",
-  prompt: "compare",
-  profileName: "quality",
-  phase: "panel",
+  id: 'fusion-1',
+  prompt: 'compare',
+  profileName: 'quality',
+  phase: 'panel',
   createdAt: 1,
   updatedAt: 1,
-  panelRunId: "panel-1",
+  panelRunId: 'panel-1',
 };
 
-test("formatFusionStatusText includes phase, profile, and counts", () => {
+test('formatFusionStatusText includes phase, profile, and counts', () => {
   const text = formatFusionStatusText(RUN, {
     total: 3,
     pending: 1,
@@ -28,10 +28,10 @@ test("formatFusionStatusText includes phase, profile, and counts", () => {
     failed: 0,
   });
 
-  assert.equal(text, "fusion: panel · 1/3 done, 1 running, 0 failed · quality");
+  assert.equal(text, 'fusion: panel · 1/3 done, 1 running, 0 failed · quality');
 });
 
-test("publishFusionStatus and clearFusionUi use only the fusion status key", () => {
+test('publishFusionStatus and clearFusionUi use only the fusion status key', () => {
   const ui = new FakeUi();
   const ctx = { hasUI: true, ui };
 
@@ -39,18 +39,18 @@ test("publishFusionStatus and clearFusionUi use only the fusion status key", () 
   clearFusionUi(ctx);
 
   assert.deepEqual(ui.statuses, [
-    { key: "fusion", text: "fusion: panel · quality · panel-1" },
-    { key: "fusion", text: undefined },
+    { key: 'fusion', text: 'fusion: panel · quality · panel-1' },
+    { key: 'fusion', text: undefined },
   ]);
 });
 
-test("extractFusionProgressCounts reads progress and result containers", () => {
+test('extractFusionProgressCounts reads progress and result containers', () => {
   assert.deepEqual(
     extractFusionProgressCounts({
       details: {
         progress: [
-          { status: "running" },
-          { status: "completed" },
+          { status: 'running' },
+          { status: 'completed' },
           { success: false },
         ],
       },
@@ -60,7 +60,7 @@ test("extractFusionProgressCounts reads progress and result containers", () => {
 
   assert.deepEqual(
     extractFusionProgressCounts({
-      results: [{ success: true }, { exitCode: 1 }, { state: "pending" }],
+      results: [{ success: true }, { exitCode: 1 }, { state: 'pending' }],
     }),
     { total: 3, pending: 1, running: 0, completed: 1, failed: 1 },
   );
@@ -68,7 +68,7 @@ test("extractFusionProgressCounts reads progress and result containers", () => {
   assert.deepEqual(
     extractFusionProgressCounts({
       results: [],
-      steps: [{ status: "running" }],
+      steps: [{ status: 'running' }],
     }),
     { total: 1, pending: 0, running: 1, completed: 0, failed: 0 },
   );
@@ -76,18 +76,18 @@ test("extractFusionProgressCounts reads progress and result containers", () => {
   assert.equal(extractFusionProgressCounts({ results: [] }), undefined);
 });
 
-test("isTerminalFusionProgress recognizes terminal child steps", () => {
+test('isTerminalFusionProgress recognizes terminal child steps', () => {
   assert.equal(
     isTerminalFusionProgress({
-      state: "running",
-      steps: [{ status: "failed" }, { status: "complete" }],
+      state: 'running',
+      steps: [{ status: 'failed' }, { status: 'complete' }],
     }),
     true,
   );
   assert.equal(
     isTerminalFusionProgress({
-      state: "running",
-      steps: [{ status: "failed" }, { status: "running" }],
+      state: 'running',
+      steps: [{ status: 'failed' }, { status: 'running' }],
     }),
     false,
   );

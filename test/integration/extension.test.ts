@@ -1,204 +1,204 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import fusionExtension from "../../src/index.js";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   FUSION_RPC_REQUEST_EVENT,
   fusionRpcReplyEvent,
-} from "../../src/fusion-rpc.js";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/orchestrator.js";
-import { FUSION_RUN_ENTRY_TYPE } from "../../src/run-store.js";
-import { createProjectDir, FakePi, nextTick } from "../support/fake-pi.js";
+} from '../../src/fusion-rpc.js';
+import fusionExtension from '../../src/index.js';
+import { SUBAGENT_ASYNC_COMPLETE_EVENT } from '../../src/orchestrator.js';
+import { FUSION_RUN_ENTRY_TYPE } from '../../src/run-store.js';
+import { createProjectDir, FakePi, nextTick } from '../support/fake-pi.js';
 
-test("fusionExtension registers documented commands", () => {
+test('fusionExtension registers documented commands', () => {
   const pi = new FakePi();
 
   fusionExtension(pi.asExtensionApi());
 
-  assert.deepEqual([...pi.commands.keys()].sort(), ["fusion"]);
+  assert.deepEqual([...pi.commands.keys()].sort(), ['fusion']);
 });
 
-test("fusionExtension shows a short help message for bare /fusion", async (t) => {
+test('fusionExtension shows a short help message for bare /fusion', async (t) => {
   const pi = new FakePi();
   const ctx = pi.createContext(await createProjectDir(t));
   fusionExtension(pi.asExtensionApi());
 
-  await pi.runCommand("fusion", "", ctx);
+  await pi.runCommand('fusion', '', ctx);
 
-  assert.match(ctx.ui.notifications.at(-1)?.message ?? "", /Fusion commands/);
-  assert.match(ctx.ui.notifications.at(-1)?.message ?? "", /\/fusion status/);
+  assert.match(ctx.ui.notifications.at(-1)?.message ?? '', /Fusion commands/);
+  assert.match(ctx.ui.notifications.at(-1)?.message ?? '', /\/fusion status/);
 });
 
-test("fusionExtension routes /fusion status through the simple command namespace", async (t) => {
+test('fusionExtension routes /fusion status through the simple command namespace', async (t) => {
   const pi = new FakePi();
   const ctx = pi.createContext(await createProjectDir(t));
   fusionExtension(pi.asExtensionApi());
 
-  await pi.runCommand("fusion", "status", ctx);
+  await pi.runCommand('fusion', 'status', ctx);
 
-  assert.equal(pi.messages.at(-1)?.customType, "fusion-status");
-  assert.match(pi.messages.at(-1)?.content ?? "", /State: idle/);
+  assert.equal(pi.messages.at(-1)?.customType, 'fusion-status');
+  assert.match(pi.messages.at(-1)?.content ?? '', /State: idle/);
 });
 
-test("fusionExtension starts and completes a run through pi-subagents RPC events", async (t) => {
+test('fusionExtension starts and completes a run through pi-subagents RPC events', async (t) => {
   const pi = new FakePi();
   const ctx = pi.createContext(await createProjectDir(t));
   fusionExtension(pi.asExtensionApi());
 
-  await pi.runCommand("fusion", "compare APIs", ctx);
+  await pi.runCommand('fusion', 'compare APIs', ctx);
 
-  assert.match(ctx.ui.lastStatus("fusion") ?? "", /panel-1/);
+  assert.match(ctx.ui.lastStatus('fusion') ?? '', /panel-1/);
   // start snapshot, durable pre-spawn intent, then returned panel ID
   assert.equal(pi.entries.length, 3);
   assert.equal(pi.entries.at(-1)?.customType, FUSION_RUN_ENTRY_TYPE);
 
-  pi.events.statusResults.set("panel-1", {
-    runId: "panel-1",
-    state: "complete",
+  pi.events.statusResults.set('panel-1', {
+    runId: 'panel-1',
+    state: 'complete',
     results: [
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Architect chooses A.",
+        output: 'Architect chooses A.',
       },
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Implementer chooses A.",
+        output: 'Implementer chooses A.',
       },
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Tester chooses A.",
+        output: 'Tester chooses A.',
       },
     ],
   });
-  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: 'panel-1' });
   await nextTick();
-  pi.events.statusResults.set("judge-1", {
-    runId: "judge-1",
-    state: "complete",
+  pi.events.statusResults.set('judge-1', {
+    runId: 'judge-1',
+    state: 'complete',
     results: [
       {
-        agent: "pi-fusion.fusion-judge",
+        agent: 'pi-fusion.fusion-judge',
         success: true,
-        output: "# Fusion Report\n\n## Recommendation\nChoose A.",
+        output: '# Fusion Report\n\n## Recommendation\nChoose A.',
       },
     ],
   });
-  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "judge-1" });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: 'judge-1' });
   await nextTick();
 
-  assert.equal(pi.messages.at(-1)?.customType, "fusion-report");
-  assert.match(pi.messages.at(-1)?.content ?? "", /Choose A/);
-  assert.equal(ctx.ui.lastStatus("fusion"), undefined);
+  assert.equal(pi.messages.at(-1)?.customType, 'fusion-report');
+  assert.match(pi.messages.at(-1)?.content ?? '', /Choose A/);
+  assert.equal(ctx.ui.lastStatus('fusion'), undefined);
 });
 
-test("fusionExtension runs structured RPC start, status, and cancel through the orchestrator", async (t) => {
+test('fusionExtension runs structured RPC start, status, and cancel through the orchestrator', async (t) => {
   const pi = new FakePi();
   const ctx = pi.createContext(await createProjectDir(t));
   fusionExtension(pi.asExtensionApi());
-  await pi.emitLifecycle("session_start", {}, ctx);
+  await pi.emitLifecycle('session_start', {}, ctx);
 
-  const started = onceEvent(pi, fusionRpcReplyEvent("rpc-start"));
+  const started = onceEvent(pi, fusionRpcReplyEvent('rpc-start'));
   pi.events.emit(FUSION_RPC_REQUEST_EVENT, {
     version: 1,
-    requestId: "rpc-start",
-    method: "start",
+    requestId: 'rpc-start',
+    method: 'start',
     params: {
-      prompt: "compare RPC plans",
-      operationId: "plan-step-1",
+      prompt: 'compare RPC plans',
+      operationId: 'plan-step-1',
     },
   });
   const startReply = await started;
   assert.ok(isRecord(startReply) && isRecord(startReply.data));
   assert.equal(startReply.success, true);
-  assert.equal(startReply.data.operationId, "plan-step-1");
+  assert.equal(startReply.data.operationId, 'plan-step-1');
   assert.equal(startReply.data.replayed, false);
   assert.ok(isRecord(startReply.data.run));
-  assert.equal(startReply.data.run.operationId, "plan-step-1");
-  assert.equal(startReply.data.run.phase, "panel");
+  assert.equal(startReply.data.run.operationId, 'plan-step-1');
+  assert.equal(startReply.data.run.phase, 'panel');
 
-  const status = onceEvent(pi, fusionRpcReplyEvent("rpc-status"));
+  const status = onceEvent(pi, fusionRpcReplyEvent('rpc-status'));
   pi.events.emit(FUSION_RPC_REQUEST_EVENT, {
     version: 1,
-    requestId: "rpc-status",
-    method: "status",
-    params: { operationId: "plan-step-1" },
+    requestId: 'rpc-status',
+    method: 'status',
+    params: { operationId: 'plan-step-1' },
   });
   const statusReply = await status;
   assert.ok(isRecord(statusReply) && isRecord(statusReply.data));
   assert.ok(isRecord(statusReply.data.run));
-  assert.equal(statusReply.data.run.phase, "panel");
+  assert.equal(statusReply.data.run.phase, 'panel');
   assert.equal(statusReply.data.run.terminal, false);
 
-  const cancelled = onceEvent(pi, fusionRpcReplyEvent("rpc-cancel"));
+  const cancelled = onceEvent(pi, fusionRpcReplyEvent('rpc-cancel'));
   pi.events.emit(FUSION_RPC_REQUEST_EVENT, {
     version: 1,
-    requestId: "rpc-cancel",
-    method: "cancel",
-    params: { operationId: "plan-step-1" },
+    requestId: 'rpc-cancel',
+    method: 'cancel',
+    params: { operationId: 'plan-step-1' },
   });
   const cancelReply = await cancelled;
   assert.ok(isRecord(cancelReply) && isRecord(cancelReply.data));
   assert.equal(cancelReply.data.cancelled, true);
   assert.ok(isRecord(cancelReply.data.run));
-  assert.equal(cancelReply.data.run.phase, "cancelled");
+  assert.equal(cancelReply.data.run.phase, 'cancelled');
   assert.equal(cancelReply.data.run.terminal, true);
 });
 
-test("fusionExtension restores an active run on session_start and unsubscribes on shutdown", async (t) => {
+test('fusionExtension restores an active run on session_start and unsubscribes on shutdown', async (t) => {
   const cwd = await createProjectDir(t);
   const firstPi = new FakePi();
   const firstCtx = firstPi.createContext(cwd);
   fusionExtension(firstPi.asExtensionApi());
-  await firstPi.runCommand("fusion", "compare APIs", firstCtx);
+  await firstPi.runCommand('fusion', 'compare APIs', firstCtx);
 
   const restoredPi = new FakePi(firstPi.entries);
   const restoredCtx = restoredPi.createContext(cwd);
   fusionExtension(restoredPi.asExtensionApi());
 
-  await restoredPi.emitLifecycle("session_start", {}, restoredCtx);
+  await restoredPi.emitLifecycle('session_start', {}, restoredCtx);
 
-  assert.match(restoredCtx.ui.lastStatus("fusion") ?? "", /panel-1/);
+  assert.match(restoredCtx.ui.lastStatus('fusion') ?? '', /panel-1/);
 
-  restoredPi.events.statusResults.set("panel-1", {
-    runId: "panel-1",
-    state: "complete",
+  restoredPi.events.statusResults.set('panel-1', {
+    runId: 'panel-1',
+    state: 'complete',
     results: [
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Restored architecture output.",
+        output: 'Restored architecture output.',
       },
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Restored implementation output.",
+        output: 'Restored implementation output.',
       },
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        output: "Restored test output.",
+        output: 'Restored test output.',
       },
     ],
   });
-  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: 'panel-1' });
   await nextTick();
-  restoredPi.events.statusResults.set("judge-1", {
-    runId: "judge-1",
-    state: "complete",
+  restoredPi.events.statusResults.set('judge-1', {
+    runId: 'judge-1',
+    state: 'complete',
     results: [
       {
-        agent: "pi-fusion.fusion-judge",
+        agent: 'pi-fusion.fusion-judge',
         success: true,
-        output: "# Fusion Report\n\n## Summary\nRestored output.",
+        output: '# Fusion Report\n\n## Summary\nRestored output.',
       },
     ],
   });
-  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "judge-1" });
+  restoredPi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: 'judge-1' });
   await nextTick();
 
-  assert.match(restoredPi.messages.at(-1)?.content ?? "", /Restored output/);
+  assert.match(restoredPi.messages.at(-1)?.content ?? '', /Restored output/);
 
   const listenerCountBeforeShutdown = restoredPi.events.listenerCount(
     SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -206,7 +206,7 @@ test("fusionExtension restores an active run on session_start and unsubscribes o
   const rpcListenerCountBeforeShutdown = restoredPi.events.listenerCount(
     FUSION_RPC_REQUEST_EVENT,
   );
-  await restoredPi.emitLifecycle("session_shutdown", {}, restoredCtx);
+  await restoredPi.emitLifecycle('session_shutdown', {}, restoredCtx);
 
   assert.equal(listenerCountBeforeShutdown, 1);
   assert.equal(rpcListenerCountBeforeShutdown, 1);
@@ -215,7 +215,7 @@ test("fusionExtension restores an active run on session_start and unsubscribes o
     0,
   );
   assert.equal(restoredPi.events.listenerCount(FUSION_RPC_REQUEST_EVENT), 0);
-  assert.equal(restoredCtx.ui.lastStatus("fusion"), undefined);
+  assert.equal(restoredCtx.ui.lastStatus('fusion'), undefined);
 });
 
 function onceEvent(pi: FakePi, event: string): Promise<unknown> {
@@ -233,30 +233,27 @@ function onceEvent(pi: FakePi, event: string): Promise<unknown> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-test("start_fusion_review exposes the parameters a skill can drive", () => {
+test('start_fusion_review exposes the parameters a skill can drive', () => {
   const pi = new FakePi();
 
   fusionExtension(pi.asExtensionApi());
 
-  const tool = pi.tools.get("start_fusion_review");
-  assert.ok(tool, "start_fusion_review must be registered");
-  assert.deepEqual(
-    Object.keys(tool.parameters.properties).sort(),
-    [
-      "executionLifetime",
-      "judgeTimeoutMs",
-      "panel",
-      "panelGraceMs",
-      "panelTimeoutMs",
-      "panelistTimeoutMs",
-      "profile",
-      "prompt",
-    ],
-  );
-  assert.deepEqual(tool.parameters.required, ["prompt"]);
+  const tool = pi.tools.get('start_fusion_review');
+  assert.ok(tool, 'start_fusion_review must be registered');
+  assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
+    'executionLifetime',
+    'judgeTimeoutMs',
+    'panel',
+    'panelGraceMs',
+    'panelTimeoutMs',
+    'panelistTimeoutMs',
+    'profile',
+    'prompt',
+  ]);
+  assert.deepEqual(tool.parameters.required, ['prompt']);
   const promptSchema = tool.parameters.properties.prompt;
   const panelSchema = tool.parameters.properties.panel;
   const profileSchema = tool.parameters.properties.profile;
@@ -265,7 +262,7 @@ test("start_fusion_review exposes the parameters a skill can drive", () => {
   assert.ok(isRecord(panelSchema.items));
   assert.ok(isRecord(profileSchema));
   assert.equal(promptSchema.minLength, 1);
-  assert.equal(promptSchema.pattern, ".*\\S.*");
+  assert.equal(promptSchema.pattern, '.*\\S.*');
   assert.equal(panelSchema.minItems, 1);
   assert.equal(panelSchema.items.minLength, 1);
   assert.equal(profileSchema.minLength, 1);
@@ -274,45 +271,55 @@ test("start_fusion_review exposes the parameters a skill can drive", () => {
   assert.match(tool.description, /audit|breadth/i);
 });
 
-test("start_fusion_review forwards an inline panel and omits it when absent", async (t) => {
+test('start_fusion_review forwards an inline panel and omits it when absent', async (t) => {
   const pi = new FakePi();
   const ctx = pi.createContext(await createProjectDir(t));
   fusionExtension(pi.asExtensionApi());
-  const tool = pi.tools.get("start_fusion_review");
+  const tool = pi.tools.get('start_fusion_review');
   assert.ok(tool);
 
   await tool.execute(
-    "call-1",
-    { prompt: "compare", panel: ["opus", "gpt"] },
+    'call-1',
+    { prompt: 'compare', panel: ['opus', 'gpt'] },
     undefined,
     undefined,
     ctx,
   );
   const withPanel = pi.events.spawns.at(-1) as { workflowScript: string };
   const withPanelTasks = JSON.parse(
-    withPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? "null",
+    withPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
   ) as { model?: string }[];
   assert.deepEqual(
     withPanelTasks.map((entry) => entry.model),
-    ["opus", "gpt"],
+    ['opus', 'gpt'],
   );
 
   // A second run needs the first to finish; the tool rejects a concurrent one.
-  pi.events.statusResults.set("panel-1", {
-    runId: "panel-1",
-    state: "complete",
+  pi.events.statusResults.set('panel-1', {
+    runId: 'panel-1',
+    state: 'complete',
     results: [
-      { agent: "pi-fusion.fusion-panelist", success: true, output: "A." },
-      { agent: "pi-fusion.fusion-panelist", success: false, error: "Second panelist unavailable." },
+      { agent: 'pi-fusion.fusion-panelist', success: true, output: 'A.' },
+      {
+        agent: 'pi-fusion.fusion-panelist',
+        success: false,
+        error: 'Second panelist unavailable.',
+      },
     ],
   });
-  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "panel-1" });
+  pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: 'panel-1' });
   await nextTick();
 
-  await tool.execute("call-2", { prompt: "compare" }, undefined, undefined, ctx);
+  await tool.execute(
+    'call-2',
+    { prompt: 'compare' },
+    undefined,
+    undefined,
+    ctx,
+  );
   const withoutPanel = pi.events.spawns.at(-1) as { workflowScript: string };
   const withoutPanelTasks = JSON.parse(
-    withoutPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? "null",
+    withoutPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
   ) as unknown[];
-  assert.equal(withoutPanelTasks.length, 3, "falls back to the profile panel");
+  assert.equal(withoutPanelTasks.length, 3, 'falls back to the profile panel');
 });

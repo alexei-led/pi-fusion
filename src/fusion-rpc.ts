@@ -1,53 +1,60 @@
+import { join } from 'node:path';
 import {
   detectCallerOutputContract,
   isCallerOutputContract,
   validateCallerOutput,
-} from "./caller-contract.js";
-import { join } from "node:path";
-import { FusionOperationJournal, type FusionOperationEvidence } from "./operation-journal.js";
-import { expectedExecutionRoute, isExecutionLifetime, requestDigest } from "./runtime-contract.js";
-import { isReviewContext } from "./review-context.js";
+} from './caller-contract.js';
+import {
+  type FusionOperationEvidence,
+  FusionOperationJournal,
+} from './operation-journal.js';
 import type {
   FusionCommandContext,
   FusionCommandResult,
-} from "./orchestrator.js";
-import type { FusionRunStore } from "./run-store.js";
+} from './orchestrator.js';
+import { isReviewContext } from './review-context.js';
+import type { FusionRunStore } from './run-store.js';
+import {
+  expectedExecutionRoute,
+  isExecutionLifetime,
+  requestDigest,
+} from './runtime-contract.js';
 import type {
   CallerOutputContract,
+  ExecutionLifetime,
   FusionPhase,
+  FusionReviewContext,
   FusionRun,
   FusionTimeoutOverrides,
   ParsedFusionArgs,
-  ExecutionLifetime,
-  FusionReviewContext,
-} from "./types.js";
-import { isNonEmptyString, isRecord } from "./utils.js";
+} from './types.js';
+import { isNonEmptyString, isRecord } from './utils.js';
 
 export const FUSION_RPC_VERSION = 1;
-export const FUSION_RPC_REQUEST_EVENT = "fusion:rpc:v1:request";
-export const FUSION_RPC_REPLY_EVENT_PREFIX = "fusion:rpc:v1:reply:";
+export const FUSION_RPC_REQUEST_EVENT = 'fusion:rpc:v1:request';
+export const FUSION_RPC_REPLY_EVENT_PREFIX = 'fusion:rpc:v1:reply:';
 
 export const FUSION_RPC_METHODS = [
-  "ping",
-  "start",
-  "status",
-  "result",
-  "cancel",
-  "adopt",
+  'ping',
+  'start',
+  'status',
+  'result',
+  'cancel',
+  'adopt',
 ] as const;
 
 export type FusionRpcMethod = (typeof FUSION_RPC_METHODS)[number];
 
 export type FusionRpcErrorCode =
-  | "invalid_request"
-  | "unsupported_method"
-  | "busy"
-  | "not_found"
-  | "not_ready"
-  | "unavailable"
-  | "start_failed"
-  | "cancel_failed"
-  | "internal";
+  | 'invalid_request'
+  | 'unsupported_method'
+  | 'busy'
+  | 'not_found'
+  | 'not_ready'
+  | 'unavailable'
+  | 'start_failed'
+  | 'cancel_failed'
+  | 'internal';
 
 export interface FusionRpcRequestEnvelope {
   version: typeof FUSION_RPC_VERSION;
@@ -94,12 +101,14 @@ export interface FusionRpcStartData {
   fusionRequestDigest?: string;
 }
 
-export type FusionRpcStatusData = {
-  reviewContext?: FusionReviewContext;
-  run: FusionRunState;
-  effectiveExecutionLifetime?: ExecutionLifetime;
-  processTerminalProof?: unknown;
-} | FusionOperationEvidence;
+export type FusionRpcStatusData =
+  | {
+      reviewContext?: FusionReviewContext;
+      run: FusionRunState;
+      effectiveExecutionLifetime?: ExecutionLifetime;
+      processTerminalProof?: unknown;
+    }
+  | FusionOperationEvidence;
 
 export interface FusionRpcCallerOutput {
   contract: CallerOutputContract;
@@ -120,7 +129,7 @@ export interface FusionRpcCancelData {
   cancellationRequested?: boolean;
   run?: FusionRunState;
   operationId?: string;
-  state?: FusionOperationEvidence["state"];
+  state?: FusionOperationEvidence['state'];
   neverStarted?: boolean;
   replaySafe?: boolean;
   requestDigest?: string;
@@ -149,7 +158,10 @@ export type FusionRpcReplyEnvelope =
     };
 
 export interface FusionRpcEventBus {
-  on(event: string, handler: (payload: unknown) => void): (() => void) | void;
+  on(
+    event: string,
+    handler: (payload: unknown) => void,
+  ): (() => void) | undefined;
   emit(event: string, payload: unknown): void;
 }
 
@@ -164,8 +176,9 @@ export interface FusionRpcOrchestrator {
 
 type FusionRpcRunStore = Pick<
   FusionRunStore,
-  "getActiveRun" | "getLastRunSummary" | "getRunById" | "getRunByOperationId"
-> & Partial<Pick<FusionRunStore, "refreshDurable" | "getRestoreError">>;
+  'getActiveRun' | 'getLastRunSummary' | 'getRunById' | 'getRunByOperationId'
+> &
+  Partial<Pick<FusionRunStore, 'refreshDurable' | 'getRestoreError'>>;
 
 export interface FusionRpcDependencies {
   events: FusionRpcEventBus;
@@ -199,20 +212,26 @@ interface RunParams {
 
 type ObservableRun = Pick<
   FusionRun,
-  | "id"
-  | "operationId"
-  | "phase"
-  | "prompt"
-  | "outputContract"
-  | "report"
-  | "error"
-  | "executionLifetime" | "effectiveExecutionLifetime" | "requestDigest"
-  | "processTerminalProof" | "cancellationRequested" | "observation"
-  | "spawnIntent" | "panelRunId" | "judgeRunId"
-  | "reviewContext"
+  | 'id'
+  | 'operationId'
+  | 'phase'
+  | 'prompt'
+  | 'outputContract'
+  | 'report'
+  | 'error'
+  | 'executionLifetime'
+  | 'effectiveExecutionLifetime'
+  | 'requestDigest'
+  | 'processTerminalProof'
+  | 'cancellationRequested'
+  | 'observation'
+  | 'spawnIntent'
+  | 'panelRunId'
+  | 'judgeRunId'
+  | 'reviewContext'
 >;
 
-const TERMINAL_PHASES = new Set<FusionPhase>(["done", "failed", "cancelled"]);
+const TERMINAL_PHASES = new Set<FusionPhase>(['done', 'failed', 'cancelled']);
 
 export function fusionRpcReplyEvent(requestId: string): string {
   return `${FUSION_RPC_REPLY_EVENT_PREFIX}${requestId}`;
@@ -225,12 +244,15 @@ export function registerFusionRpc({
   getContext,
 }: FusionRpcDependencies): () => void {
   const operations = new Map<string, OperationRecord>();
-  const journal = (): FusionOperationJournal => new FusionOperationJournal(join(requireContext(getContext()).cwd, ".pi", "fusion", "operations"));
+  const journal = (): FusionOperationJournal =>
+    new FusionOperationJournal(
+      join(requireContext(getContext()).cwd, '.pi', 'fusion', 'operations'),
+    );
   const unsubscribe = events.on(FUSION_RPC_REQUEST_EVENT, (event) => {
     void handleRequest(event);
   });
 
-  return typeof unsubscribe === "function" ? unsubscribe : () => undefined;
+  return typeof unsubscribe === 'function' ? unsubscribe : () => undefined;
 
   async function handleRequest(event: unknown): Promise<void> {
     const request = parseRequest(event);
@@ -252,28 +274,39 @@ export function registerFusionRpc({
   async function dispatch(request: FusionRpcRequestEnvelope): Promise<unknown> {
     store.refreshDurable?.();
     const restoreError = store.getRestoreError?.();
-    if (restoreError) throw new RpcFailure({ code: "unavailable", message: restoreError });
+    if (restoreError)
+      throw new RpcFailure({ code: 'unavailable', message: restoreError });
     switch (request.method) {
-      case "ping":
+      case 'ping':
         return {
           pong: true,
           version: FUSION_RPC_VERSION,
           methods: FUSION_RPC_METHODS,
-          ...(orchestrator.executionCapabilities ? { capabilities: await orchestrator.executionCapabilities() } : {}),
+          ...(orchestrator.executionCapabilities
+            ? { capabilities: await orchestrator.executionCapabilities() }
+            : {}),
         } satisfies FusionRpcPingData;
-      case "start":
+      case 'start':
         return start(request.params);
-      case "status": {
-        const selector = parseRunParams(request.params, "status");
-        if (selector.operationId && !store.getRunByOperationId(selector.operationId)) return journal().lookup(selector.operationId);
-        const run = findObservedRun(request.params, "status");
-        return { run: stateFor(run), ...runtimeData(run), ...operationIdentity(run.operationId) } satisfies FusionRpcStatusData;
+      case 'status': {
+        const selector = parseRunParams(request.params, 'status');
+        if (
+          selector.operationId &&
+          !store.getRunByOperationId(selector.operationId)
+        )
+          return journal().lookup(selector.operationId);
+        const run = findObservedRun(request.params, 'status');
+        return {
+          run: stateFor(run),
+          ...runtimeData(run),
+          ...operationIdentity(run.operationId),
+        } satisfies FusionRpcStatusData;
       }
-      case "result":
+      case 'result':
         return result(request.params);
-      case "cancel":
+      case 'cancel':
         return cancel(request.params);
-      case "adopt":
+      case 'adopt':
         return adopt(request.params);
     }
   }
@@ -283,17 +316,26 @@ export function registerFusionRpc({
     const digest = requestDigest(input);
     const persisted = store.getRunByOperationId(input.operationId);
     if (persisted) {
-      if (persisted.requestDigest !== undefined && persisted.requestDigest !== digest) throw invalidParams("operationId was already used with a different request digest.");
+      if (
+        persisted.requestDigest !== undefined &&
+        persisted.requestDigest !== digest
+      )
+        throw invalidParams(
+          'operationId was already used with a different request digest.',
+        );
       return startData(input.operationId, persisted, true, input.digest);
     }
 
     const known = operations.get(input.operationId);
-    if (known?.digest && known.digest !== digest) throw invalidParams("operationId was already used with a different request digest.");
+    if (known?.digest && known.digest !== digest)
+      throw invalidParams(
+        'operationId was already used with a different request digest.',
+      );
     if (known?.runId) {
       const run = store.getRunById(known.runId);
       if (run) return startData(input.operationId, run, true, input.digest);
       operations.delete(input.operationId);
-    } else if (known?.pending) {
+    } else if (known?.pending !== undefined) {
       const response = await known.pending;
       return { ...response, replayed: true };
     }
@@ -301,16 +343,37 @@ export function registerFusionRpc({
     const context = requireContext(getContext());
     const args = { ...toParsedFusionArgs(input), requestDigest: digest };
     if (input.executionLifetime) {
-      const claim = journal().claim(input.operationId, digest, input.digest, args);
-      if (claim === "cancelled") throw new RpcFailure({ code: "start_failed", message: "Fusion operation was cancelled before launch." });
-      if (claim === "existing" && !journal().preflight(input.operationId)) throw new RpcFailure({ code: "not_ready", message: "Fusion operation launch is unresolved; retry lookup with the same operationId." });
+      const claim = journal().claim(
+        input.operationId,
+        digest,
+        input.digest,
+        args,
+      );
+      if (claim === 'cancelled')
+        throw new RpcFailure({
+          code: 'start_failed',
+          message: 'Fusion operation was cancelled before launch.',
+        });
+      if (claim === 'existing' && !journal().preflight(input.operationId))
+        throw new RpcFailure({
+          code: 'not_ready',
+          message:
+            'Fusion operation launch is unresolved; retry lookup with the same operationId.',
+        });
     }
-    const preflight = input.executionLifetime ? journal().preflight(input.operationId) : undefined;
+    const preflight = input.executionLifetime
+      ? journal().preflight(input.operationId)
+      : undefined;
     const pending = orchestrator
       .startRun(preflight?.args ?? args, context)
       .then((result) => {
         store.refreshDurable?.();
-        if (input.executionLifetime && (result.status === "failed" || result.status === "conflict") && !store.getRunByOperationId(input.operationId)) journal().releaseBeforeLaunch(input.operationId, preflight?.runId);
+        if (
+          input.executionLifetime &&
+          (result.status === 'failed' || result.status === 'conflict') &&
+          !store.getRunByOperationId(input.operationId)
+        )
+          journal().releaseBeforeLaunch(input.operationId, preflight?.runId);
         return startData(
           input.operationId,
           runFromStartResult(result, input.operationId, store),
@@ -323,7 +386,8 @@ export function registerFusionRpc({
     try {
       const response = await pending;
       operations.set(input.operationId, { runId: response.run.runId, digest });
-      if (input.executionLifetime && journal().cancelled(input.operationId)) await orchestrator.cancelActiveRun(context);
+      if (input.executionLifetime && journal().cancelled(input.operationId))
+        await orchestrator.cancelActiveRun(context);
       return response;
     } catch (error: unknown) {
       operations.delete(input.operationId);
@@ -332,43 +396,80 @@ export function registerFusionRpc({
   }
 
   function result(params: unknown): FusionRpcResultData {
-    const run = findObservedRun(params, "result");
+    const run = findObservedRun(params, 'result');
     const state = stateFor(run);
     if (!state.terminal) {
       throw new RpcFailure({
-        code: "not_ready",
+        code: 'not_ready',
         message: `Fusion run ${state.runId} is not terminal.`,
         details: { run: state },
       });
     }
     const callerOutput = validatedCallerOutput(run);
-    return { run: state, ...runtimeData(run), ...operationIdentity(run.operationId), ...(callerOutput ? { callerOutput } : {}) };
+    return {
+      run: state,
+      ...runtimeData(run),
+      ...operationIdentity(run.operationId),
+      ...(callerOutput ? { callerOutput } : {}),
+    };
   }
 
-  function operationIdentity(operationId: string | undefined): { requestDigest?: string; fusionRequestDigest?: string; operationId?: string } {
+  function operationIdentity(operationId: string | undefined): {
+    requestDigest?: string;
+    fusionRequestDigest?: string;
+    operationId?: string;
+  } {
     if (!operationId) return {};
     const evidence = journal().lookup(operationId);
     if (!evidence.requestDigest && !evidence.fusionRequestDigest) return {};
-    return { operationId, ...(evidence.requestDigest ? { requestDigest: evidence.requestDigest } : {}), ...(evidence.fusionRequestDigest ? { fusionRequestDigest: evidence.fusionRequestDigest } : {}) };
+    return {
+      operationId,
+      ...(evidence.requestDigest
+        ? { requestDigest: evidence.requestDigest }
+        : {}),
+      ...(evidence.fusionRequestDigest
+        ? { fusionRequestDigest: evidence.fusionRequestDigest }
+        : {}),
+    };
   }
 
-  function findObservedRun(params: unknown, method: "status" | "result"): ObservableRun {
+  function findObservedRun(
+    params: unknown,
+    method: 'status' | 'result',
+  ): ObservableRun {
     const selector = parseRunParams(params, method);
-    if (selector.operationId && !store.getRunByOperationId(selector.operationId)) {
+    if (
+      selector.operationId &&
+      !store.getRunByOperationId(selector.operationId)
+    ) {
       const state = journal().state(selector.operationId);
-      if (state !== "absent") throw new RpcFailure({ code: "not_ready", message: "Fusion operation has a durable intent without a resolved run.", details: { operationId: selector.operationId, state } });
+      if (state !== 'absent')
+        throw new RpcFailure({
+          code: 'not_ready',
+          message:
+            'Fusion operation has a durable intent without a resolved run.',
+          details: { operationId: selector.operationId, state },
+        });
     }
     return findRun(params, operations, store, method);
   }
 
   async function cancel(params: unknown): Promise<FusionRpcCancelData> {
-    const selector = parseRunParams(params, "cancel");
-    if (selector.operationId && (!store.getRunByOperationId(selector.operationId) || store.getRunByOperationId(selector.operationId)?.executionLifetime)) {
-      const evidence = journal().cancel(selector.operationId, store.getRunByOperationId(selector.operationId) !== undefined);
-      if (!store.getRunByOperationId(selector.operationId)) return { cancelled: evidence.neverStarted === true, ...evidence };
+    const selector = parseRunParams(params, 'cancel');
+    if (
+      selector.operationId &&
+      (!store.getRunByOperationId(selector.operationId) ||
+        store.getRunByOperationId(selector.operationId)?.executionLifetime)
+    ) {
+      const evidence = journal().cancel(
+        selector.operationId,
+        store.getRunByOperationId(selector.operationId) !== undefined,
+      );
+      if (!store.getRunByOperationId(selector.operationId))
+        return { cancelled: evidence.neverStarted === true, ...evidence };
     }
     const selected = hasRunSelector(selector)
-      ? findRun(params, operations, store, "cancel")
+      ? findRun(params, operations, store, 'cancel')
       : undefined;
     const active = store.getActiveRun();
 
@@ -387,12 +488,17 @@ export function registerFusionRpc({
 
     const context = requireContext(getContext());
     const cancellation = await orchestrator.cancelActiveRun(context);
-    if (cancellation.status === "cancelled") {
-      return { cancelled: true, run: stateFor(cancellation.run), ...runtimeData(cancellation.run), ...operationIdentity(cancellation.run.operationId) };
+    if (cancellation.status === 'cancelled') {
+      return {
+        cancelled: true,
+        run: stateFor(cancellation.run),
+        ...runtimeData(cancellation.run),
+        ...operationIdentity(cancellation.run.operationId),
+      };
     }
-    if (cancellation.status === "failed") {
+    if (cancellation.status === 'failed') {
       throw new RpcFailure({
-        code: "cancel_failed",
+        code: 'cancel_failed',
         message: cancellation.error,
         details: { run: stateFor(active) },
       });
@@ -401,7 +507,7 @@ export function registerFusionRpc({
     const current = store.getRunById(active.id);
     if (!current) return { cancelled: false };
     return {
-      cancelled: current.phase === "cancelled",
+      cancelled: current.phase === 'cancelled',
       ...(current.cancellationRequested ? { cancellationRequested: true } : {}),
       run: stateFor(current),
       ...operationIdentity(current.operationId),
@@ -413,8 +519,8 @@ export function registerFusionRpc({
     const run = store.getRunById(runId);
     if (!run) {
       throw new RpcFailure({
-        code: "not_found",
-        message: "Fusion run was not found in this session history.",
+        code: 'not_found',
+        message: 'Fusion run was not found in this session history.',
         details: { runId },
       });
     }
@@ -455,8 +561,8 @@ function parseRequest(
 ): FusionRpcRequestEnvelope | RpcRequestFailure {
   if (!isRecord(input)) {
     return new RpcRequestFailure(undefined, undefined, {
-      code: "invalid_request",
-      message: "RPC request must be an object.",
+      code: 'invalid_request',
+      message: 'RPC request must be an object.',
     });
   }
 
@@ -464,19 +570,19 @@ function parseRequest(
   const method = input.method;
   if (!isNonEmptyString(requestId)) {
     return new RpcRequestFailure(undefined, undefined, {
-      code: "invalid_request",
-      message: "RPC requestId must be a non-empty string.",
+      code: 'invalid_request',
+      message: 'RPC requestId must be a non-empty string.',
     });
   }
   if (!isMethod(method)) {
     return new RpcRequestFailure(requestId, undefined, {
-      code: "unsupported_method",
-      message: "RPC method is unsupported.",
+      code: 'unsupported_method',
+      message: 'RPC method is unsupported.',
     });
   }
   if (input.version !== FUSION_RPC_VERSION) {
     return new RpcRequestFailure(requestId, method, {
-      code: "invalid_request",
+      code: 'invalid_request',
       message: `RPC version must be ${FUSION_RPC_VERSION}.`,
     });
   }
@@ -493,45 +599,64 @@ function parseRequest(
 
 function parseStartParams(input: unknown): StartParams {
   if (!isRecord(input)) {
-    throw invalidParams("start parameters must be an object.");
+    throw invalidParams('start parameters must be an object.');
   }
 
   const prompt = input.prompt;
   if (!isNonEmptyString(prompt)) {
-    throw invalidParams("start prompt must be a non-empty string.");
+    throw invalidParams('start prompt must be a non-empty string.');
   }
 
   const operationId = input.operationId;
   if (!isNonEmptyString(operationId)) {
-    throw invalidParams("start operationId must be a non-empty string.");
+    throw invalidParams('start operationId must be a non-empty string.');
   }
 
   const profile = input.profile;
   if (profile !== undefined && !isNonEmptyString(profile)) {
     throw invalidParams(
-      "start profile must be a non-empty string when provided.",
+      'start profile must be a non-empty string when provided.',
     );
   }
 
   const timeoutOverrides = parseTimeoutOverrides(input);
-  if (input.executionLifetime !== undefined && !isExecutionLifetime(input.executionLifetime)) throw invalidParams("Invalid executionLifetime.");
-  if (input.executionLifetime !== undefined && timeoutOverrides) throw invalidParams("executionLifetime cannot be combined with stage timeout overrides.");
-  if (input.digest !== undefined && !isNonEmptyString(input.digest)) throw invalidParams("digest must be a non-empty string.");
-  if ((input.cwd !== undefined || input.reviewedCommit !== undefined) && !isReviewContext({ cwd: input.cwd, reviewedCommit: input.reviewedCommit })) throw invalidParams("cwd and reviewedCommit must be supplied together as an absolute path and full commit hash.");
+  if (
+    input.executionLifetime !== undefined &&
+    !isExecutionLifetime(input.executionLifetime)
+  )
+    throw invalidParams('Invalid executionLifetime.');
+  if (input.executionLifetime !== undefined && timeoutOverrides)
+    throw invalidParams(
+      'executionLifetime cannot be combined with stage timeout overrides.',
+    );
+  if (input.digest !== undefined && !isNonEmptyString(input.digest))
+    throw invalidParams('digest must be a non-empty string.');
+  if (
+    (input.cwd !== undefined || input.reviewedCommit !== undefined) &&
+    !isReviewContext({ cwd: input.cwd, reviewedCommit: input.reviewedCommit })
+  )
+    throw invalidParams(
+      'cwd and reviewedCommit must be supplied together as an absolute path and full commit hash.',
+    );
 
   const outputContract = input.outputContract;
   if (outputContract !== undefined && !isCallerOutputContract(outputContract)) {
     throw invalidParams(
-      "start outputContract must be a supported caller output contract.",
+      'start outputContract must be a supported caller output contract.',
     );
   }
 
   return {
     prompt,
     operationId,
-    ...(input.executionLifetime !== undefined ? { executionLifetime: input.executionLifetime } : {}),
+    ...(input.executionLifetime !== undefined
+      ? { executionLifetime: input.executionLifetime }
+      : {}),
     ...(input.digest !== undefined ? { digest: input.digest } : {}),
-    ...(typeof input.cwd === "string" && typeof input.reviewedCommit === "string" ? { cwd: input.cwd, reviewedCommit: input.reviewedCommit } : {}),
+    ...(typeof input.cwd === 'string' &&
+    typeof input.reviewedCommit === 'string'
+      ? { cwd: input.cwd, reviewedCommit: input.reviewedCommit }
+      : {}),
     ...(profile === undefined ? {} : { profile }),
     ...(outputContract === undefined ? {} : { outputContract }),
     ...(timeoutOverrides ? { timeoutOverrides } : {}),
@@ -542,17 +667,19 @@ function parseTimeoutOverrides(
   input: Record<string, unknown>,
 ): FusionTimeoutOverrides | undefined {
   const fields = [
-    ["panelistTimeoutMs", "panelistTimeoutMs"],
-    ["panelTimeoutMs", "panelTimeoutMs"],
-    ["panelGraceMs", "panelGraceMs"],
-    ["judgeTimeoutMs", "judgeTimeoutMs"],
+    ['panelistTimeoutMs', 'panelistTimeoutMs'],
+    ['panelTimeoutMs', 'panelTimeoutMs'],
+    ['panelGraceMs', 'panelGraceMs'],
+    ['judgeTimeoutMs', 'judgeTimeoutMs'],
   ] as const;
   const overrides: FusionTimeoutOverrides = {};
   for (const [wireName, key] of fields) {
     const value = input[wireName];
     if (value === undefined) continue;
-    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-      throw invalidParams(`${wireName} must be a positive integer when provided.`);
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+      throw invalidParams(
+        `${wireName} must be a positive integer when provided.`,
+      );
     }
     overrides[key] = value;
   }
@@ -563,8 +690,17 @@ function toParsedFusionArgs(input: StartParams): ParsedFusionArgs {
   return {
     prompt: input.prompt,
     operationId: input.operationId,
-    ...(input.executionLifetime ? { executionLifetime: input.executionLifetime } : {}),
-    ...(input.cwd !== undefined && input.reviewedCommit !== undefined ? { reviewContext: { cwd: input.cwd, reviewedCommit: input.reviewedCommit } } : {}),
+    ...(input.executionLifetime
+      ? { executionLifetime: input.executionLifetime }
+      : {}),
+    ...(input.cwd !== undefined && input.reviewedCommit !== undefined
+      ? {
+          reviewContext: {
+            cwd: input.cwd,
+            reviewedCommit: input.reviewedCommit,
+          },
+        }
+      : {}),
     ...(input.profile === undefined ? {} : { profile: input.profile }),
     ...(input.outputContract === undefined
       ? {}
@@ -579,7 +715,7 @@ function findRun(
   input: unknown,
   operations: ReadonlyMap<string, OperationRecord>,
   store: FusionRpcRunStore,
-  method: "status" | "result" | "cancel",
+  method: 'status' | 'result' | 'cancel',
 ): ObservableRun {
   const params = parseRunParams(input, method);
   if (params.operationId) {
@@ -595,7 +731,7 @@ function findRun(
       const active = store.getActiveRun();
       if (active?.operationId === params.operationId) return active;
       throw new RpcFailure({
-        code: "not_ready",
+        code: 'not_ready',
         message: `Fusion operation ${params.operationId} has not produced a run yet.`,
         details: { operationId: params.operationId },
       });
@@ -615,7 +751,7 @@ function findRun(
 
 function parseRunParams(
   input: unknown,
-  method: "status" | "result" | "cancel",
+  method: 'status' | 'result' | 'cancel',
 ): RunParams {
   if (input === undefined) return {};
   if (!isRecord(input)) {
@@ -625,14 +761,14 @@ function parseRunParams(
   const { operationId, runId } = input;
   if (operationId !== undefined && !isNonEmptyString(operationId)) {
     throw invalidParams(
-      "operationId must be a non-empty string when provided.",
+      'operationId must be a non-empty string when provided.',
     );
   }
   if (runId !== undefined && !isNonEmptyString(runId)) {
-    throw invalidParams("runId must be a non-empty string when provided.");
+    throw invalidParams('runId must be a non-empty string when provided.');
   }
   if (operationId !== undefined && runId !== undefined) {
-    throw invalidParams("Specify either operationId or runId, not both.");
+    throw invalidParams('Specify either operationId or runId, not both.');
   }
 
   if (operationId !== undefined) return { operationId };
@@ -645,7 +781,7 @@ function hasRunSelector(params: RunParams): boolean {
 
 function parseAdoptParams(input: unknown): string {
   if (!isRecord(input) || !isNonEmptyString(input.runId)) {
-    throw invalidParams("adopt runId must be a non-empty string.");
+    throw invalidParams('adopt runId must be a non-empty string.');
   }
   return input.runId;
 }
@@ -656,14 +792,14 @@ function runFromStartResult(
   store: FusionRpcRunStore,
 ): ObservableRun {
   switch (result.status) {
-    case "started":
-    case "done":
-    case "cancelled":
+    case 'started':
+    case 'done':
+    case 'cancelled':
       return result.run;
-    case "conflict": {
+    case 'conflict': {
       const active = store.getRunById(result.activeRunId);
       throw new RpcFailure({
-        code: "busy",
+        code: 'busy',
         message: `Fusion run ${result.activeRunId} is already active.`,
         details: {
           activeRunId: result.activeRunId,
@@ -671,14 +807,14 @@ function runFromStartResult(
         },
       });
     }
-    case "failed":
+    case 'failed':
       throw startFailure(result.error, store.getRunByOperationId(operationId));
-    case "ignored": {
+    case 'ignored': {
       const persisted = store.getRunByOperationId(operationId);
       if (persisted) return persisted;
       throw new RpcFailure({
-        code: "internal",
-        message: "Fusion run did not start.",
+        code: 'internal',
+        message: 'Fusion run did not start.',
       });
     }
   }
@@ -690,8 +826,8 @@ function startData(
   replayed: boolean,
   callerDigest?: string,
 ): FusionRpcStartData {
-  if (run.phase === "failed") {
-    throw startFailure(run.error ?? "Fusion run failed to start.", run);
+  if (run.phase === 'failed') {
+    throw startFailure(run.error ?? 'Fusion run failed to start.', run);
   }
   return {
     operationId,
@@ -705,7 +841,7 @@ function startData(
 
 function startFailure(message: string, run?: ObservableRun): RpcFailure {
   return new RpcFailure({
-    code: "start_failed",
+    code: 'start_failed',
     message,
     ...(run ? { details: { run: stateFor(run) } } : {}),
   });
@@ -737,15 +873,42 @@ function stateFor(run: ObservableRun): FusionRunState {
   return state;
 }
 
-function runtimeData(run: ObservableRun): { reviewContext?: FusionReviewContext; effectiveExecutionLifetime?: ExecutionLifetime; effectiveExecutionOwnership?: { mode: "kernel" }; executionRoute?: "parallel-data" | "single-async"; processTerminalProof?: unknown; workflowTerminalProof?: unknown; neverStarted?: boolean } {
-  const nativeId = run.spawnIntent?.stage === "judge" ? run.judgeRunId : run.panelRunId;
-  const route = nativeId ? expectedExecutionRoute(run.spawnIntent?.params) : undefined;
+function runtimeData(run: ObservableRun): {
+  reviewContext?: FusionReviewContext;
+  effectiveExecutionLifetime?: ExecutionLifetime;
+  effectiveExecutionOwnership?: { mode: 'kernel' };
+  executionRoute?: 'parallel-data' | 'single-async';
+  processTerminalProof?: unknown;
+  workflowTerminalProof?: unknown;
+  neverStarted?: boolean;
+} {
+  const nativeId =
+    run.spawnIntent?.stage === 'judge' ? run.judgeRunId : run.panelRunId;
+  const route = nativeId
+    ? expectedExecutionRoute(run.spawnIntent?.params)
+    : undefined;
   return {
     ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
-    ...(run.effectiveExecutionLifetime ? { effectiveExecutionLifetime: run.effectiveExecutionLifetime } : {}),
-    ...(run.effectiveExecutionLifetime && route ? { effectiveExecutionOwnership: { mode: "kernel" as const }, executionRoute: route } : {}),
-    ...(TERMINAL_PHASES.has(run.phase) && run.processTerminalProof ? { processTerminalProof: run.processTerminalProof, workflowTerminalProof: run.processTerminalProof } : {}),
-    ...(TERMINAL_PHASES.has(run.phase) && isRecord(run.observation) && run.observation.neverStarted === true ? { neverStarted: true } : {}),
+    ...(run.effectiveExecutionLifetime
+      ? { effectiveExecutionLifetime: run.effectiveExecutionLifetime }
+      : {}),
+    ...(run.effectiveExecutionLifetime && route
+      ? {
+          effectiveExecutionOwnership: { mode: 'kernel' as const },
+          executionRoute: route,
+        }
+      : {}),
+    ...(TERMINAL_PHASES.has(run.phase) && run.processTerminalProof
+      ? {
+          processTerminalProof: run.processTerminalProof,
+          workflowTerminalProof: run.processTerminalProof,
+        }
+      : {}),
+    ...(TERMINAL_PHASES.has(run.phase) &&
+    isRecord(run.observation) &&
+    run.observation.neverStarted === true
+      ? { neverStarted: true }
+      : {}),
   };
 }
 
@@ -754,30 +917,30 @@ function requireContext(
 ): FusionCommandContext {
   if (context) return context;
   throw new RpcFailure({
-    code: "unavailable",
-    message: "Fusion session context is unavailable.",
+    code: 'unavailable',
+    message: 'Fusion session context is unavailable.',
   });
 }
 
 function isMethod(value: unknown): value is FusionRpcMethod {
   return (
-    value === "ping" ||
-    value === "start" ||
-    value === "status" ||
-    value === "result" ||
-    value === "cancel" ||
-    value === "adopt"
+    value === 'ping' ||
+    value === 'start' ||
+    value === 'status' ||
+    value === 'result' ||
+    value === 'cancel' ||
+    value === 'adopt'
   );
 }
 
 function invalidParams(message: string): RpcFailure {
-  return new RpcFailure({ code: "invalid_request", message });
+  return new RpcFailure({ code: 'invalid_request', message });
 }
 
 function notFound(details?: unknown): RpcFailure {
   return new RpcFailure({
-    code: "not_found",
-    message: "Fusion run was not found.",
+    code: 'not_found',
+    message: 'Fusion run was not found.',
     ...(details === undefined ? {} : { details }),
   });
 }
@@ -785,9 +948,9 @@ function notFound(details?: unknown): RpcFailure {
 function normalizeError(error: unknown): FusionRpcError {
   if (error instanceof RpcFailure) return error.error;
   return {
-    code: "internal",
+    code: 'internal',
     message:
-      error instanceof Error ? error.message : "Unexpected Fusion RPC error.",
+      error instanceof Error ? error.message : 'Unexpected Fusion RPC error.',
   };
 }
 

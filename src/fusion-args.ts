@@ -1,19 +1,19 @@
-import { FusionArgsError } from "./errors.js";
-import type { FusionTimeoutOverrides, ParsedFusionArgs } from "./types.js";
+import { FusionArgsError } from './errors.js';
+import type { FusionTimeoutOverrides, ParsedFusionArgs } from './types.js';
 
 const FUSION_USAGE =
-  "Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.";
+  'Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.';
 
-export type FusionInlineCommand = "init" | "status" | "stop";
+export type FusionInlineCommand = 'init' | 'status' | 'stop';
 
 export function parseFusionInlineCommand(
   input: string | readonly string[],
 ): FusionInlineCommand | undefined {
   const tokens =
-    typeof input === "string" ? tokenizeCommandArgs(input) : [...input];
+    typeof input === 'string' ? tokenizeCommandArgs(input) : [...input];
   if (tokens.length !== 1) return undefined;
   const command = tokens[0];
-  if (command === "init" || command === "status" || command === "stop") {
+  if (command === 'init' || command === 'status' || command === 'stop') {
     return command;
   }
   return undefined;
@@ -23,17 +23,17 @@ export function parseFusionArgs(
   input: string | readonly string[],
 ): ParsedFusionArgs {
   const tokens =
-    typeof input === "string" ? tokenizeCommandArgs(input) : [...input];
-  if (tokens[0] === "/fusion" || tokens[0] === "fusion") tokens.shift();
+    typeof input === 'string' ? tokenizeCommandArgs(input) : [...input];
+  if (tokens[0] === '/fusion' || tokens[0] === 'fusion') tokens.shift();
 
   let profile: string | undefined;
   let panel: string[] | undefined;
   const timeoutOverrides: FusionTimeoutOverrides = {};
   const timeoutOptions: Record<string, keyof FusionTimeoutOverrides> = {
-    "--panelist-timeout-ms": "panelistTimeoutMs",
-    "--panel-timeout-ms": "panelTimeoutMs",
-    "--panel-grace-ms": "panelGraceMs",
-    "--judge-timeout-ms": "judgeTimeoutMs",
+    '--panelist-timeout-ms': 'panelistTimeoutMs',
+    '--panel-timeout-ms': 'panelTimeoutMs',
+    '--panel-grace-ms': 'panelGraceMs',
+    '--judge-timeout-ms': 'judgeTimeoutMs',
   };
   const promptTokens: string[] = [];
 
@@ -41,49 +41,49 @@ export function parseFusionArgs(
     const token = tokens[index];
     if (!token) continue;
 
-    if (promptTokens.length === 0 && token === "--panel") {
+    if (promptTokens.length === 0 && token === '--panel') {
       const value = tokens[index + 1];
-      if (!value || value.startsWith("-")) {
+      if (!value || value.startsWith('-')) {
         throw new FusionArgsError(`Missing value for --panel. ${FUSION_USAGE}`);
       }
-      if (panel) throw new FusionArgsError("Panel can only be provided once.");
+      if (panel) throw new FusionArgsError('Panel can only be provided once.');
       panel = parsePanelEntries(value);
       index++;
       continue;
     }
 
-    if (promptTokens.length === 0 && token.startsWith("--panel=")) {
-      const value = token.slice("--panel=".length);
-      if (panel) throw new FusionArgsError("Panel can only be provided once.");
+    if (promptTokens.length === 0 && token.startsWith('--panel=')) {
+      const value = token.slice('--panel='.length);
+      if (panel) throw new FusionArgsError('Panel can only be provided once.');
       panel = parsePanelEntries(value);
       continue;
     }
 
     if (
       promptTokens.length === 0 &&
-      (token === "--profile" || token === "-p")
+      (token === '--profile' || token === '-p')
     ) {
       const value = tokens[index + 1];
-      if (!value || value.startsWith("-")) {
+      if (!value || value.startsWith('-')) {
         throw new FusionArgsError(
           `Missing value for ${token}. ${FUSION_USAGE}`,
         );
       }
       if (profile)
-        throw new FusionArgsError("Profile can only be provided once.");
+        throw new FusionArgsError('Profile can only be provided once.');
       profile = value;
       index++;
       continue;
     }
 
-    if (promptTokens.length === 0 && token.startsWith("--profile=")) {
-      const value = token.slice("--profile=".length).trim();
+    if (promptTokens.length === 0 && token.startsWith('--profile=')) {
+      const value = token.slice('--profile='.length).trim();
       if (!value)
         throw new FusionArgsError(
           `Missing value for --profile. ${FUSION_USAGE}`,
         );
       if (profile)
-        throw new FusionArgsError("Profile can only be provided once.");
+        throw new FusionArgsError('Profile can only be provided once.');
       profile = value;
       continue;
     }
@@ -94,20 +94,26 @@ export function parseFusionArgs(
     );
     if (promptTokens.length === 0 && (timeoutKey || timeoutEquals)) {
       const key = timeoutKey ?? timeoutEquals?.[1];
-      const raw = timeoutKey ? tokens[index + 1] : token.slice((timeoutEquals?.[0].length ?? 0) + 1);
+      const raw = timeoutKey
+        ? tokens[index + 1]
+        : token.slice((timeoutEquals?.[0].length ?? 0) + 1);
       const value = raw ? Number(raw) : NaN;
       if (!key || !Number.isInteger(value) || value <= 0) {
-        throw new FusionArgsError(`Timeout options require a positive integer milliseconds value. ${FUSION_USAGE}`);
+        throw new FusionArgsError(
+          `Timeout options require a positive integer milliseconds value. ${FUSION_USAGE}`,
+        );
       }
       if (timeoutOverrides[key] !== undefined) {
-        throw new FusionArgsError(`${token.split("=")[0]} can only be provided once.`);
+        throw new FusionArgsError(
+          `${token.split('=')[0]} can only be provided once.`,
+        );
       }
       timeoutOverrides[key] = value;
       if (timeoutKey) index++;
       continue;
     }
 
-    if (promptTokens.length === 0 && token.startsWith("-")) {
+    if (promptTokens.length === 0 && token.startsWith('-')) {
       throw new FusionArgsError(`Unknown option ${token}. ${FUSION_USAGE}`);
     }
 
@@ -115,7 +121,7 @@ export function parseFusionArgs(
     break;
   }
 
-  const prompt = promptTokens.join(" ").trim();
+  const prompt = promptTokens.join(' ').trim();
   if (!prompt) throw new FusionArgsError(FUSION_USAGE);
   return {
     prompt,
@@ -127,7 +133,7 @@ export function parseFusionArgs(
 
 function parsePanelEntries(value: string): string[] {
   const entries = value
-    .split(",")
+    .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
   if (entries.length === 0) {
@@ -138,7 +144,7 @@ function parsePanelEntries(value: string): string[] {
 
 export function tokenizeCommandArgs(input: string): string[] {
   const tokens: string[] = [];
-  let current = "";
+  let current = '';
   let quote: "'" | '"' | undefined;
   let escaping = false;
 
@@ -149,7 +155,7 @@ export function tokenizeCommandArgs(input: string): string[] {
       continue;
     }
 
-    if (char === "\\") {
+    if (char === '\\') {
       escaping = true;
       continue;
     }
@@ -171,7 +177,7 @@ export function tokenizeCommandArgs(input: string): string[] {
     if (/\s/.test(char)) {
       if (current) {
         tokens.push(current);
-        current = "";
+        current = '';
       }
       continue;
     }
@@ -179,7 +185,7 @@ export function tokenizeCommandArgs(input: string): string[] {
     current += char;
   }
 
-  if (escaping) current += "\\";
+  if (escaping) current += '\\';
   if (quote)
     throw new FusionArgsError(`Unclosed ${quote} quote in /fusion arguments.`);
   if (current) tokens.push(current);

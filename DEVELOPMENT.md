@@ -43,11 +43,14 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm test` runs the unit tier. `npm run test:all` runs the full local gate that CI and release use.
+`npm run check` runs Biome and the TypeScript compiler. `npm test` runs the
+whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
+scripts remain available for focused runs. `npm run test:all` runs the full
+local gate that CI and release use.
 
 Git hygiene:
 
-- `pre-commit`: whitespace/conflict check, staged ESLint, staged gitleaks scan
+- `pre-commit`: whitespace/conflict check, staged Biome check, staged gitleaks scan
 - `pre-push`: full `npm run test:all`
 
 ## Release

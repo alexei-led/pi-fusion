@@ -2,15 +2,18 @@ import {
   appendThinkingSuffix,
   type FailedPanelSummary,
   type PanelOutput,
-} from "./run-builder.js";
+} from './run-builder.js';
 import {
   extractPanelDecision,
   extractRunObservation,
-} from "./run-observations.js";
-import type { PanelMemberConfig } from "./types.js";
+} from './run-observations.js';
+import type { PanelMemberConfig } from './types.js';
 
 export type ResultExtractErrorCode =
-  "missing-results" | "unknown-result-shape" | "missing-result-field" | "incomplete-lifecycle";
+  | 'missing-results'
+  | 'unknown-result-shape'
+  | 'missing-result-field'
+  | 'incomplete-lifecycle';
 
 export interface ResultExtractError {
   code: ResultExtractErrorCode;
@@ -37,7 +40,8 @@ export type ExtractPanelResultsSuccess = {
 };
 
 export type ExtractPanelResultsResult =
-  ExtractPanelResultsSuccess | { ok: false; error: ResultExtractError };
+  | ExtractPanelResultsSuccess
+  | { ok: false; error: ResultExtractError };
 
 interface ResultsContainer {
   payload: Record<string, unknown>;
@@ -45,16 +49,16 @@ interface ResultsContainer {
   path: string;
 }
 
-type ChildStatus = "success" | "failed";
+type ChildStatus = 'success' | 'failed';
 
 function isCompletedResult(value: unknown): boolean {
   if (!isRecord(value)) return false;
   const status = firstString(value.status, value.state);
   return !(
-    status === "running" ||
-    status === "active" ||
-    status === "pending" ||
-    status === "queued"
+    status === 'running' ||
+    status === 'active' ||
+    status === 'pending' ||
+    status === 'queued'
   );
 }
 
@@ -78,22 +82,22 @@ export function extractPanelResults(
     const index = workflowSlotIndex(rawResult, arrayIndex, options);
     if (index === undefined) {
       return error(
-        "missing-result-field",
-        "Compact subagents result omitted a stable workflow slot identity.",
+        'missing-result-field',
+        'Compact subagents result omitted a stable workflow slot identity.',
         `${container.path}[${arrayIndex}]`,
       );
     }
     if (options.limit !== undefined && index >= options.limit) {
       return error(
-        "unknown-result-shape",
-        "Subagents result workflow slot is outside the configured panel.",
+        'unknown-result-shape',
+        'Subagents result workflow slot is outside the configured panel.',
         `${container.path}[${arrayIndex}]`,
       );
     }
     if (seenSlots.has(index)) {
       return error(
-        "unknown-result-shape",
-        "Subagents result repeated a workflow slot identity.",
+        'unknown-result-shape',
+        'Subagents result repeated a workflow slot identity.',
         `${container.path}[${arrayIndex}]`,
       );
     }
@@ -105,7 +109,7 @@ export function extractPanelResults(
       fallbackFailureReason,
     );
     if (!child.ok) return child;
-    if (child.status === "success") outputs.push(child.output);
+    if (child.status === 'success') outputs.push(child.output);
     else failures.push(child.failure);
   }
 
@@ -114,14 +118,14 @@ export function extractPanelResults(
     const child = normalizeChildResult(
       {
         success: false,
-        error: "Stopped after strong panel agreement.",
+        error: 'Stopped after strong panel agreement.',
       },
       index,
       options,
       fallbackFailureReason,
     );
     if (!child.ok) return child;
-    if (child.status === "failed") failures.push(child.failure);
+    if (child.status === 'failed') failures.push(child.failure);
   }
 
   const runId = firstString(container.payload.runId, container.payload.id);
@@ -144,14 +148,14 @@ function findResultsContainer(
   | ({ ok: true } & ResultsContainer) {
   if (!isRecord(payload)) {
     return error(
-      "unknown-result-shape",
-      "Subagents result payload must be an object.",
-      "$",
+      'unknown-result-shape',
+      'Subagents result payload must be an object.',
+      '$',
     );
   }
 
   if (Array.isArray(payload.results) && payload.results.length > 0) {
-    return { ok: true, payload, results: payload.results, path: "$.results" };
+    return { ok: true, payload, results: payload.results, path: '$.results' };
   }
 
   if (
@@ -163,23 +167,23 @@ function findResultsContainer(
       ok: true,
       payload: { ...payload, ...payload.details },
       results: payload.details.results,
-      path: "$.details.results",
+      path: '$.details.results',
     };
   }
 
   if (Array.isArray(payload.steps)) {
-    return { ok: true, payload, results: payload.steps, path: "$.steps" };
+    return { ok: true, payload, results: payload.steps, path: '$.steps' };
   }
 
   if (Array.isArray(payload.results)) {
-    return { ok: true, payload, results: payload.results, path: "$.results" };
+    return { ok: true, payload, results: payload.results, path: '$.results' };
   }
 
-  if ("results" in payload && !Array.isArray(payload.results)) {
+  if ('results' in payload && !Array.isArray(payload.results)) {
     return error(
-      "unknown-result-shape",
-      "Subagents result payload results field must be an array.",
-      "$.results",
+      'unknown-result-shape',
+      'Subagents result payload results field must be an array.',
+      '$.results',
     );
   }
 
@@ -192,7 +196,7 @@ function findResultsContainer(
         ok: true,
         payload: { ...payload, ...payload.details },
         results: payload.details.results,
-        path: "$.details.results",
+        path: '$.details.results',
       };
     }
     if (Array.isArray(payload.details.steps)) {
@@ -200,7 +204,7 @@ function findResultsContainer(
         ok: true,
         payload: { ...payload, ...payload.details },
         results: payload.details.steps,
-        path: "$.details.steps",
+        path: '$.details.steps',
       };
     }
     if (Array.isArray(payload.details.results)) {
@@ -208,17 +212,17 @@ function findResultsContainer(
         ok: true,
         payload: { ...payload, ...payload.details },
         results: payload.details.results,
-        path: "$.details.results",
+        path: '$.details.results',
       };
     }
     if (
-      "results" in payload.details &&
+      'results' in payload.details &&
       !Array.isArray(payload.details.results)
     ) {
       return error(
-        "unknown-result-shape",
-        "Subagents result details.results field must be an array.",
-        "$.details.results",
+        'unknown-result-shape',
+        'Subagents result details.results field must be an array.',
+        '$.details.results',
       );
     }
   }
@@ -226,9 +230,9 @@ function findResultsContainer(
   if (isRecord(payload.data)) return findResultsContainer(payload.data);
 
   return error(
-    "missing-results",
-    "Subagents result payload did not include a results array.",
-    "$",
+    'missing-results',
+    'Subagents result payload did not include a results array.',
+    '$',
   );
 }
 
@@ -239,8 +243,16 @@ function workflowSlotIndex(
 ): number | undefined {
   if (!options.requireStableSlotIdentity) return fallback;
   if (!isRecord(rawResult)) return undefined;
-  for (const candidate of [rawResult.index, rawResult.taskIndex, rawResult.stepIndex]) {
-    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+  for (const candidate of [
+    rawResult.index,
+    rawResult.taskIndex,
+    rawResult.stepIndex,
+  ]) {
+    if (
+      typeof candidate === 'number' &&
+      Number.isInteger(candidate) &&
+      candidate >= 0
+    ) {
       return candidate;
     }
   }
@@ -261,16 +273,16 @@ function normalizeChildResult(
   rawResult: unknown,
   index: number,
   options: ExtractPanelResultsOptions,
-  fallbackFailureReason?: FailedPanelSummary["reason"],
+  fallbackFailureReason?: FailedPanelSummary['reason'],
 ):
-  | { ok: true; status: "success"; output: PanelOutput }
-  | { ok: true; status: "failed"; failure: FailedPanelSummary }
+  | { ok: true; status: 'success'; output: PanelOutput }
+  | { ok: true; status: 'failed'; failure: FailedPanelSummary }
   | { ok: false; error: ResultExtractError } {
   const path = `$.results[${index}]`;
   if (!isRecord(rawResult)) {
     return error(
-      "unknown-result-shape",
-      "Subagents child result must be an object.",
+      'unknown-result-shape',
+      'Subagents child result must be an object.',
       path,
     );
   }
@@ -279,8 +291,8 @@ function normalizeChildResult(
   const agent = firstString(member?.agent, rawResult.agent);
   if (!agent) {
     return error(
-      "missing-result-field",
-      "Subagents child result did not include an agent.",
+      'missing-result-field',
+      'Subagents child result did not include an agent.',
       `${path}.agent`,
     );
   }
@@ -289,9 +301,11 @@ function normalizeChildResult(
   const sessionPath = firstString(rawResult.sessionPath, rawResult.sessionFile);
   const terminalizedRunning =
     options.terminalizeRunning === true && !isCompletedResult(rawResult);
-  const status = terminalizedRunning ? "failed" : classifyChildStatus(rawResult);
+  const status = terminalizedRunning
+    ? 'failed'
+    : classifyChildStatus(rawResult);
 
-  if (status === "success") {
+  if (status === 'success') {
     const rawOutput = firstNonBlankString(
       rawResult.output,
       rawResult.finalOutput,
@@ -307,8 +321,8 @@ function normalizeChildResult(
       artifactOutput(artifactPath);
     if (!output) {
       return error(
-        "missing-result-field",
-        "Successful subagents child result did not include output or an artifact path.",
+        'missing-result-field',
+        'Successful subagents child result did not include output or an artifact path.',
         path,
       );
     }
@@ -340,12 +354,12 @@ function normalizeChildResult(
       member,
       agent,
       summary: stoppedAfterAgreement
-        ? "Stopped after strong panel agreement."
+        ? 'Stopped after strong panel agreement.'
         : terminalizedRunning
-          ? "Panelist did not finish before the workflow deadline."
+          ? 'Panelist did not finish before the workflow deadline.'
           : failureSummary(rawResult, artifactPath),
       reason:
-        (terminalizedRunning ? "timeout" : undefined) ??
+        (terminalizedRunning ? 'timeout' : undefined) ??
         failureReason(rawResult, stoppedAfterAgreement) ??
         fallbackFailureReason,
       observation,
@@ -356,26 +370,26 @@ function normalizeChildResult(
 }
 
 function classifyChildStatus(result: Record<string, unknown>): ChildStatus {
-  if (result.success === true) return "success";
-  if (result.success === false) return "failed";
-  if (result.timedOut === true || result.interrupted === true) return "failed";
-  if (firstNonBlankString(result.error)) return "failed";
+  if (result.success === true) return 'success';
+  if (result.success === false) return 'failed';
+  if (result.timedOut === true || result.interrupted === true) return 'failed';
+  if (firstNonBlankString(result.error)) return 'failed';
 
   const status = firstString(result.status, result.state);
   if (status) {
-    if (status === "completed" || status === "complete") return "success";
-    if (status === "failed" || status === "paused" || status === "detached") {
-      return "failed";
+    if (status === 'completed' || status === 'complete') return 'success';
+    if (status === 'failed' || status === 'paused' || status === 'detached') {
+      return 'failed';
     }
   }
 
-  if (typeof result.exitCode === "number") {
-    return result.exitCode === 0 ? "success" : "failed";
+  if (typeof result.exitCode === 'number') {
+    return result.exitCode === 0 ? 'success' : 'failed';
   }
 
   return firstNonBlankString(result.output, result.finalOutput, result.summary)
-    ? "success"
-    : "failed";
+    ? 'success'
+    : 'failed';
 }
 
 function failureSummary(
@@ -394,7 +408,7 @@ function failureSummary(
   }
   if (errorText) return errorText;
   if (outputText) return outputText;
-  return artifactOutput(artifactPath) ?? "Panelist failed without a summary.";
+  return artifactOutput(artifactPath) ?? 'Panelist failed without a summary.';
 }
 
 function buildPanelOutput(input: {
@@ -402,8 +416,8 @@ function buildPanelOutput(input: {
   member: PanelMemberConfig | undefined;
   agent: string;
   output: string;
-  decision: PanelOutput["decision"];
-  observation: PanelOutput["observation"];
+  decision: PanelOutput['decision'];
+  observation: PanelOutput['observation'];
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): PanelOutput {
@@ -433,8 +447,8 @@ function buildFailedPanelSummary(input: {
   member: PanelMemberConfig | undefined;
   agent: string;
   summary: string;
-  reason: FailedPanelSummary["reason"];
-  observation: FailedPanelSummary["observation"];
+  reason: FailedPanelSummary['reason'];
+  observation: FailedPanelSummary['observation'];
   artifactPath: string | undefined;
   sessionPath: string | undefined;
 }): FailedPanelSummary {
@@ -462,28 +476,28 @@ function buildFailedPanelSummary(input: {
 function failureReason(
   result: Record<string, unknown>,
   stoppedAfterAgreement = false,
-): FailedPanelSummary["reason"] {
-  if (stoppedAfterAgreement) return "stopped-after-agreement";
+): FailedPanelSummary['reason'] {
+  if (stoppedAfterAgreement) return 'stopped-after-agreement';
   if (
     result.timedOut === true ||
-    /(?:timed out|timeout)/i.test(firstNonBlankString(result.error) ?? "")
+    /(?:timed out|timeout)/i.test(firstNonBlankString(result.error) ?? '')
   ) {
-    return "timeout";
+    return 'timeout';
   }
-  if (result.interrupted === true) return "interrupted";
+  if (result.interrupted === true) return 'interrupted';
   return undefined;
 }
 
 function hasObservation(
-  observation: PanelOutput["observation"] | undefined,
-): observation is NonNullable<PanelOutput["observation"]> {
+  observation: PanelOutput['observation'] | undefined,
+): observation is NonNullable<PanelOutput['observation']> {
   return Boolean(
     observation &&
-    (observation.model ||
-      observation.durationMs !== undefined ||
-      observation.usage ||
-      observation.attempts ||
-      observation.providerFailures),
+      (observation.model ||
+        observation.durationMs !== undefined ||
+        observation.usage ||
+        observation.attempts ||
+        observation.providerFailures),
   );
 }
 
@@ -515,7 +529,7 @@ function artifactOutput(path: string | undefined): string | undefined {
 
 function firstString(...values: readonly unknown[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string") return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -523,18 +537,18 @@ function firstString(...values: readonly unknown[]): string | undefined {
 function recentOutputText(value: unknown): string | undefined {
   if (
     !Array.isArray(value) ||
-    !value.every((item) => typeof item === "string")
+    !value.every((item) => typeof item === 'string')
   ) {
     return undefined;
   }
-  return value.join("\n").trim() || undefined;
+  return value.join('\n').trim() || undefined;
 }
 
 function firstNonBlankString(
   ...values: readonly unknown[]
 ): string | undefined {
   for (const value of values) {
-    if (typeof value !== "string") continue;
+    if (typeof value !== 'string') continue;
     const trimmed = value.trim();
     if (trimmed) return trimmed;
   }
@@ -550,5 +564,5 @@ function error(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

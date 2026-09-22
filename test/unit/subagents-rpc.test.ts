@@ -1,38 +1,38 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
+  type SubagentsEventBus,
   SubagentsRpcClient,
+  type SubagentsRpcMethod,
   SubagentsRpcRemoteError,
   SubagentsRpcTimeoutError,
   subagentsRpcReplyChannel,
-  type SubagentsEventBus,
-  type SubagentsRpcMethod,
-} from "../../src/subagents-rpc.js";
+} from '../../src/subagents-rpc.js';
 
-test("SubagentsRpcClient resolves successful replies and cleans listeners", async () => {
+test('SubagentsRpcClient resolves successful replies and cleans listeners', async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
-    requestId: () => "req-success",
+    requestId: () => 'req-success',
     timeoutMs: 100,
   });
 
-  const result = client.request("ping");
-  const replyChannel = subagentsRpcReplyChannel("req-success");
+  const result = client.request('ping');
+  const replyChannel = subagentsRpcReplyChannel('req-success');
 
   assert.equal(bus.listenerCount(replyChannel), 1);
   assert.deepEqual(bus.lastRequest(), {
     version: 1,
-    requestId: "req-success",
-    method: "ping",
-    source: { extension: "pi-fusion" },
+    requestId: 'req-success',
+    method: 'ping',
+    source: { extension: 'pi-fusion' },
   });
 
   bus.emit(replyChannel, {
     version: 1,
-    requestId: "req-success",
-    method: "ping",
+    requestId: 'req-success',
+    method: 'ping',
     success: true,
     data: { ok: true },
   });
@@ -41,50 +41,50 @@ test("SubagentsRpcClient resolves successful replies and cleans listeners", asyn
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-test("SubagentsRpcClient rejects failure replies and cleans listeners", async () => {
+test('SubagentsRpcClient rejects failure replies and cleans listeners', async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
-    requestId: () => "req-failure",
+    requestId: () => 'req-failure',
     timeoutMs: 100,
   });
 
-  const result = client.status({ id: "run-1" });
-  const replyChannel = subagentsRpcReplyChannel("req-failure");
+  const result = client.status({ id: 'run-1' });
+  const replyChannel = subagentsRpcReplyChannel('req-failure');
 
   bus.emit(replyChannel, {
     version: 1,
-    requestId: "req-failure",
-    method: "status",
+    requestId: 'req-failure',
+    method: 'status',
     success: false,
-    error: { code: "not_found", message: "missing run" },
+    error: { code: 'not_found', message: 'missing run' },
   });
 
   await assert.rejects(result, (error: unknown) => {
     assert.ok(error instanceof SubagentsRpcRemoteError);
-    assert.equal(error.code, "not_found");
-    assert.equal(error.message, "missing run");
-    assert.equal(error.method, "status");
+    assert.equal(error.code, 'not_found');
+    assert.equal(error.message, 'missing run');
+    assert.equal(error.method, 'status');
     return true;
   });
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-test("SubagentsRpcClient ignores wrong request IDs without cleanup", async () => {
+test('SubagentsRpcClient ignores wrong request IDs without cleanup', async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
-    requestId: () => "req-right",
+    requestId: () => 'req-right',
     timeoutMs: 100,
   });
 
   const result = client.ping();
-  const replyChannel = subagentsRpcReplyChannel("req-right");
+  const replyChannel = subagentsRpcReplyChannel('req-right');
 
   bus.emit(replyChannel, {
     version: 1,
-    requestId: "req-wrong",
-    method: "ping",
+    requestId: 'req-wrong',
+    method: 'ping',
     success: true,
     data: { ignored: true },
   });
@@ -93,8 +93,8 @@ test("SubagentsRpcClient ignores wrong request IDs without cleanup", async () =>
 
   bus.emit(replyChannel, {
     version: 1,
-    requestId: "req-right",
-    method: "ping",
+    requestId: 'req-right',
+    method: 'ping',
     success: true,
     data: { ok: true },
   });
@@ -103,51 +103,51 @@ test("SubagentsRpcClient ignores wrong request IDs without cleanup", async () =>
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-test("SubagentsRpcClient times out and cleans listeners", async () => {
+test('SubagentsRpcClient times out and cleans listeners', async () => {
   const bus = new FakeEventBus();
   const client = new SubagentsRpcClient({
     events: bus,
-    requestId: () => "req-timeout",
+    requestId: () => 'req-timeout',
     timeoutMs: 100,
   });
 
   const result = client.ping({ timeoutMs: 1 });
-  const replyChannel = subagentsRpcReplyChannel("req-timeout");
+  const replyChannel = subagentsRpcReplyChannel('req-timeout');
 
   await assert.rejects(result, (error: unknown) => {
     assert.ok(error instanceof SubagentsRpcTimeoutError);
-    assert.equal(error.method, "ping");
-    assert.equal(error.requestId, "req-timeout");
+    assert.equal(error.method, 'ping');
+    assert.equal(error.requestId, 'req-timeout');
     return true;
   });
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-test("SubagentsRpcClient helper methods emit typed method envelopes", async () => {
+test('SubagentsRpcClient helper methods emit typed method envelopes', async () => {
   const specs: Array<{
     method: SubagentsRpcMethod;
     params: unknown;
     run: (client: SubagentsRpcClient) => Promise<unknown>;
   }> = [
     {
-      method: "spawn",
-      params: { agent: "reviewer", task: "review" },
-      run: (client) => client.spawn({ agent: "reviewer", task: "review" }),
+      method: 'spawn',
+      params: { agent: 'reviewer', task: 'review' },
+      run: (client) => client.spawn({ agent: 'reviewer', task: 'review' }),
     },
     {
-      method: "status",
-      params: { id: "run-1" },
-      run: (client) => client.status({ id: "run-1" }),
+      method: 'status',
+      params: { id: 'run-1' },
+      run: (client) => client.status({ id: 'run-1' }),
     },
     {
-      method: "stop",
-      params: { runId: "run-1" },
-      run: (client) => client.stop({ runId: "run-1" }),
+      method: 'stop',
+      params: { runId: 'run-1' },
+      run: (client) => client.stop({ runId: 'run-1' }),
     },
     {
-      method: "interrupt",
-      params: { dir: "/tmp/run" },
-      run: (client) => client.interrupt({ dir: "/tmp/run" }),
+      method: 'interrupt',
+      params: { dir: '/tmp/run' },
+      run: (client) => client.interrupt({ dir: '/tmp/run' }),
     },
   ];
 
@@ -209,12 +209,12 @@ class FakeEventBus implements SubagentsEventBus {
     const event = this.emitted.findLast(
       (entry) => entry.event === SUBAGENTS_RPC_REQUEST_CHANNEL,
     );
-    assert.ok(event, "expected a subagents RPC request event");
+    assert.ok(event, 'expected a subagents RPC request event');
     assert.ok(isRecord(event.payload));
     return event.payload;
   }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

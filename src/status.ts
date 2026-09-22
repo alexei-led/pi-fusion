@@ -1,6 +1,6 @@
-import type { FusionRun } from "./types.js";
+import type { FusionRun } from './types.js';
 
-export const FUSION_STATUS_KEY = "fusion";
+export const FUSION_STATUS_KEY = 'fusion';
 
 export interface FusionProgressCounts {
   total?: number;
@@ -23,7 +23,7 @@ export function publishFusionStatus(
   ctx: FusionUiContext | undefined,
   run: Pick<
     FusionRun,
-    "id" | "phase" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
+    'id' | 'phase' | 'profileName' | 'chainRunId' | 'panelRunId' | 'judgeRunId'
   >,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
@@ -43,13 +43,13 @@ export function clearFusionUi(ctx: FusionUiContext | undefined): void {
 export function formatFusionStatusText(
   run: Pick<
     FusionRun,
-    "phase" | "profileName" | "chainRunId" | "panelRunId" | "judgeRunId"
+    'phase' | 'profileName' | 'chainRunId' | 'panelRunId' | 'judgeRunId'
   >,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
 ): string {
   const activeRunId =
-    run.phase === "judge" ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
+    run.phase === 'judge' ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
   const phase = phaseLabel ?? run.phase;
   if (progress) {
     return `fusion: ${phase} · ${formatProgressCounts(progress)} · ${run.profileName}`;
@@ -76,9 +76,9 @@ export function extractFusionProgressCounts(
 
   for (const item of container) {
     const status = classifyProgressItem(item);
-    if (status === "pending") counts.pending++;
-    else if (status === "running") counts.running++;
-    else if (status === "completed") counts.completed++;
+    if (status === 'pending') counts.pending++;
+    else if (status === 'running') counts.running++;
+    else if (status === 'completed') counts.completed++;
     else counts.failed++;
   }
 
@@ -99,14 +99,14 @@ export function isTerminalFusionProgress(payload: unknown): boolean {
     : undefined;
   return Boolean(
     progress &&
-    progress.total !== undefined &&
-    progress.total > 0 &&
-    progress.pending === 0 &&
-    progress.running === 0,
+      progress.total !== undefined &&
+      progress.total > 0 &&
+      progress.pending === 0 &&
+      progress.running === 0,
   );
 }
 
-type ProgressStatus = "pending" | "running" | "completed" | "failed";
+type ProgressStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 function findProgressContainer(
   payload: unknown,
@@ -148,30 +148,30 @@ function findTerminalProgressPayload(payload: unknown): unknown {
 }
 
 function classifyProgressItem(value: unknown): ProgressStatus {
-  if (!isRecord(value)) return "failed";
-  if (value.success === true) return "completed";
-  if (value.success === false) return "failed";
-  if (value.timedOut === true || value.interrupted === true) return "failed";
+  if (!isRecord(value)) return 'failed';
+  if (value.success === true) return 'completed';
+  if (value.success === false) return 'failed';
+  if (value.timedOut === true || value.interrupted === true) return 'failed';
   const status = firstString(value.status, value.state);
-  if (status === "pending" || status === "queued") return "pending";
-  if (status === "running" || status === "active") return "running";
-  if (status === "completed" || status === "complete" || status === "done") {
-    return "completed";
+  if (status === 'pending' || status === 'queued') return 'pending';
+  if (status === 'running' || status === 'active') return 'running';
+  if (status === 'completed' || status === 'complete' || status === 'done') {
+    return 'completed';
   }
-  if (status === "failed" || status === "paused" || status === "detached") {
-    return "failed";
+  if (status === 'failed' || status === 'paused' || status === 'detached') {
+    return 'failed';
   }
-  if (typeof value.exitCode === "number") {
-    return value.exitCode === 0 ? "completed" : "failed";
+  if (typeof value.exitCode === 'number') {
+    return value.exitCode === 0 ? 'completed' : 'failed';
   }
   return firstString(value.output, value.finalOutput, value.summary, value.text)
-    ? "completed"
-    : "pending";
+    ? 'completed'
+    : 'pending';
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string") return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -183,5 +183,5 @@ function nonEmptyArray(value: unknown): readonly unknown[] | undefined {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,38 +1,38 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   FUSION_RPC_METHODS,
-  FUSION_RPC_VERSION,
   FUSION_RPC_REPLY_EVENT_PREFIX,
   FUSION_RPC_REQUEST_EVENT,
+  FUSION_RPC_VERSION,
   registerFusionRpc,
-} from "../../src/fusion-rpc.js";
-import type { FusionCommandResult } from "../../src/orchestrator.js";
-import { FUSION_RUN_ENTRY_TYPE, FusionRunStore } from "../../src/run-store.js";
+} from '../../src/fusion-rpc.js';
+import type { FusionCommandResult } from '../../src/orchestrator.js';
+import { FUSION_RUN_ENTRY_TYPE, FusionRunStore } from '../../src/run-store.js';
 import type {
   FusionPhase,
   FusionRun,
   ParsedFusionArgs,
-} from "../../src/types.js";
+} from '../../src/types.js';
 
 const activeRun: FusionRun = {
-  id: "fusion-1",
-  prompt: "Review this.",
-  profileName: "quality",
-  operationId: "operation-1",
-  phase: "panel",
+  id: 'fusion-1',
+  prompt: 'Review this.',
+  profileName: 'quality',
+  operationId: 'operation-1',
+  phase: 'panel',
   createdAt: 1,
   updatedAt: 1,
 };
 
-test("Fusion RPC exposes its versioned method contract", async () => {
+test('Fusion RPC exposes its versioned method contract', async () => {
   const fixture = createFixture();
 
-  const response = fixture.request("ping-1", "ping");
+  const response = fixture.request('ping-1', 'ping');
 
   assert.deepEqual(
     await response,
-    success("ping-1", "ping", {
+    success('ping-1', 'ping', {
       pong: true,
       version: 1,
       methods: FUSION_RPC_METHODS,
@@ -41,62 +41,63 @@ test("Fusion RPC exposes its versioned method contract", async () => {
   fixture.unregister();
 });
 
-test("Fusion RPC forwards an explicit caller output contract", async () => {
+test('Fusion RPC forwards an explicit caller output contract', async () => {
   const fixture = createFixture();
-  const response = await fixture.request("start-contract", "start", {
-    prompt: "Review this.",
-    operationId: "operation-contract",
-    outputContract: "plan-review-v1",
+  const response = await fixture.request('start-contract', 'start', {
+    prompt: 'Review this.',
+    operationId: 'operation-contract',
+    outputContract: 'plan-review-v1',
   });
 
   assert.equal((response as { success: boolean }).success, true);
-  assert.equal(fixture.lastStartInput()?.outputContract, "plan-review-v1");
+  assert.equal(fixture.lastStartInput()?.outputContract, 'plan-review-v1');
   fixture.unregister();
 });
 
-test("Fusion RPC rejects an unsupported caller output contract", async () => {
+test('Fusion RPC rejects an unsupported caller output contract', async () => {
   const fixture = createFixture();
-  const response = await fixture.request("bad-contract", "start", {
-    prompt: "Review this.",
-    operationId: "operation-bad-contract",
-    outputContract: "unknown-v9",
+  const response = await fixture.request('bad-contract', 'start', {
+    prompt: 'Review this.',
+    operationId: 'operation-bad-contract',
+    outputContract: 'unknown-v9',
   });
 
   assert.deepEqual(
     response,
-    failure("bad-contract", "start", {
-      code: "invalid_request",
-      message: "start outputContract must be a supported caller output contract.",
+    failure('bad-contract', 'start', {
+      code: 'invalid_request',
+      message:
+        'start outputContract must be a supported caller output contract.',
     }),
   );
   fixture.unregister();
 });
 
-test("Fusion RPC starts once per operation ID and returns structured replay state", async () => {
+test('Fusion RPC starts once per operation ID and returns structured replay state', async () => {
   const fixture = createFixture();
 
-  const first = fixture.request("start-1", "start", {
-    prompt: "Review this.",
-    profile: "quality",
-    operationId: "operation-1",
+  const first = fixture.request('start-1', 'start', {
+    prompt: 'Review this.',
+    profile: 'quality',
+    operationId: 'operation-1',
   });
   assert.deepEqual(
     await first,
-    success("start-1", "start", {
-      operationId: "operation-1",
+    success('start-1', 'start', {
+      operationId: 'operation-1',
       replayed: false,
       run: state(activeRun),
     }),
   );
 
-  const replay = fixture.request("start-2", "start", {
-    prompt: "Other prompt ignored by operation id.",
-    operationId: "operation-1",
+  const replay = fixture.request('start-2', 'start', {
+    prompt: 'Other prompt ignored by operation id.',
+    operationId: 'operation-1',
   });
   assert.deepEqual(
     await replay,
-    success("start-2", "start", {
-      operationId: "operation-1",
+    success('start-2', 'start', {
+      operationId: 'operation-1',
       replayed: true,
       run: state(activeRun),
     }),
@@ -105,13 +106,14 @@ test("Fusion RPC starts once per operation ID and returns structured replay stat
   fixture.unregister();
 });
 
-test("Fusion RPC coalesces concurrent starts for one operation ID", async () => {
+test('Fusion RPC coalesces concurrent starts for one operation ID', async () => {
   const bus = new FakeEventBus();
   const store = new FusionRunStore();
   let starts = 0;
   let resolveStart:
-    ((result: { status: "started"; run: FusionRun }) => void) | undefined;
-  const pendingStart = new Promise<{ status: "started"; run: FusionRun }>(
+    | ((result: { status: 'started'; run: FusionRun }) => void)
+    | undefined;
+  const pendingStart = new Promise<{ status: 'started'; run: FusionRun }>(
     (resolve) => {
       resolveStart = resolve;
     },
@@ -126,69 +128,69 @@ test("Fusion RPC coalesces concurrent starts for one operation ID", async () => 
         return pendingStart;
       },
       async cancelActiveRun() {
-        return { status: "ignored" };
+        return { status: 'ignored' };
       },
     },
   });
 
-  const first = request(bus, "start-1", "start", {
-    prompt: "Review this.",
-    operationId: "operation-1",
+  const first = request(bus, 'start-1', 'start', {
+    prompt: 'Review this.',
+    operationId: 'operation-1',
   });
-  const second = request(bus, "start-2", "start", {
-    prompt: "Review this.",
-    operationId: "operation-1",
+  const second = request(bus, 'start-2', 'start', {
+    prompt: 'Review this.',
+    operationId: 'operation-1',
   });
   assert.equal(starts, 1);
   assert.ok(resolveStart);
-  resolveStart({ status: "started", run: activeRun });
+  resolveStart({ status: 'started', run: activeRun });
 
   assert.deepEqual(
     await first,
-    success("start-1", "start", {
-      operationId: "operation-1",
+    success('start-1', 'start', {
+      operationId: 'operation-1',
       replayed: false,
       run: state(activeRun),
     }),
   );
   assert.deepEqual(
     await second,
-    success("start-2", "start", {
-      operationId: "operation-1",
+    success('start-2', 'start', {
+      operationId: 'operation-1',
       replayed: true,
       run: state(activeRun),
     }),
   );
 });
 
-test("Fusion RPC replays any persisted operation after later runs and restart", async () => {
+test('Fusion RPC replays any persisted operation after later runs and restart', async () => {
   const entries: Array<{
-    type: "custom";
+    type: 'custom';
     customType: string;
     data?: unknown;
   }> = [];
   const original = new FusionRunStore({
-    idFactory: sequentialIds("fusion-1", "fusion-2"),
+    idFactory: sequentialIds('fusion-1', 'fusion-2'),
     now: sequentialClock(),
     persistence: {
       appendEntry: (customType, data) =>
-        entries.push({ type: "custom", customType, data }),
+        entries.push({ type: 'custom', customType, data }),
     },
   });
   const first = original.startRun({
-    prompt: "First",
-    profileName: "quality",
-    operationId: "operation-1",
-    phase: "panel",
+    prompt: 'First',
+    profileName: 'quality',
+    operationId: 'operation-1',
+    phase: 'panel',
   });
-  original.completeRun(first.id, { report: "First report" });
+  original.completeRun(first.id, { report: 'First report' });
   const second = original.startRun({
-    prompt: "Second",
-    profileName: "quality",
-    operationId: "operation-2",
-    phase: "panel",
+    prompt: 'Second',
+    profileName: 'quality',
+    operationId: 'operation-2',
+    phase: 'panel',
   });
-  original.completeRun(second.id, { report: "Second report" });
+  original.completeRun(second.id, { report: 'Second report' });
 
   const restored = new FusionRunStore();
   restored.restoreFromEntries(entries);
@@ -201,29 +203,29 @@ test("Fusion RPC replays any persisted operation after later runs and restart", 
     orchestrator: {
       async startRun() {
         starts += 1;
-        throw new Error("must not start");
+        throw new Error('must not start');
       },
       async cancelActiveRun() {
-        return { status: "ignored" };
+        return { status: 'ignored' };
       },
     },
   });
 
-  const replay = request(bus, "start-restored", "start", {
-    prompt: "Ignored retry prompt",
-    operationId: "operation-1",
+  const replay = request(bus, 'start-restored', 'start', {
+    prompt: 'Ignored retry prompt',
+    operationId: 'operation-1',
   });
   assert.deepEqual(
     await replay,
-    success("start-restored", "start", {
-      operationId: "operation-1",
+    success('start-restored', 'start', {
+      operationId: 'operation-1',
       replayed: true,
       run: {
-        runId: "fusion-1",
-        operationId: "operation-1",
-        phase: "done",
+        runId: 'fusion-1',
+        operationId: 'operation-1',
+        phase: 'done',
         terminal: true,
-        report: "First report",
+        report: 'First report',
       },
     }),
   );
@@ -234,51 +236,51 @@ test("Fusion RPC replays any persisted operation after later runs and restart", 
   );
 });
 
-test("Fusion RPC status, result, and adopt resolve historical runs", async () => {
+test('Fusion RPC status, result, and adopt resolve historical runs', async () => {
   const store = new FusionRunStore({
-    idFactory: sequentialIds("fusion-1", "fusion-2"),
+    idFactory: sequentialIds('fusion-1', 'fusion-2'),
     now: sequentialClock(),
   });
   const first = store.startRun({
-    prompt: "First",
-    profileName: "quality",
-    operationId: "operation-1",
+    prompt: 'First',
+    profileName: 'quality',
+    operationId: 'operation-1',
   });
-  store.completeRun(first.id, { report: "First report" });
+  store.completeRun(first.id, { report: 'First report' });
   const second = store.startRun({
-    prompt: "Second",
-    profileName: "quality",
-    operationId: "operation-2",
+    prompt: 'Second',
+    profileName: 'quality',
+    operationId: 'operation-2',
   });
-  store.completeRun(second.id, { report: "Second report" });
+  store.completeRun(second.id, { report: 'Second report' });
   const fixture = createFixture(store);
   const expected = {
-    runId: "fusion-1",
-    operationId: "operation-1",
-    phase: "done",
+    runId: 'fusion-1',
+    operationId: 'operation-1',
+    phase: 'done',
     terminal: true,
-    report: "First report",
+    report: 'First report',
   };
 
   assert.deepEqual(
-    await fixture.request("status-1", "status", {
-      operationId: "operation-1",
+    await fixture.request('status-1', 'status', {
+      operationId: 'operation-1',
     }),
-    success("status-1", "status", { run: expected }),
+    success('status-1', 'status', { run: expected }),
   );
   assert.deepEqual(
-    await fixture.request("result-1", "result", { runId: "fusion-1" }),
-    success("result-1", "result", { run: expected }),
+    await fixture.request('result-1', 'result', { runId: 'fusion-1' }),
+    success('result-1', 'result', { run: expected }),
   );
   assert.deepEqual(
-    await fixture.request("adopt-1", "adopt", { runId: "fusion-1" }),
-    success("adopt-1", "adopt", { adopted: true, run: expected }),
+    await fixture.request('adopt-1', 'adopt', { runId: 'fusion-1' }),
+    success('adopt-1', 'adopt', { adopted: true, run: expected }),
   );
 });
 
-test("Fusion RPC result exposes validated exact caller output", async () => {
+test('Fusion RPC result exposes validated exact caller output', async () => {
   const store = new FusionRunStore({
-    idFactory: () => "fusion-1",
+    idFactory: () => 'fusion-1',
     now: sequentialClock(),
   });
   const run = store.startRun({
@@ -292,53 +294,53 @@ Return either:
   \`Fix: <specific change>\`
 
 Do not write any other prose.`,
-    profileName: "quality",
-    operationId: "operation-1",
-    outputContract: "plan-review-v1",
+    profileName: 'quality',
+    operationId: 'operation-1',
+    outputContract: 'plan-review-v1',
   });
-  store.completeRun(run.id, { report: "NO_FINDINGS" });
+  store.completeRun(run.id, { report: 'NO_FINDINGS' });
   const fixture = createFixture(store);
 
   assert.deepEqual(
-    await fixture.request("result-contract", "result", { runId: "fusion-1" }),
-    success("result-contract", "result", {
+    await fixture.request('result-contract', 'result', { runId: 'fusion-1' }),
+    success('result-contract', 'result', {
       run: {
-        runId: "fusion-1",
-        operationId: "operation-1",
-        phase: "done",
+        runId: 'fusion-1',
+        operationId: 'operation-1',
+        phase: 'done',
         terminal: true,
-        report: "NO_FINDINGS",
+        report: 'NO_FINDINGS',
       },
       callerOutput: {
-        contract: "plan-review-v1",
-        output: "NO_FINDINGS",
+        contract: 'plan-review-v1',
+        output: 'NO_FINDINGS',
       },
     }),
   );
 });
 
-test("Fusion RPC result reports not_ready with the current structured state", async () => {
-  const store = new FusionRunStore({ idFactory: () => "fusion-1" });
+test('Fusion RPC result reports not_ready with the current structured state', async () => {
+  const store = new FusionRunStore({ idFactory: () => 'fusion-1' });
   store.startRun({
-    prompt: "Review this.",
-    profileName: "quality",
-    operationId: "operation-1",
-    phase: "judge",
+    prompt: 'Review this.',
+    profileName: 'quality',
+    operationId: 'operation-1',
+    phase: 'judge',
   });
   const fixture = createFixture(store);
 
   assert.deepEqual(
-    await fixture.request("result-1", "result", {
-      operationId: "operation-1",
+    await fixture.request('result-1', 'result', {
+      operationId: 'operation-1',
     }),
-    failure("result-1", "result", {
-      code: "not_ready",
-      message: "Fusion run fusion-1 is not terminal.",
+    failure('result-1', 'result', {
+      code: 'not_ready',
+      message: 'Fusion run fusion-1 is not terminal.',
       details: {
         run: {
-          runId: "fusion-1",
-          operationId: "operation-1",
-          phase: "judge",
+          runId: 'fusion-1',
+          operationId: 'operation-1',
+          phase: 'judge',
           terminal: false,
         },
       },
@@ -346,149 +348,149 @@ test("Fusion RPC result reports not_ready with the current structured state", as
   );
 });
 
-test("Fusion RPC cancel targets the selected active run and returns terminal state", async () => {
-  const store = new FusionRunStore({ idFactory: () => "fusion-1" });
+test('Fusion RPC cancel targets the selected active run and returns terminal state', async () => {
+  const store = new FusionRunStore({ idFactory: () => 'fusion-1' });
   store.startRun({
-    prompt: "Review this.",
-    profileName: "quality",
-    operationId: "operation-1",
-    phase: "panel",
+    prompt: 'Review this.',
+    profileName: 'quality',
+    operationId: 'operation-1',
+    phase: 'panel',
   });
   let cancels = 0;
   const fixture = createFixture(store, {
     async cancelActiveRun() {
       cancels += 1;
-      const cancelled = store.cancelRun("fusion-1", {
-        report: "Cancellation report",
-        error: "Cancellation requested with stop.",
+      const cancelled = store.cancelRun('fusion-1', {
+        report: 'Cancellation report',
+        error: 'Cancellation requested with stop.',
       });
       return {
-        status: "cancelled" as const,
+        status: 'cancelled' as const,
         run: cancelled,
-        report: "Cancellation report",
+        report: 'Cancellation report',
       };
     },
   });
 
   assert.deepEqual(
-    await fixture.request("cancel-1", "cancel", {
-      operationId: "operation-1",
+    await fixture.request('cancel-1', 'cancel', {
+      operationId: 'operation-1',
     }),
-    success("cancel-1", "cancel", {
+    success('cancel-1', 'cancel', {
       cancelled: true,
       run: {
-        runId: "fusion-1",
-        operationId: "operation-1",
-        phase: "cancelled",
+        runId: 'fusion-1',
+        operationId: 'operation-1',
+        phase: 'cancelled',
         terminal: true,
-        report: "Cancellation report",
-        error: "Cancellation requested with stop.",
+        report: 'Cancellation report',
+        error: 'Cancellation requested with stop.',
       },
     }),
   );
   assert.equal(cancels, 1);
 });
 
-test("Fusion RPC returns typed protocol errors", async () => {
+test('Fusion RPC returns typed protocol errors', async () => {
   const bus = new FakeEventBus();
   const fixture = createFixture();
 
-  assert.deepEqual(await fixture.request("method-invalid", "unknown"), {
+  assert.deepEqual(await fixture.request('method-invalid', 'unknown'), {
     version: 1,
-    requestId: "method-invalid",
+    requestId: 'method-invalid',
     success: false,
     error: {
-      code: "unsupported_method",
-      message: "RPC method is unsupported.",
+      code: 'unsupported_method',
+      message: 'RPC method is unsupported.',
     },
   });
 
-  const wrongVersion = once(bus, replyEvent("version-invalid"));
+  const wrongVersion = once(bus, replyEvent('version-invalid'));
   registerFusionRpc({
     events: bus,
     store: new FusionRunStore(),
     getContext: () => fakeContext,
     orchestrator: {
       async startRun() {
-        return { status: "ignored" };
+        return { status: 'ignored' };
       },
       async cancelActiveRun() {
-        return { status: "ignored" };
+        return { status: 'ignored' };
       },
     },
   });
   bus.emit(FUSION_RPC_REQUEST_EVENT, {
     version: 2,
-    requestId: "version-invalid",
-    method: "status",
+    requestId: 'version-invalid',
+    method: 'status',
   });
   assert.deepEqual(
     await wrongVersion,
-    failure("version-invalid", "status", {
-      code: "invalid_request",
-      message: "RPC version must be 1.",
+    failure('version-invalid', 'status', {
+      code: 'invalid_request',
+      message: 'RPC version must be 1.',
     }),
   );
 });
 
-test("Fusion RPC returns typed validation, lookup, availability, and busy errors", async () => {
+test('Fusion RPC returns typed validation, lookup, availability, and busy errors', async () => {
   const unavailable = createFixture(new FusionRunStore(), {
     getContext: () => undefined,
   });
   assert.deepEqual(
-    await unavailable.request("start-unavailable", "start", {
-      prompt: "Review this.",
-      operationId: "operation-1",
+    await unavailable.request('start-unavailable', 'start', {
+      prompt: 'Review this.',
+      operationId: 'operation-1',
     }),
-    failure("start-unavailable", "start", {
-      code: "unavailable",
-      message: "Fusion session context is unavailable.",
+    failure('start-unavailable', 'start', {
+      code: 'unavailable',
+      message: 'Fusion session context is unavailable.',
     }),
   );
 
   const fixture = createFixture();
   assert.deepEqual(
-    await fixture.request("adopt-invalid", "adopt", {}),
-    failure("adopt-invalid", "adopt", {
-      code: "invalid_request",
-      message: "adopt runId must be a non-empty string.",
+    await fixture.request('adopt-invalid', 'adopt', {}),
+    failure('adopt-invalid', 'adopt', {
+      code: 'invalid_request',
+      message: 'adopt runId must be a non-empty string.',
     }),
   );
   assert.deepEqual(
-    await fixture.request("status-missing", "status", {
-      operationId: "missing",
+    await fixture.request('status-missing', 'status', {
+      operationId: 'missing',
     }),
-    success("status-missing", "status", {
-      operationId: "missing",
-      state: "absent",
+    success('status-missing', 'status', {
+      operationId: 'missing',
+      state: 'absent',
       replaySafe: true,
     }),
   );
 
-  const busyStore = new FusionRunStore({ idFactory: () => "active-run" });
+  const busyStore = new FusionRunStore({ idFactory: () => 'active-run' });
   busyStore.startRun({
-    prompt: "Existing",
-    profileName: "quality",
-    phase: "panel",
+    prompt: 'Existing',
+    profileName: 'quality',
+    phase: 'panel',
   });
   const busy = createFixture(busyStore, {
     async startRun() {
-      return { status: "conflict", activeRunId: "active-run" };
+      return { status: 'conflict', activeRunId: 'active-run' };
     },
   });
   assert.deepEqual(
-    await busy.request("start-busy", "start", {
-      prompt: "New",
-      operationId: "operation-new",
+    await busy.request('start-busy', 'start', {
+      prompt: 'New',
+      operationId: 'operation-new',
     }),
-    failure("start-busy", "start", {
-      code: "busy",
-      message: "Fusion run active-run is already active.",
+    failure('start-busy', 'start', {
+      code: 'busy',
+      message: 'Fusion run active-run is already active.',
       details: {
-        activeRunId: "active-run",
+        activeRunId: 'active-run',
         run: {
-          runId: "active-run",
-          phase: "panel",
+          runId: 'active-run',
+          phase: 'panel',
           terminal: false,
         },
       },
@@ -497,41 +499,41 @@ test("Fusion RPC returns typed validation, lookup, availability, and busy errors
 
   const startFailed = createFixture(new FusionRunStore(), {
     async startRun() {
-      return { status: "failed", error: "profile invalid" };
+      return { status: 'failed', error: 'profile invalid' };
     },
   });
   assert.deepEqual(
-    await startFailed.request("start-failed", "start", {
-      prompt: "Review this.",
-      operationId: "operation-failed",
+    await startFailed.request('start-failed', 'start', {
+      prompt: 'Review this.',
+      operationId: 'operation-failed',
     }),
-    failure("start-failed", "start", {
-      code: "start_failed",
-      message: "profile invalid",
+    failure('start-failed', 'start', {
+      code: 'start_failed',
+      message: 'profile invalid',
     }),
   );
 
-  const cancelStore = new FusionRunStore({ idFactory: () => "cancel-run" });
+  const cancelStore = new FusionRunStore({ idFactory: () => 'cancel-run' });
   cancelStore.startRun({
-    prompt: "Review this.",
-    profileName: "quality",
-    operationId: "cancel-operation",
-    phase: "panel",
+    prompt: 'Review this.',
+    profileName: 'quality',
+    operationId: 'cancel-operation',
+    phase: 'panel',
   });
   const cancelFailed = createFixture(cancelStore, {
     async cancelActiveRun() {
-      return { status: "failed", error: "stop and interrupt failed" };
+      return { status: 'failed', error: 'stop and interrupt failed' };
     },
   });
   const cancelActive = cancelStore.getActiveRun();
   assert.ok(cancelActive);
   assert.deepEqual(
-    await cancelFailed.request("cancel-failed", "cancel", {
-      operationId: "cancel-operation",
+    await cancelFailed.request('cancel-failed', 'cancel', {
+      operationId: 'cancel-operation',
     }),
-    failure("cancel-failed", "cancel", {
-      code: "cancel_failed",
-      message: "stop and interrupt failed",
+    failure('cancel-failed', 'cancel', {
+      code: 'cancel_failed',
+      message: 'stop and interrupt failed',
       details: { run: state(cancelActive) },
     }),
   );
@@ -544,7 +546,7 @@ interface FixtureOverrides {
 }
 
 function createFixture(
-  store = new FusionRunStore({ idFactory: () => "fusion-1", now: () => 1 }),
+  store = new FusionRunStore({ idFactory: () => 'fusion-1', now: () => 1 }),
   overrides: FixtureOverrides = {},
 ) {
   const bus = new FakeEventBus();
@@ -561,19 +563,19 @@ function createFixture(
         if (overrides.startRun) return overrides.startRun();
         const run = store.startRun({
           prompt: input.prompt,
-          profileName: input.profile ?? "quality",
+          profileName: input.profile ?? 'quality',
           ...(input.operationId ? { operationId: input.operationId } : {}),
           ...(input.outputContract
             ? { outputContract: input.outputContract }
             : {}),
-          phase: "panel",
+          phase: 'panel',
         });
-        return { status: "started", run };
+        return { status: 'started', run };
       },
       async cancelActiveRun() {
         return overrides.cancelActiveRun
           ? overrides.cancelActiveRun()
-          : { status: "ignored" };
+          : { status: 'ignored' };
       },
     },
   });
@@ -609,9 +611,9 @@ function state(run: FusionRun) {
     ...(run.operationId ? { operationId: run.operationId } : {}),
     phase: run.phase,
     terminal:
-      run.phase === "done" ||
-      run.phase === "failed" ||
-      run.phase === "cancelled",
+      run.phase === 'done' ||
+      run.phase === 'failed' ||
+      run.phase === 'cancelled',
     ...(run.report !== undefined ? { report: run.report } : {}),
     ...(run.error !== undefined ? { error: run.error } : {}),
   };
@@ -675,7 +677,7 @@ class FakeEventBus {
 }
 
 const fakeContext = {
-  cwd: "/tmp",
+  cwd: '/tmp',
   hasUI: false,
   isProjectTrusted: () => true,
   sessionManager: { getEntries: () => [] },
@@ -685,22 +687,26 @@ const fakeContext = {
   },
 };
 
-test("fusion:rpc:v1 stays at version 1 and exposes no new phase values", () => {
+test('fusion:rpc:v1 stays at version 1 and exposes no new phase values', () => {
   // Merge synthesis deliberately reuses the judge run slot rather than adding a
   // FusionPhase, so consumers with strict enum validators keep working.
   const declaredPhases: FusionPhase[] = [
-    "panel",
-    "chain",
-    "judge",
-    "done",
-    "failed",
-    "cancelled",
+    'panel',
+    'chain',
+    'judge',
+    'done',
+    'failed',
+    'cancelled',
   ];
 
   assert.equal(FUSION_RPC_VERSION, 1);
   assert.equal(declaredPhases.length, 6);
-  assert.deepEqual(
-    [...FUSION_RPC_METHODS].sort(),
-    ["adopt", "cancel", "ping", "result", "start", "status"],
-  );
+  assert.deepEqual([...FUSION_RPC_METHODS].sort(), [
+    'adopt',
+    'cancel',
+    'ping',
+    'result',
+    'start',
+    'status',
+  ]);
 });

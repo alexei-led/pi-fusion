@@ -1,10 +1,10 @@
-import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { onTestFinished, test } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 
@@ -19,19 +19,19 @@ interface PackResult {
   files: PackFile[];
 }
 
-test("npm package contains only runtime extension assets", async (t) => {
-  const packDir = await mkdtemp(join(tmpdir(), "pi-fusion-pack-"));
-  t.after(async () => {
+test('npm package contains only runtime extension assets', async (_t) => {
+  const packDir = await mkdtemp(join(tmpdir(), 'pi-fusion-pack-'));
+  onTestFinished(async () => {
     await rm(packDir, { recursive: true, force: true });
   });
 
   const { stdout } = await execFileAsync(
-    "npm",
-    ["pack", "--json", "--pack-destination", packDir],
+    'npm',
+    ['pack', '--json', '--pack-destination', packDir],
     { maxBuffer: 1024 * 1024 },
   );
   const result = parsePackResult(stdout);
-  const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
+  const manifest = JSON.parse(await readFile('package.json', 'utf8')) as {
     name: string;
     version: string;
     pi?: {
@@ -46,35 +46,35 @@ test("npm package contains only runtime extension assets", async (t) => {
   assert.equal(result.version, manifest.version);
   assert.equal(
     result.filename,
-    `${manifest.name.replace(/^@/, "").replaceAll("/", "-")}-${manifest.version}.tgz`,
+    `${manifest.name.replace(/^@/, '').replaceAll('/', '-')}-${manifest.version}.tgz`,
   );
-  assert.ok(files.has("package.json"));
-  assert.ok(files.has("README.md"));
-  assert.ok(files.has("agents/fusion-panelist.md"));
-  assert.ok(files.has("agents/fusion-panelist-web.md"));
-  assert.ok(files.has("agents/fusion-panelist-full.md"));
-  assert.ok(files.has("agents/fusion-judge.md"));
-  assert.ok(files.has("agents/fusion-composer.md"));
-  assert.ok(files.has("docs/user-guide.md"));
-  assert.ok(files.has("src/index.ts"));
-  assert.equal(files.has("AGENTS.md"), false);
-  assert.equal(files.has("tsconfig.json"), false);
+  assert.ok(files.has('package.json'));
+  assert.ok(files.has('README.md'));
+  assert.ok(files.has('agents/fusion-panelist.md'));
+  assert.ok(files.has('agents/fusion-panelist-web.md'));
+  assert.ok(files.has('agents/fusion-panelist-full.md'));
+  assert.ok(files.has('agents/fusion-judge.md'));
+  assert.ok(files.has('agents/fusion-composer.md'));
+  assert.ok(files.has('docs/user-guide.md'));
+  assert.ok(files.has('src/index.ts'));
+  assert.equal(files.has('AGENTS.md'), false);
+  assert.equal(files.has('tsconfig.json'), false);
   assert.equal(
-    [...files].some((file) => file.startsWith("docs/assets/")),
+    [...files].some((file) => file.startsWith('docs/assets/')),
     false,
   );
   assert.equal(
-    [...files].some((file) => file.startsWith("test/")),
+    [...files].some((file) => file.startsWith('test/')),
     false,
   );
   assert.equal(
-    [...files].some((file) => file.includes("__tests__")),
+    [...files].some((file) => file.includes('__tests__')),
     false,
   );
 
-  assert.deepEqual(manifest.pi?.extensions, ["./src/index.ts"]);
-  assert.deepEqual(manifest.pi?.subagents?.agents, ["./agents"]);
-  assert.equal(manifest.publishConfig?.access, "public");
+  assert.deepEqual(manifest.pi?.extensions, ['./src/index.ts']);
+  assert.deepEqual(manifest.pi?.subagents?.agents, ['./agents']);
+  assert.equal(manifest.publishConfig?.access, 'public');
 });
 
 function parsePackResult(stdout: string): PackResult {
@@ -92,14 +92,14 @@ function parsePackResult(stdout: string): PackResult {
 function isPackResult(value: unknown): value is PackResult {
   if (!isRecord(value)) return false;
   return (
-    typeof value.filename === "string" &&
-    typeof value.name === "string" &&
-    typeof value.version === "string" &&
+    typeof value.filename === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.version === 'string' &&
     Array.isArray(value.files) &&
-    value.files.every((file) => isRecord(file) && typeof file.path === "string")
+    value.files.every((file) => isRecord(file) && typeof file.path === 'string')
   );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,5 +1,5 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   renderCancelledReport,
   renderFailureReport,
@@ -7,23 +7,23 @@ import {
   renderPanelFailureReport,
   renderPartialPanelReport,
   renderSinglePanelReport,
-} from "../../src/report.js";
-import type { FailedPanelSummary, PanelOutput } from "../../src/run-builder.js";
+} from '../../src/report.js';
+import type { FailedPanelSummary, PanelOutput } from '../../src/run-builder.js';
 
 const RUN_PANEL = {
-  id: "fusion-1",
-  prompt: "Compare APIs\nwith evidence",
-  profileName: "quality",
-  phase: "panel" as const,
-  panelRunId: "panel-1",
+  id: 'fusion-1',
+  prompt: 'Compare APIs\nwith evidence',
+  profileName: 'quality',
+  phase: 'panel' as const,
+  panelRunId: 'panel-1',
   createdAt: 0,
   updatedAt: 1_000,
 };
 
 const RUN_JUDGE = {
   ...RUN_PANEL,
-  phase: "judge" as const,
-  judgeRunId: "judge-1",
+  phase: 'judge' as const,
+  judgeRunId: 'judge-1',
 };
 
 const RUN_EXACT_REVIEW = {
@@ -42,47 +42,47 @@ Do not write any other prose.`,
 
 const ARCHITECT: PanelOutput = {
   index: 0,
-  id: "architect",
-  label: "Architect",
-  agent: "panel-agent",
-  output: "Architect recommends A.",
+  id: 'architect',
+  label: 'Architect',
+  agent: 'panel-agent',
+  output: 'Architect recommends A.',
 };
 
 const TESTER: PanelOutput = {
   index: 1,
-  id: "tester",
-  label: "Tester",
-  agent: "panel-agent",
-  output: "Tester verifies A.",
+  id: 'tester',
+  label: 'Tester',
+  agent: 'panel-agent',
+  output: 'Tester verifies A.',
 };
 
 const TIMED_OUT_TESTER: FailedPanelSummary = {
   index: 1,
-  id: "tester",
-  label: "Tester",
-  agent: "panel-agent",
-  summary: "Timed out\nstderr tail",
-  artifactPath: "/tmp/tester.md",
-  sessionPath: "/tmp/tester.jsonl",
+  id: 'tester',
+  label: 'Tester',
+  agent: 'panel-agent',
+  summary: 'Timed out\nstderr tail',
+  artifactPath: '/tmp/tester.md',
+  sessionPath: '/tmp/tester.jsonl',
 };
 
-test("renderJudgeReport preserves an exact caller output without headings", () => {
+test('renderJudgeReport preserves an exact caller output without headings', () => {
   const report = renderJudgeReport({
     run: RUN_EXACT_REVIEW,
-    judgeOutput: "NO_FINDINGS",
+    judgeOutput: 'NO_FINDINGS',
     panelOutputs: [ARCHITECT, TESTER],
     failures: [],
   });
 
-  assert.equal(report, "NO_FINDINGS");
+  assert.equal(report, 'NO_FINDINGS');
 });
 
-test("renderJudgeReport does not rewrite blind labels inside exact caller output", () => {
+test('renderJudgeReport does not rewrite blind labels inside exact caller output', () => {
   const output = [
-    "FINDING: MAJOR | Conflicting evidence",
-    "Evidence: Panel 1 and Panel 2 disagree about src/run.ts:42.",
-    "Fix: Resolve the conflict before merging.",
-  ].join("\n");
+    'FINDING: MAJOR | Conflicting evidence',
+    'Evidence: Panel 1 and Panel 2 disagree about src/run.ts:42.',
+    'Fix: Resolve the conflict before merging.',
+  ].join('\n');
   const report = renderJudgeReport({
     run: RUN_EXACT_REVIEW,
     judgeOutput: output,
@@ -94,12 +94,12 @@ test("renderJudgeReport does not rewrite blind labels inside exact caller output
   assert.equal(report, output);
 });
 
-test("renderSinglePanelReport preserves an exact caller finding block", () => {
+test('renderSinglePanelReport preserves an exact caller finding block', () => {
   const output = [
-    "FINDING: MAJOR | Missing timeout",
-    "Evidence: src/run.ts:42 can wait forever.",
-    "Fix: Add a bounded timeout.",
-  ].join("\n");
+    'FINDING: MAJOR | Missing timeout',
+    'Evidence: src/run.ts:42 can wait forever.',
+    'Fix: Add a bounded timeout.',
+  ].join('\n');
   const report = renderSinglePanelReport({
     run: RUN_EXACT_REVIEW,
     output: { ...ARCHITECT, output },
@@ -109,36 +109,36 @@ test("renderSinglePanelReport preserves an exact caller finding block", () => {
   assert.equal(report, output);
 });
 
-test("renderJudgeReport renders deterministic success sections", () => {
+test('renderJudgeReport renders deterministic success sections', () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
     judgeOutput: [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Use API A.",
-      "",
-      "## Consensus",
-      "Both panelists prefer A.",
-      "",
-      "## Disagreements",
-      "None.",
-      "",
-      "## Unique Insights",
-      "Tester noted rollout safety.",
-      "",
-      "## Blind Spots",
-      "No production traffic sample.",
-      "",
-      "## Recommendation",
-      "Ship API A.",
-      "",
-      "## Risks",
-      "Migration risk remains.",
-      "",
-      "## Next Step",
-      "Write the migration checklist.",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Use API A.',
+      '',
+      '## Consensus',
+      'Both panelists prefer A.',
+      '',
+      '## Disagreements',
+      'None.',
+      '',
+      '## Unique Insights',
+      'Tester noted rollout safety.',
+      '',
+      '## Blind Spots',
+      'No production traffic sample.',
+      '',
+      '## Recommendation',
+      'Ship API A.',
+      '',
+      '## Risks',
+      'Migration risk remains.',
+      '',
+      '## Next Step',
+      'Write the migration checklist.',
+    ].join('\n'),
     panelOutputs: [ARCHITECT, TESTER],
     failures: [],
   });
@@ -146,66 +146,66 @@ test("renderJudgeReport renders deterministic success sections", () => {
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Use API A.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 2",
-      "- Failed panelists: 0",
-      "- Architect: succeeded",
-      "  Agent: panel-agent",
-      "- Tester: succeeded",
-      "  Agent: panel-agent",
-      "- Judge: succeeded",
-      "",
-      "## Consensus",
-      "Both panelists prefer A.",
-      "",
-      "## Disagreements",
-      "None.",
-      "",
-      "## Contested Claims",
-      "Not specified by the judge.",
-      "",
-      "## Unique Insights",
-      "Tester noted rollout safety.",
-      "",
-      "## Blind Spots",
-      "No production traffic sample.",
-      "",
-      "## Recommendation",
-      "Ship API A.",
-      "",
-      "## Risks",
-      "Migration risk remains.",
-      "",
-      "## Next Step",
-      "Write the migration checklist.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: judge",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Judge run: judge-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Use API A.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 2',
+      '- Failed panelists: 0',
+      '- Architect: succeeded',
+      '  Agent: panel-agent',
+      '- Tester: succeeded',
+      '  Agent: panel-agent',
+      '- Judge: succeeded',
+      '',
+      '## Consensus',
+      'Both panelists prefer A.',
+      '',
+      '## Disagreements',
+      'None.',
+      '',
+      '## Contested Claims',
+      'Not specified by the judge.',
+      '',
+      '## Unique Insights',
+      'Tester noted rollout safety.',
+      '',
+      '## Blind Spots',
+      'No production traffic sample.',
+      '',
+      '## Recommendation',
+      'Ship API A.',
+      '',
+      '## Risks',
+      'Migration risk remains.',
+      '',
+      '## Next Step',
+      'Write the migration checklist.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: judge',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Judge run: judge-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderJudgeReport includes readable per-panel and judge run details", () => {
+test('renderJudgeReport includes readable per-panel and judge run details', () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
-    judgeOutput: "Prefer A.",
+    judgeOutput: 'Prefer A.',
     panelOutputs: [
       {
         ...ARCHITECT,
         observation: {
-          model: "ollama/qwen",
+          model: 'ollama/qwen',
           durationMs: 1200,
           usage: { inputTokens: 100, outputTokens: 40, costUsd: 0 },
         },
@@ -213,14 +213,14 @@ test("renderJudgeReport includes readable per-panel and judge run details", () =
       {
         ...TESTER,
         observation: {
-          model: "openai/gpt-mini",
+          model: 'openai/gpt-mini',
           durationMs: 2300,
           usage: { inputTokens: 120, outputTokens: 50, costUsd: 0.02 },
           providerFailures: [
             {
-              provider: "openai",
-              model: "openai/gpt-mini",
-              message: "retry",
+              provider: 'openai',
+              model: 'openai/gpt-mini',
+              message: 'retry',
               count: 2,
             },
           ],
@@ -229,7 +229,7 @@ test("renderJudgeReport includes readable per-panel and judge run details", () =
     ],
     failures: [],
     judgeObservation: {
-      model: "anthropic/claude-haiku",
+      model: 'anthropic/claude-haiku',
       durationMs: 800,
       usage: { inputTokens: 300, outputTokens: 100, costUsd: 0.01 },
     },
@@ -243,20 +243,20 @@ test("renderJudgeReport includes readable per-panel and judge run details", () =
   assert.match(report, /openai\/gpt-mini.*retry.*x2/);
 });
 
-test("renderJudgeReport distinguishes configured from observed models", () => {
+test('renderJudgeReport distinguishes configured from observed models', () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
-    judgeOutput: "Prefer A.",
+    judgeOutput: 'Prefer A.',
     panelOutputs: [
       {
         ...ARCHITECT,
-        model: "anthropic/observed-panel",
-        configuredModel: "deepseek/requested-panel",
-        observation: { model: "anthropic/observed-panel", durationMs: 1200 },
+        model: 'anthropic/observed-panel',
+        configuredModel: 'deepseek/requested-panel',
+        observation: { model: 'anthropic/observed-panel', durationMs: 1200 },
       },
     ],
     failures: [],
-    judgeModel: "deepseek/requested-judge",
+    judgeModel: 'deepseek/requested-judge',
     judgeObservation: { durationMs: 800 },
   });
 
@@ -268,10 +268,10 @@ test("renderJudgeReport distinguishes configured from observed models", () => {
   assert.match(report, /Aggregate model time: 2\.0s/);
 });
 
-test("renderJudgeReport marks totals unknown when any execution lacks telemetry", () => {
+test('renderJudgeReport marks totals unknown when any execution lacks telemetry', () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
-    judgeOutput: "Prefer A.",
+    judgeOutput: 'Prefer A.',
     panelOutputs: [
       {
         ...ARCHITECT,
@@ -291,10 +291,10 @@ test("renderJudgeReport marks totals unknown when any execution lacks telemetry"
   assert.match(report, /Total estimated cost: unknown/);
 });
 
-test("renderJudgeReport shows partial success and timed-out panelists", () => {
+test('renderJudgeReport shows partial success and timed-out panelists', () => {
   const report = renderJudgeReport({
     run: RUN_JUDGE,
-    judgeOutput: "Prefer A.",
+    judgeOutput: 'Prefer A.',
     panelOutputs: [ARCHITECT],
     failures: [TIMED_OUT_TESTER],
   });
@@ -302,186 +302,186 @@ test("renderJudgeReport shows partial success and timed-out panelists", () => {
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Fusion completed with 1 successful panelist and 1 failed panelist.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 1",
-      "- Failed panelists: 1",
-      "- Architect: succeeded",
-      "  Agent: panel-agent",
-      "- Tester: failed - Timed out",
-      "  Agent: panel-agent",
-      "  Artifact: /tmp/tester.md",
-      "  Session: /tmp/tester.jsonl",
-      "- Judge: succeeded",
-      "",
-      "## Consensus",
-      "Not specified by the judge.",
-      "",
-      "## Disagreements",
-      "Not specified by the judge.",
-      "",
-      "## Contested Claims",
-      "Not specified by the judge.",
-      "",
-      "## Unique Insights",
-      "Not specified by the judge.",
-      "",
-      "## Blind Spots",
-      "Not specified by the judge.",
-      "",
-      "## Recommendation",
-      "Prefer A.",
-      "",
-      "## Risks",
-      "Not specified by the judge.",
-      "",
-      "## Next Step",
-      "Review the recommendation and decide whether to act on it.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: judge",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Judge run: judge-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Fusion completed with 1 successful panelist and 1 failed panelist.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 1',
+      '- Failed panelists: 1',
+      '- Architect: succeeded',
+      '  Agent: panel-agent',
+      '- Tester: failed - Timed out',
+      '  Agent: panel-agent',
+      '  Artifact: /tmp/tester.md',
+      '  Session: /tmp/tester.jsonl',
+      '- Judge: succeeded',
+      '',
+      '## Consensus',
+      'Not specified by the judge.',
+      '',
+      '## Disagreements',
+      'Not specified by the judge.',
+      '',
+      '## Contested Claims',
+      'Not specified by the judge.',
+      '',
+      '## Unique Insights',
+      'Not specified by the judge.',
+      '',
+      '## Blind Spots',
+      'Not specified by the judge.',
+      '',
+      '## Recommendation',
+      'Prefer A.',
+      '',
+      '## Risks',
+      'Not specified by the judge.',
+      '',
+      '## Next Step',
+      'Review the recommendation and decide whether to act on it.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: judge',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Judge run: judge-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderSinglePanelReport renders the single result with required sections", () => {
+test('renderSinglePanelReport renders the single result with required sections', () => {
   const report = renderSinglePanelReport({
     run: RUN_PANEL,
-    output: { ...ARCHITECT, output: "Choose A.\nIt is simpler." },
+    output: { ...ARCHITECT, output: 'Choose A.\nIt is simpler.' },
     failures: [TIMED_OUT_TESTER],
   });
 
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Only one panelist completed successfully, so pi-fusion skipped the judge step.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 1",
-      "- Failed panelists: 1",
-      "- Architect: succeeded",
-      "  Agent: panel-agent",
-      "- Tester: failed - Timed out",
-      "  Agent: panel-agent",
-      "  Artifact: /tmp/tester.md",
-      "  Session: /tmp/tester.jsonl",
-      "- Judge: skipped - one successful panelist",
-      "",
-      "## Consensus",
-      "Only one panelist succeeded; no cross-panel consensus was available.",
-      "",
-      "## Disagreements",
-      "No disagreements were synthesized because the judge did not run.",
-      "",
-      "## Unique Insights",
-      "Single successful panelist: Architect.",
-      "",
-      "## Blind Spots",
-      "The result was not compared against another successful panelist or judge synthesis.",
-      "",
-      "## Recommendation",
-      "Choose A.\nIt is simpler.",
-      "",
-      "## Risks",
-      "Single-panel results can miss disagreements, blind spots, and model-specific failure modes.",
-      "",
-      "## Next Step",
-      "Use this single-panel result directly, or rerun /fusion if you need judge synthesis.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: panel",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Only one panelist completed successfully, so pi-fusion skipped the judge step.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 1',
+      '- Failed panelists: 1',
+      '- Architect: succeeded',
+      '  Agent: panel-agent',
+      '- Tester: failed - Timed out',
+      '  Agent: panel-agent',
+      '  Artifact: /tmp/tester.md',
+      '  Session: /tmp/tester.jsonl',
+      '- Judge: skipped - one successful panelist',
+      '',
+      '## Consensus',
+      'Only one panelist succeeded; no cross-panel consensus was available.',
+      '',
+      '## Disagreements',
+      'No disagreements were synthesized because the judge did not run.',
+      '',
+      '## Unique Insights',
+      'Single successful panelist: Architect.',
+      '',
+      '## Blind Spots',
+      'The result was not compared against another successful panelist or judge synthesis.',
+      '',
+      '## Recommendation',
+      'Choose A.\nIt is simpler.',
+      '',
+      '## Risks',
+      'Single-panel results can miss disagreements, blind spots, and model-specific failure modes.',
+      '',
+      '## Next Step',
+      'Use this single-panel result directly, or rerun /fusion if you need judge synthesis.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: panel',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderPanelFailureReport renders all-panel failure", () => {
+test('renderPanelFailureReport renders all-panel failure', () => {
   const report = renderPanelFailureReport({
     run: RUN_PANEL,
     failures: [
-      { ...TIMED_OUT_TESTER, index: 0, id: "architect", label: "Architect" },
+      { ...TIMED_OUT_TESTER, index: 0, id: 'architect', label: 'Architect' },
       TIMED_OUT_TESTER,
     ],
-    error: "No outputs",
+    error: 'No outputs',
   });
 
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "No panelists completed successfully. The fusion run could not produce a recommendation.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 0",
-      "- Failed panelists: 2",
-      "- Architect: failed - Timed out",
-      "  Agent: panel-agent",
-      "  Artifact: /tmp/tester.md",
-      "  Session: /tmp/tester.jsonl",
-      "- Tester: failed - Timed out",
-      "  Agent: panel-agent",
-      "  Artifact: /tmp/tester.md",
-      "  Session: /tmp/tester.jsonl",
-      "- Judge: not run - no successful panelists",
-      "",
-      "## Consensus",
-      "No consensus was available because all panelists failed.",
-      "",
-      "## Disagreements",
-      "No disagreements were synthesized because the judge did not run.",
-      "",
-      "## Unique Insights",
-      "No panel output was available to summarize.",
-      "",
-      "## Blind Spots",
-      "All panelists failed, so the report may be missing every intended review perspective.",
-      "",
-      "## Recommendation",
-      "No recommendation is available.",
-      "",
-      "## Risks",
-      "All panelists failed. Root error: No outputs",
-      "",
-      "## Next Step",
-      "Inspect the failed subagent run IDs or artifacts, then retry /fusion after fixing the cause.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: panel",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'No panelists completed successfully. The fusion run could not produce a recommendation.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 0',
+      '- Failed panelists: 2',
+      '- Architect: failed - Timed out',
+      '  Agent: panel-agent',
+      '  Artifact: /tmp/tester.md',
+      '  Session: /tmp/tester.jsonl',
+      '- Tester: failed - Timed out',
+      '  Agent: panel-agent',
+      '  Artifact: /tmp/tester.md',
+      '  Session: /tmp/tester.jsonl',
+      '- Judge: not run - no successful panelists',
+      '',
+      '## Consensus',
+      'No consensus was available because all panelists failed.',
+      '',
+      '## Disagreements',
+      'No disagreements were synthesized because the judge did not run.',
+      '',
+      '## Unique Insights',
+      'No panel output was available to summarize.',
+      '',
+      '## Blind Spots',
+      'All panelists failed, so the report may be missing every intended review perspective.',
+      '',
+      '## Recommendation',
+      'No recommendation is available.',
+      '',
+      '## Risks',
+      'All panelists failed. Root error: No outputs',
+      '',
+      '## Next Step',
+      'Inspect the failed subagent run IDs or artifacts, then retry /fusion after fixing the cause.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: panel',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderFailureReport renders judge failure with panel status", () => {
+test('renderFailureReport renders judge failure with panel status', () => {
   const report = renderFailureReport({
     run: RUN_JUDGE,
-    error: "Judge failed\nstack trace",
+    error: 'Judge failed\nstack trace',
     panelOutputs: [ARCHITECT, TESTER],
     failures: [],
   });
@@ -489,60 +489,60 @@ test("renderFailureReport renders judge failure with panel status", () => {
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Fusion failed before it could produce a final report.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 2",
-      "- Failed panelists: 0",
-      "- Architect: succeeded",
-      "  Agent: panel-agent",
-      "- Tester: succeeded",
-      "  Agent: panel-agent",
-      "- Judge: failed - Judge failed",
-      "- Phase: judge",
-      "",
-      "## Consensus",
-      "No consensus was available because fusion failed.",
-      "",
-      "## Disagreements",
-      "No disagreements were synthesized because fusion failed.",
-      "",
-      "## Unique Insights",
-      "No unique insights were synthesized because fusion failed.",
-      "",
-      "## Blind Spots",
-      "The failure may hide panel disagreements, missing evidence, or provider-specific errors.",
-      "",
-      "## Recommendation",
-      "No recommendation is available.",
-      "",
-      "## Risks",
-      "Fusion failed in phase judge: Judge failed\nstack trace",
-      "",
-      "## Next Step",
-      "Fix the reported error and retry /fusion.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: judge",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Judge run: judge-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Fusion failed before it could produce a final report.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 2',
+      '- Failed panelists: 0',
+      '- Architect: succeeded',
+      '  Agent: panel-agent',
+      '- Tester: succeeded',
+      '  Agent: panel-agent',
+      '- Judge: failed - Judge failed',
+      '- Phase: judge',
+      '',
+      '## Consensus',
+      'No consensus was available because fusion failed.',
+      '',
+      '## Disagreements',
+      'No disagreements were synthesized because fusion failed.',
+      '',
+      '## Unique Insights',
+      'No unique insights were synthesized because fusion failed.',
+      '',
+      '## Blind Spots',
+      'The failure may hide panel disagreements, missing evidence, or provider-specific errors.',
+      '',
+      '## Recommendation',
+      'No recommendation is available.',
+      '',
+      '## Risks',
+      'Fusion failed in phase judge: Judge failed\nstack trace',
+      '',
+      '## Next Step',
+      'Fix the reported error and retry /fusion.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: judge',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Judge run: judge-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderCancelledReport renders cancellation details", () => {
+test('renderCancelledReport renders cancellation details', () => {
   const report = renderCancelledReport({
     run: RUN_JUDGE,
-    method: "interrupt",
-    targetRunId: "judge-1",
+    method: 'interrupt',
+    targetRunId: 'judge-1',
     panelOutputs: [ARCHITECT],
     failures: [TIMED_OUT_TESTER],
   });
@@ -550,96 +550,96 @@ test("renderCancelledReport renders cancellation details", () => {
   assert.equal(
     report,
     [
-      "# Fusion Report",
-      "",
-      "## Summary",
-      "Fusion cancellation was requested.",
-      "",
-      "## Agent Status",
-      "- Successful panelists: 1",
-      "- Failed panelists: 1",
-      "- Architect: succeeded",
-      "  Agent: panel-agent",
-      "- Tester: failed - Timed out",
-      "  Agent: panel-agent",
-      "  Artifact: /tmp/tester.md",
-      "  Session: /tmp/tester.jsonl",
-      "- Judge: cancelled or not completed",
-      "- Phase: judge",
-      "- Cancellation method: interrupt",
-      "- Target run: judge-1",
-      "",
-      "## Consensus",
-      "No final consensus was available because fusion was cancelled.",
-      "",
-      "## Disagreements",
-      "No final disagreements were synthesized because fusion was cancelled.",
-      "",
-      "## Unique Insights",
-      "No final unique insights were synthesized because fusion was cancelled.",
-      "",
-      "## Blind Spots",
-      "Cancellation may leave in-flight panel or judge output incomplete.",
-      "",
-      "## Recommendation",
-      "No recommendation is available.",
-      "",
-      "## Risks",
-      "The target subagent run (judge-1) may still need inspection if it does not stop promptly.",
-      "",
-      "## Next Step",
-      "Inspect the subagent run if it does not stop promptly.",
-      "",
-      "## Run Metadata",
-      "- Fusion run: fusion-1",
-      "- Profile: quality",
-      "- Phase: judge",
-      "- Prompt: Compare APIs",
-      "- Panel run: panel-1",
-      "- Judge run: judge-1",
-      "- Created: 1970-01-01T00:00:00.000Z",
-      "- Updated: 1970-01-01T00:00:01.000Z",
-    ].join("\n"),
+      '# Fusion Report',
+      '',
+      '## Summary',
+      'Fusion cancellation was requested.',
+      '',
+      '## Agent Status',
+      '- Successful panelists: 1',
+      '- Failed panelists: 1',
+      '- Architect: succeeded',
+      '  Agent: panel-agent',
+      '- Tester: failed - Timed out',
+      '  Agent: panel-agent',
+      '  Artifact: /tmp/tester.md',
+      '  Session: /tmp/tester.jsonl',
+      '- Judge: cancelled or not completed',
+      '- Phase: judge',
+      '- Cancellation method: interrupt',
+      '- Target run: judge-1',
+      '',
+      '## Consensus',
+      'No final consensus was available because fusion was cancelled.',
+      '',
+      '## Disagreements',
+      'No final disagreements were synthesized because fusion was cancelled.',
+      '',
+      '## Unique Insights',
+      'No final unique insights were synthesized because fusion was cancelled.',
+      '',
+      '## Blind Spots',
+      'Cancellation may leave in-flight panel or judge output incomplete.',
+      '',
+      '## Recommendation',
+      'No recommendation is available.',
+      '',
+      '## Risks',
+      'The target subagent run (judge-1) may still need inspection if it does not stop promptly.',
+      '',
+      '## Next Step',
+      'Inspect the subagent run if it does not stop promptly.',
+      '',
+      '## Run Metadata',
+      '- Fusion run: fusion-1',
+      '- Profile: quality',
+      '- Phase: judge',
+      '- Prompt: Compare APIs',
+      '- Panel run: panel-1',
+      '- Judge run: judge-1',
+      '- Created: 1970-01-01T00:00:00.000Z',
+      '- Updated: 1970-01-01T00:00:01.000Z',
+    ].join('\n'),
   );
 });
 
-test("renderJudgeReport restores real member names when the judge was blinded", () => {
+test('renderJudgeReport restores real member names when the judge was blinded', () => {
   const report = renderJudgeReport({
     run: {
-      id: "run-1",
-      prompt: "Compare designs",
-      profileName: "quality",
+      id: 'run-1',
+      prompt: 'Compare designs',
+      profileName: 'quality',
     },
     judgeOutput: [
-      "# Fusion Report",
-      "## Summary",
-      "Candidate A and Candidate C agree; Candidate B timed out.",
-      "## Recommendation",
-      "Follow Candidate A.",
-    ].join("\n"),
+      '# Fusion Report',
+      '## Summary',
+      'Candidate A and Candidate C agree; Candidate B timed out.',
+      '## Recommendation',
+      'Follow Candidate A.',
+    ].join('\n'),
     panelOutputs: [
       {
         index: 0,
-        id: "architect",
-        label: "Architect",
-        agent: "pi-fusion.fusion-panelist",
-        output: "Choose A.",
+        id: 'architect',
+        label: 'Architect',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'Choose A.',
       },
       {
         index: 2,
-        id: "generalist",
-        label: "Generalist",
-        agent: "pi-fusion.fusion-panelist",
-        output: "Choose B.",
+        id: 'generalist',
+        label: 'Generalist',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'Choose B.',
       },
     ],
     failures: [
       {
         index: 1,
-        id: "tester",
-        label: "Tester",
-        agent: "pi-fusion.fusion-panelist",
-        summary: "Timed out",
+        id: 'tester',
+        label: 'Tester',
+        agent: 'pi-fusion.fusion-panelist',
+        summary: 'Timed out',
       },
     ],
     blindPanelLabels: true,
@@ -650,19 +650,19 @@ test("renderJudgeReport restores real member names when the judge was blinded", 
   assert.doesNotMatch(report, /Candidate [ABC]/);
 });
 
-test("renderJudgeReport leaves judge prose untouched when blinding is off", () => {
+test('renderJudgeReport leaves judge prose untouched when blinding is off', () => {
   const report = renderJudgeReport({
-    run: { id: "run-1", prompt: "Compare designs", profileName: "quality" },
-    judgeOutput: ["# Fusion Report", "## Summary", "Candidate A wins."].join(
-      "\n",
+    run: { id: 'run-1', prompt: 'Compare designs', profileName: 'quality' },
+    judgeOutput: ['# Fusion Report', '## Summary', 'Candidate A wins.'].join(
+      '\n',
     ),
     panelOutputs: [
       {
         index: 0,
-        id: "architect",
-        label: "Architect",
-        agent: "pi-fusion.fusion-panelist",
-        output: "Choose A.",
+        id: 'architect',
+        label: 'Architect',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'Choose A.',
       },
     ],
     failures: [],
@@ -671,33 +671,33 @@ test("renderJudgeReport leaves judge prose untouched when blinding is off", () =
   assert.match(report, /Candidate A wins\./);
 });
 
-test("renderJudgeReport renders composer sections under merge synthesis", () => {
+test('renderJudgeReport renders composer sections under merge synthesis', () => {
   const report = renderJudgeReport({
-    run: { id: "run-1", prompt: "Review release", profileName: "quality" },
+    run: { id: 'run-1', prompt: 'Review release', profileName: 'quality' },
     judgeOutput: [
-      "# Fusion Report",
-      "## Summary",
-      "Two facets covered.",
-      "## Coverage Map",
-      "Security: Architect. Performance: Tester.",
-      "## Combined Answer",
-      "Ship it behind a flag.",
-      "## Gaps",
-      "Nobody covered migrations.",
-      "## Conflicts At Seams",
-      "None.",
-    ].join("\n"),
+      '# Fusion Report',
+      '## Summary',
+      'Two facets covered.',
+      '## Coverage Map',
+      'Security: Architect. Performance: Tester.',
+      '## Combined Answer',
+      'Ship it behind a flag.',
+      '## Gaps',
+      'Nobody covered migrations.',
+      '## Conflicts At Seams',
+      'None.',
+    ].join('\n'),
     panelOutputs: [
       {
         index: 0,
-        id: "architect",
-        label: "Architect",
-        agent: "pi-fusion.fusion-panelist",
-        output: "Security facet.",
+        id: 'architect',
+        label: 'Architect',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'Security facet.',
       },
     ],
     failures: [],
-    synthesis: "merge",
+    synthesis: 'merge',
   });
 
   assert.match(report, /## Coverage Map/);
@@ -709,46 +709,46 @@ test("renderJudgeReport renders composer sections under merge synthesis", () => 
   assert.doesNotMatch(report, /## Blind Spots/);
 });
 
-test("renderJudgeReport marks missing composer sections instead of dropping them", () => {
+test('renderJudgeReport marks missing composer sections instead of dropping them', () => {
   const report = renderJudgeReport({
-    run: { id: "run-1", prompt: "Review release", profileName: "quality" },
-    judgeOutput: "# Fusion Report\n## Summary\nOnly a summary.",
+    run: { id: 'run-1', prompt: 'Review release', profileName: 'quality' },
+    judgeOutput: '# Fusion Report\n## Summary\nOnly a summary.',
     panelOutputs: [
       {
         index: 0,
-        id: "architect",
-        label: "Architect",
-        agent: "pi-fusion.fusion-panelist",
-        output: "Security facet.",
+        id: 'architect',
+        label: 'Architect',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'Security facet.',
       },
     ],
     failures: [],
-    synthesis: "merge",
+    synthesis: 'merge',
   });
 
   assert.match(report, /## Gaps\nNot specified by the composer\./);
   assert.match(report, /## Coverage Map\nNot specified by the composer\./);
 });
 
-test("merge reports name the composer, not the judge", () => {
+test('merge reports name the composer, not the judge', () => {
   const shared = {
-    run: { id: "run-1", prompt: "Review", profileName: "audit" },
-    judgeOutput: "# Fusion Report\n## Summary\nDone.",
+    run: { id: 'run-1', prompt: 'Review', profileName: 'audit' },
+    judgeOutput: '# Fusion Report\n## Summary\nDone.',
     panelOutputs: [
       {
         index: 0,
-        id: "errors",
-        label: "errors",
-        agent: "pi-fusion.fusion-panelist",
-        output: "facet",
+        id: 'errors',
+        label: 'errors',
+        agent: 'pi-fusion.fusion-panelist',
+        output: 'facet',
       },
     ],
     failures: [],
-    judgeModel: "gpt-5-mini",
+    judgeModel: 'gpt-5-mini',
     judgeObservation: { durationMs: 1000 },
   };
 
-  const merged = renderJudgeReport({ ...shared, synthesis: "merge" as const });
+  const merged = renderJudgeReport({ ...shared, synthesis: 'merge' as const });
   assert.match(merged, /- Composer: succeeded/);
   assert.doesNotMatch(merged, /- Judge: succeeded/);
 
@@ -757,16 +757,16 @@ test("merge reports name the composer, not the judge", () => {
   assert.doesNotMatch(selected, /- Composer: succeeded/);
 });
 
-test("blind restoration falls back when a label is blank", () => {
+test('blind restoration falls back when a label is blank', () => {
   // PanelOutput.label normally arrives resolved, but a restored run can carry a
   // blank one. One rule for the fallback, shared with memberLabel().
   const report = renderJudgeReport({
-    run: { id: "run-1", prompt: "Review", profileName: "quality" },
+    run: { id: 'run-1', prompt: 'Review', profileName: 'quality' },
     judgeOutput:
-      "# Fusion Report\n## Summary\nCandidate A and Candidate B agree.",
+      '# Fusion Report\n## Summary\nCandidate A and Candidate B agree.',
     panelOutputs: [
-      { index: 0, label: "   ", id: "architect", agent: "a", output: "x" },
-      { index: 1, agent: "a", output: "y" },
+      { index: 0, label: '   ', id: 'architect', agent: 'a', output: 'x' },
+      { index: 1, agent: 'a', output: 'y' },
     ],
     failures: [],
     blindPanelLabels: true,
@@ -776,35 +776,45 @@ test("blind restoration falls back when a label is blank", () => {
   assert.doesNotMatch(report, /Candidate [AB]/);
 });
 
-test("merge partial reports list only facets with no surviving output", () => {
+test('merge partial reports list only facets with no surviving output', () => {
   const report = renderPartialPanelReport({
     run: RUN_PANEL,
-    panelOutputs: [{ index: 0, agent: "a", output: "security covered" }],
-    failures: [{ index: 1, agent: "b", summary: "timeout" }],
+    panelOutputs: [{ index: 0, agent: 'a', output: 'security covered' }],
+    failures: [{ index: 1, agent: 'b', summary: 'timeout' }],
     required: 2,
-    synthesis: "merge",
+    synthesis: 'merge',
     panel: [
-      { id: "security", label: "Security", agent: "a", question: "security facet" },
-      { id: "perf", label: "Performance", agent: "b", question: "performance facet" },
+      {
+        id: 'security',
+        label: 'Security',
+        agent: 'a',
+        question: 'security facet',
+      },
+      {
+        id: 'perf',
+        label: 'Performance',
+        agent: 'b',
+        question: 'performance facet',
+      },
     ],
   });
-  const gaps = report.match(/## Gaps\n([\s\S]*?)(?=\n## |$)/)?.[1] ?? "";
+  const gaps = report.match(/## Gaps\n([\s\S]*?)(?=\n## |$)/)?.[1] ?? '';
   assert.doesNotMatch(gaps, /Security/);
   assert.match(gaps, /Performance/);
 });
 
-test("merge failure report names the uncovered facets", () => {
+test('merge failure report names the uncovered facets', () => {
   const report = renderPanelFailureReport({
-    run: { id: "run-1", prompt: "Review", profileName: "audit" },
+    run: { id: 'run-1', prompt: 'Review', profileName: 'audit' },
     failures: [
-      { index: 0, id: "sec", label: "sec", agent: "a", summary: "timeout" },
-      { index: 1, id: "perf", label: "perf", agent: "a", summary: "timeout" },
+      { index: 0, id: 'sec', label: 'sec', agent: 'a', summary: 'timeout' },
+      { index: 1, id: 'perf', label: 'perf', agent: 'a', summary: 'timeout' },
     ],
-    error: "all panelists failed",
-    synthesis: "merge",
+    error: 'all panelists failed',
+    synthesis: 'merge',
     panel: [
-      { id: "sec", agent: "a", question: "Cover security" },
-      { id: "perf", agent: "a", role: "throughput" },
+      { id: 'sec', agent: 'a', question: 'Cover security' },
+      { id: 'perf', agent: 'a', role: 'throughput' },
     ],
   });
 
@@ -818,11 +828,11 @@ test("merge failure report names the uncovered facets", () => {
   assert.match(report, /- Composer: not run/);
 });
 
-test("select failure report is unchanged", () => {
+test('select failure report is unchanged', () => {
   const report = renderPanelFailureReport({
-    run: { id: "run-1", prompt: "Review", profileName: "quality" },
-    failures: [{ index: 0, id: "a", label: "a", agent: "x", summary: "boom" }],
-    error: "all panelists failed",
+    run: { id: 'run-1', prompt: 'Review', profileName: 'quality' },
+    failures: [{ index: 0, id: 'a', label: 'a', agent: 'x', summary: 'boom' }],
+    error: 'all panelists failed',
   });
 
   assert.match(report, /## Consensus/);
@@ -831,17 +841,17 @@ test("select failure report is unchanged", () => {
   assert.doesNotMatch(report, /## Coverage Map/);
 });
 
-test("merge shape carries into failure and cancellation reports", () => {
+test('merge shape carries into failure and cancellation reports', () => {
   const panel = [
-    { id: "sec", agent: "a", question: "Cover security" },
-    { id: "perf", agent: "a", question: "Cover perf" },
+    { id: 'sec', agent: 'a', question: 'Cover security' },
+    { id: 'perf', agent: 'a', question: 'Cover perf' },
   ];
-  const run = { id: "run-1", prompt: "Review", profileName: "audit" };
+  const run = { id: 'run-1', prompt: 'Review', profileName: 'audit' };
 
   const failed = renderFailureReport({
     run,
-    error: "composer crashed",
-    synthesis: "merge",
+    error: 'composer crashed',
+    synthesis: 'merge',
     panel,
   });
   assert.match(failed, /## Gaps/);
@@ -850,8 +860,8 @@ test("merge shape carries into failure and cancellation reports", () => {
 
   const cancelled = renderCancelledReport({
     run,
-    method: "stop",
-    synthesis: "merge",
+    method: 'stop',
+    synthesis: 'merge',
     panel,
   });
   assert.match(cancelled, /## Coverage Map/);

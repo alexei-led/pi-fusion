@@ -1,36 +1,36 @@
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { applyClaudeAliasShorthand } from "./claude-aliases.js";
-import { FusionConfigError } from "./errors.js";
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { CONFIG_DIR_NAME, getAgentDir } from '@earendil-works/pi-coding-agent';
+import { applyClaudeAliasShorthand } from './claude-aliases.js';
+import { FusionConfigError } from './errors.js';
 import {
-  JUDGE_AGENT,
-  PANEL_AGENT,
-  THINKING_LEVELS,
   type FusionConfig,
   type FusionContextMode,
   type FusionProfile,
+  JUDGE_AGENT,
   type JudgeConfig,
+  PANEL_AGENT,
   type PanelMemberConfig,
+  THINKING_LEVELS,
   type ThinkingLevel,
   type ToolBudget,
-} from "./types.js";
+} from './types.js';
 import {
   isNodeErrorCode,
   isNonEmptyString,
   isPositiveInteger,
   isRecord,
-} from "./utils.js";
+} from './utils.js';
 
-export const FUSION_CONFIG_FILE = "fusion.json";
-export const DEFAULT_PROFILE_NAME = "quality";
+export const FUSION_CONFIG_FILE = 'fusion.json';
+export const DEFAULT_PROFILE_NAME = 'quality';
 export {
   COMPOSER_AGENT,
   JUDGE_AGENT,
   PANEL_AGENT,
   PANEL_AGENT_FULL,
   PANEL_AGENT_WEB,
-} from "./types.js";
+} from './types.js';
 
 /**
  * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
@@ -39,17 +39,17 @@ export {
  * Single source of truth for `test/unit/agents.test.ts`.
  */
 export const KNOWN_TOOL_NAMES: readonly string[] = [
-  "read",
-  "bash",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-  "web_search",
-  "web_contents",
-  "web_answer",
-  "web_research",
+  'read',
+  'bash',
+  'edit',
+  'write',
+  'grep',
+  'find',
+  'ls',
+  'web_search',
+  'web_contents',
+  'web_answer',
+  'web_research',
 ];
 
 /**
@@ -89,37 +89,37 @@ export function createDefaultFusionConfig(): FusionConfig {
       [DEFAULT_PROFILE_NAME]: {
         panel: [
           {
-            id: "architect",
-            label: "Architect",
+            id: 'architect',
+            label: 'Architect',
             agent: PANEL_AGENT,
-            thinking: "high",
-            role: "architecture, tradeoffs, and failure modes",
+            thinking: 'high',
+            role: 'architecture, tradeoffs, and failure modes',
           },
           {
-            id: "implementer",
-            label: "Implementer",
+            id: 'implementer',
+            label: 'Implementer',
             agent: PANEL_AGENT,
-            thinking: "medium",
-            role: "implementation details, API contracts, and edge cases",
+            thinking: 'medium',
+            role: 'implementation details, API contracts, and edge cases',
           },
           {
-            id: "tester",
-            label: "Tester",
+            id: 'tester',
+            label: 'Tester',
             agent: PANEL_AGENT,
-            thinking: "medium",
-            role: "test strategy, regressions, and verification",
+            thinking: 'medium',
+            role: 'test strategy, regressions, and verification',
           },
         ],
         judge: {
           agent: JUDGE_AGENT,
-          thinking: "high",
+          thinking: 'high',
         },
         concurrency: 3,
         panelTimeoutMs: 900_000,
         judgeTimeoutMs: 900_000,
-        panelToolBudget: { soft: 8, hard: 12, block: "*" },
-        judgeToolBudget: { soft: 8, hard: 12, block: "*" },
-        context: "fresh",
+        panelToolBudget: { soft: 8, hard: 12, block: '*' },
+        judgeToolBudget: { soft: 8, hard: 12, block: '*' },
+        context: 'fresh',
         stopWhenPanelAgrees: false,
       },
     },
@@ -166,7 +166,7 @@ export function resolveProfile(
   const profile = config.profiles[name];
   if (!profile) {
     const knownProfiles =
-      Object.keys(config.profiles).sort().join(", ") || "none";
+      Object.keys(config.profiles).sort().join(', ') || 'none';
     throw new FusionConfigError(
       `Unknown fusion profile "${name}". Known profiles: ${knownProfiles}.`,
     );
@@ -194,13 +194,13 @@ export function splitInlinePanelEntry(entry: string): {
   model: string;
 } {
   const trimmed = entry.trim();
-  const separator = trimmed.indexOf(":");
+  const separator = trimmed.indexOf(':');
   if (separator > 0) {
     const prefix = trimmed.slice(0, separator);
     const rest = trimmed.slice(separator + 1).trim();
     if (
-      prefix.includes(".") &&
-      !prefix.includes("/") &&
+      prefix.includes('.') &&
+      !prefix.includes('/') &&
       rest &&
       !isThinkingLevel(rest)
     ) {
@@ -252,8 +252,8 @@ function uniqueInlineId(
 ): string {
   const base =
     model
-      .replace(/[^A-Za-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
       .toLowerCase() || `panel_${index + 1}`;
   let candidate = base;
   let suffix = 2;
@@ -282,7 +282,7 @@ async function readOptionalConfig(
   try {
     raw = await readTextFile(path);
   } catch (error: unknown) {
-    if (isNodeErrorCode(error, "ENOENT")) return undefined;
+    if (isNodeErrorCode(error, 'ENOENT')) return undefined;
     const message = error instanceof Error ? error.message : String(error);
     throw new FusionConfigError(
       `Could not read fusion config at ${path}: ${message}`,
@@ -325,7 +325,11 @@ function isFusionProfile(value: unknown): value is FusionProfile {
     return false;
   if (value.timeoutMs !== undefined && !isPositiveInteger(value.timeoutMs))
     return false;
-  if (value.panelistSoftTimeoutMs !== undefined && !isPositiveInteger(value.panelistSoftTimeoutMs)) return false;
+  if (
+    value.panelistSoftTimeoutMs !== undefined &&
+    !isPositiveInteger(value.panelistSoftTimeoutMs)
+  )
+    return false;
   if (
     value.panelistTimeoutMs !== undefined &&
     !isPositiveInteger(value.panelistTimeoutMs)
@@ -358,8 +362,8 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   }
   if (
     value.minimumSuccessfulPanelists !== undefined &&
-    value.minimumSuccessfulPanelists !== "majority" &&
-    value.minimumSuccessfulPanelists !== "all" &&
+    value.minimumSuccessfulPanelists !== 'majority' &&
+    value.minimumSuccessfulPanelists !== 'all' &&
     !isPositiveInteger(value.minimumSuccessfulPanelists)
   ) {
     return false;
@@ -368,13 +372,13 @@ function isFusionProfile(value: unknown): value is FusionProfile {
     return false;
   if (
     value.stopWhenPanelAgrees !== undefined &&
-    typeof value.stopWhenPanelAgrees !== "boolean"
+    typeof value.stopWhenPanelAgrees !== 'boolean'
   ) {
     return false;
   }
   if (
     value.blindPanelLabels !== undefined &&
-    typeof value.blindPanelLabels !== "boolean"
+    typeof value.blindPanelLabels !== 'boolean'
   ) {
     return false;
   }
@@ -392,8 +396,8 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   }
   if (
     value.synthesis !== undefined &&
-    value.synthesis !== "select" &&
-    value.synthesis !== "merge"
+    value.synthesis !== 'select' &&
+    value.synthesis !== 'merge'
   ) {
     return false;
   }
@@ -414,7 +418,7 @@ function isToolBudget(value: unknown): value is ToolBudget {
   }
   if (
     value.block !== undefined &&
-    value.block !== "*" &&
+    value.block !== '*' &&
     (!Array.isArray(value.block) ||
       value.block.length === 0 ||
       !value.block.every(isNonEmptyString))
@@ -436,7 +440,7 @@ function isPanelMemberConfig(value: unknown): value is PanelMemberConfig {
   if (value.model !== undefined && !isNonEmptyString(value.model)) return false;
   if (value.thinking !== undefined && !isThinkingLevel(value.thinking))
     return false;
-  if (value.role !== undefined && typeof value.role !== "string") return false;
+  if (value.role !== undefined && typeof value.role !== 'string') return false;
   if (value.question !== undefined && !isNonEmptyString(value.question)) {
     return false;
   }
@@ -454,21 +458,21 @@ function isJudgeConfig(value: unknown): value is JudgeConfig {
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
   return (
-    typeof value === "string" &&
+    typeof value === 'string' &&
     (THINKING_LEVELS as readonly string[]).includes(value)
   );
 }
 
 function isFusionContextMode(value: unknown): value is FusionContextMode {
-  return value === "fresh" || value === "fork";
+  return value === 'fresh' || value === 'fork';
 }
 
 async function readUtf8File(path: string): Promise<string> {
-  return readFile(path, "utf8");
+  return readFile(path, 'utf8');
 }
 
 async function writeUtf8File(path: string, content: string): Promise<void> {
-  await writeFile(path, content, "utf8");
+  await writeFile(path, content, 'utf8');
 }
 
 async function mkdirRecursive(path: string): Promise<void> {
