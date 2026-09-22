@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { isRecord } from "./utils.js";
 import { requestDigest } from "./runtime-contract.js";
 
@@ -156,18 +156,25 @@ export class DurableRunSnapshotStore {
 
   private readRevision(key: string): { data: unknown; sequence: number } | undefined {
     const directory = this.revisionDirectory(key);
-    const files = jsonFiles(directory);
-    if (files.length === 0) return undefined;
-    let data: unknown;
-    for (let sequence = 0; sequence < files.length; sequence += 1) {
-      if (!files.includes(`${sequence}.json`)) throw new Error("Noncontiguous Fusion revision chain.");
-      const record: unknown = JSON.parse(readFileSync(join(directory, `${sequence}.json`), "utf8"));
-      if (!isRecord(record) || record.version !== 1 || record.key !== key || record.sequence !== sequence || !isRecord(record.data) || record.data.id !== key ||
-        (sequence === 0 ? record.previous !== undefined : record.previous !== requestDigest(data)) ||
-        (isRecord(data) && terminalPhase(data.phase))) throw new Error("Invalid Fusion revision chain.");
-      data = record.data;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const files = jsonFiles(directory);
+      if (files.length === 0) return undefined;
+      const tip = files
+        .map((file) => ({ file, sequence: Number.parseInt(basename(file, ".json"), 10) }))
+        .filter((entry) => Number.isSafeInteger(entry.sequence) && entry.sequence >= 0)
+        .sort((a, b) => b.sequence - a.sequence)[0];
+      if (!tip) throw new Error("Invalid Fusion revision chain.");
+      let raw: string;
+      try { raw = readFileSync(join(directory, tip.file), "utf8"); }
+      catch (error: unknown) { if (isMissing(error)) continue; throw error; }
+      const record: unknown = JSON.parse(raw);
+      if (!isRecord(record) || record.version !== 1 || record.key !== key || record.sequence !== tip.sequence ||
+        !isRecord(record.data) || record.data.id !== key ||
+        (tip.sequence === 0 ? record.previous !== undefined : typeof record.previous !== "string"))
+        throw new Error("Invalid Fusion revision chain.");
+      return { data: record.data, sequence: tip.sequence };
     }
-    return { data, sequence: files.length - 1 };
+    throw new Error("Fusion revision tip disappeared during recovery.");
   }
 
   private commitRevision(key: string, data: unknown, expected?: unknown): unknown {
@@ -185,15 +192,36 @@ export class DurableRunSnapshotStore {
     if (!current) throw new Error("Fusion revision baseline disappeared.");
     if ((expected !== undefined && requestDigest(expected) !== requestDigest(current.data)) ||
       (isRecord(current.data) && terminalPhase(current.data.phase))) throw new DurableRunConflictError(`Fusion run ${key} changed concurrently.`);
+    const sequence = current.sequence + 1;
     try {
-      publishExclusive(this.revisionDirectory(key), `${current.sequence + 1}.json`, {
-        version: 1, key, sequence: current.sequence + 1, previous: requestDigest(current.data), data,
+      publishExclusive(this.revisionDirectory(key), `${sequence}.json`, {
+        version: 1, key, sequence, previous: requestDigest(current.data), data,
       });
     } catch (error: unknown) {
       if (isExists(error)) throw new DurableRunConflictError(`Fusion run ${key} changed concurrently.`, { cause: error });
       throw error;
     }
+    // A concurrent compactor can remove this file and let a stale writer
+    // recreate the same sequence. Only the tip proves this revision landed.
+    const tip = this.readRevision(key);
+    if (tip?.sequence !== sequence)
+      throw new DurableRunConflictError(`Fusion run ${key} advanced concurrently.`);
+    this.compactRevisions(key, sequence);
     return data;
+  }
+
+  /**
+   * The tip is the whole snapshot, and exclusivity plus the expected digest
+   * fence writers, so earlier revisions are dead weight. Best-effort: a failed
+   * unlink leaves one older file that the next commit removes.
+   */
+  private compactRevisions(key: string, keep: number): void {
+    const directory = this.revisionDirectory(key);
+    for (const file of jsonFiles(directory)) {
+      const sequence = Number.parseInt(basename(file, ".json"), 10);
+      if (!Number.isSafeInteger(sequence) || sequence >= keep) continue;
+      try { unlinkSync(join(directory, file)); } catch { /* Compaction is housekeeping, not the write. */ }
+    }
   }
 
   write(key: string, data: unknown, exclusive = false, expected?: unknown): void {

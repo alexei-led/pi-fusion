@@ -84,6 +84,20 @@ test("terminal admission survives snapshot failure and fences stale writers and 
   assert.equal(fenced.getActiveRun()?.id, next.id);
 });
 
+test("revision compaction keeps one tip snapshot per run", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "fusion-revision-compaction-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const store = new FusionRunStore({ directory, idFactory: () => "run", now: () => 1 });
+  const run = store.startRun({ prompt: "compare", profileName: "quality" });
+  for (let index = 0; index < 25; index += 1)
+    store.updateRun(run.id, { panelRunId: `panel-${index}`, updatedAt: index + 2 });
+  const revisions = readdirSync(join(directory, ".revisions", durableSnapshotFileName(run.id)));
+  assert.deepEqual(revisions, ["25.json"]);
+  const restored = new FusionRunStore({ directory });
+  assert.equal(restored.getRunById(run.id)?.updatedAt, 26);
+  assert.equal(restored.getRunById(run.id)?.panelRunId, "panel-24");
+});
+
 test("an older unfinished legacy snapshot is never hidden by a newer terminal run", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "fusion-legacy-active-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
