@@ -165,7 +165,7 @@ function proof(rpc: NativeRuntime) {
 }
 
 function admissionProcess(
-  _t: TestContext,
+  t: TestContext,
   cwd: string,
   operationId: string,
   mode: string,
@@ -192,7 +192,7 @@ function admissionProcess(
   child.stderr.on('data', (data: Buffer) => {
     stderr += data.toString();
   });
-  onTestFinished(() => {
+  t.onTestFinished(() => {
     if (child.exitCode === null) child.kill('SIGKILL');
   });
   const ready = new Promise<void>((resolve, reject) => {
@@ -214,7 +214,7 @@ function admissionProcess(
   return { ready, exited };
 }
 
-function recoveryProcess(_t: TestContext, cwd: string, mode: string) {
+function recoveryProcess(t: TestContext, cwd: string, mode: string) {
   const child = spawn(
     process.execPath,
     [
@@ -233,7 +233,7 @@ function recoveryProcess(_t: TestContext, cwd: string, mode: string) {
   child.stderr.on('data', (data: Buffer) => {
     stderr += data.toString();
   });
-  onTestFinished(() => {
+  t.onTestFinished(() => {
     if (child.exitCode === null) child.kill('SIGKILL');
   });
   const waiting = new Promise<void>((resolve) =>
@@ -1346,7 +1346,7 @@ test('cancellation arriving during native lookup prevents an absent-intent repla
 });
 
 function rpcHarness(
-  _t: TestContext,
+  t: TestContext,
   cwd: string,
   rpc = new NativeRuntime(),
   configuration = config,
@@ -1374,7 +1374,7 @@ function rpcHarness(
     unregister();
     orchestrator.dispose();
   };
-  onTestFinished(dispose);
+  t.onTestFinished(dispose);
   let next = 0;
   const request = (
     method: string,
@@ -2107,9 +2107,9 @@ function fixtureGit(args: string[]): string {
   }).trim();
 }
 
-async function candidateRepositories(_t: TestContext) {
+async function candidateRepositories(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'fusion-candidate-context-'));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const sessionCwd = join(root, 'session-a');
   const candidateCwd = join(root, 'candidate-b');
   for (const [cwd, label] of [

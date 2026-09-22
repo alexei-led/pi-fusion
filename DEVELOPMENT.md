@@ -43,7 +43,9 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm run check` runs Biome and the TypeScript compiler. `npm test` runs the
+`npm run check` runs Biome and the TypeScript compiler. Biome is not
+type-aware, so `tsc` remains the gate for the type-level rules the previous
+ESLint setup covered. `npm test` runs the
 whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
 scripts remain available for focused runs. `npm run test:all` runs the full
 local gate that CI and release use.
