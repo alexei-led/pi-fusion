@@ -26,15 +26,19 @@
     "docs/user-guide.md"
   ],
   "scripts": {
-    "check": "tsc --noEmit",
-    "test": "npm run test:unit",
-    "test:unit": "node --import jiti/register --test test/unit/*.test.ts",
-    "test:integration": "node --import jiti/register --test test/integration/*.test.ts",
-    "test:e2e": "node --import jiti/register --test test/e2e/*.test.ts",
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:e2e": "vitest run test/e2e",
+    "check": "biome check --error-on-warnings . && npm run tsc",
+    "lint": "biome lint --error-on-warnings .",
+    "lint:fix": "biome lint --write --error-on-warnings .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "pack:dry": "npm pack --dry-run",
     "publish:dry": "npm publish --dry-run",
-    "lint": "eslint . --cache --cache-strategy content",
-    "test:all": "npm run lint && npm run check && npm run test:unit && npm run test:integration && npm run test:e2e && npm run pack:dry"
+    "test:all": "npm run check && npm test && npm run pack:dry"
   },
   "pi": {
     "extensions": [
@@ -56,14 +60,13 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0",
-    "globals": "^17.7.0",
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "^24.10.0",
     "jiti": "^2.7.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.62.1"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
   },
-  "packageManager": "npm@11.18.0",
+  "packageManager": "npm@12.0.2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alexei-led/pi-fusion.git"

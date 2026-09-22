@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 import {
-  DurableRunSnapshotStore,
   DurableRunConflictError,
   type DurableRunSnapshot,
-} from "./durable-run-store.js";
+  DurableRunSnapshotStore,
+} from './durable-run-store.js';
+import { isReviewContext } from './review-context.js';
 import type {
   ExecutionLifetime,
   FusionPhase,
@@ -15,51 +16,50 @@ import type {
   ProviderFailure,
   RunObservation,
   RunUsage,
-} from "./types.js";
-import { isFiniteNumber, isNonEmptyString, isRecord } from "./utils.js";
-import { isReviewContext } from "./review-context.js";
+} from './types.js';
+import { isFiniteNumber, isNonEmptyString, isRecord } from './utils.js';
 
-export const FUSION_RUN_ENTRY_TYPE = "fusion-run";
+export const FUSION_RUN_ENTRY_TYPE = 'fusion-run';
 
 export type FusionTerminalPhase = Extract<
   FusionPhase,
-  "done" | "failed" | "cancelled"
+  'done' | 'failed' | 'cancelled'
 >;
 
 export type FusionRunSummary = Omit<
   Pick<
     FusionRun,
-    | "id"
-    | "executionLifetime"
-    | "effectiveExecutionLifetime"
-    | "requestDigest"
-    | "reviewContext"
-    | "cancellationRequested"
-    | "processTerminalProof"
-    | "observation"
-    | "prompt"
-    | "profileName"
-    | "operationId"
-    | "outputContract"
-    | "completionQuality"
-    | "effectiveTimeouts"
-    | "recovery"
-    | "phase"
-    | "createdAt"
-    | "updatedAt"
-    | "chainRunId"
-    | "panelRunId"
-    | "judgeRunId"
-    | "report"
-    | "error"
+    | 'id'
+    | 'executionLifetime'
+    | 'effectiveExecutionLifetime'
+    | 'requestDigest'
+    | 'reviewContext'
+    | 'cancellationRequested'
+    | 'processTerminalProof'
+    | 'observation'
+    | 'prompt'
+    | 'profileName'
+    | 'operationId'
+    | 'outputContract'
+    | 'completionQuality'
+    | 'effectiveTimeouts'
+    | 'recovery'
+    | 'phase'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'chainRunId'
+    | 'panelRunId'
+    | 'judgeRunId'
+    | 'report'
+    | 'error'
   >,
-  "phase"
+  'phase'
 > & { phase: FusionTerminalPhase };
 
 export interface FusionRunStartInput {
   id?: string;
-  spawnIntent?: FusionRun["spawnIntent"];
-  reviewContext?: FusionRun["reviewContext"];
+  spawnIntent?: FusionRun['spawnIntent'];
+  reviewContext?: FusionRun['reviewContext'];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
   requestDigest?: string;
@@ -71,11 +71,11 @@ export interface FusionRunStartInput {
   inlinePanel?: string[];
   baseProfileName?: string;
   operationId?: string;
-  outputContract?: FusionRun["outputContract"];
-  minimumSuccessfulPanelists?: FusionRun["minimumSuccessfulPanelists"];
-  profileSnapshot?: FusionRun["profileSnapshot"];
-  timeoutOverrides?: FusionRun["timeoutOverrides"];
-  effectiveTimeouts?: FusionRun["effectiveTimeouts"];
+  outputContract?: FusionRun['outputContract'];
+  minimumSuccessfulPanelists?: FusionRun['minimumSuccessfulPanelists'];
+  profileSnapshot?: FusionRun['profileSnapshot'];
+  timeoutOverrides?: FusionRun['timeoutOverrides'];
+  effectiveTimeouts?: FusionRun['effectiveTimeouts'];
   phase?: Exclude<FusionPhase, FusionTerminalPhase>;
   createdAt?: number;
 }
@@ -92,18 +92,18 @@ export interface FusionRunPatch {
   chainAsyncDir?: string;
   panelRunId?: string;
   panelAsyncDir?: string;
-  panelStopReason?: FusionRun["panelStopReason"];
-  panelStoppedIndices?: FusionRun["panelStoppedIndices"];
-  panelDeadlines?: FusionRun["panelDeadlines"];
+  panelStopReason?: FusionRun['panelStopReason'];
+  panelStoppedIndices?: FusionRun['panelStoppedIndices'];
+  panelDeadlines?: FusionRun['panelDeadlines'];
   judgeRunId?: string;
   judgeAsyncDir?: string;
-  judgeObservation?: FusionRun["judgeObservation"];
-  completionQuality?: FusionRun["completionQuality"];
-  panelOutputs?: FusionRun["panelOutputs"];
-  panelFailures?: FusionRun["panelFailures"];
-  recovery?: FusionRun["recovery"];
+  judgeObservation?: FusionRun['judgeObservation'];
+  completionQuality?: FusionRun['completionQuality'];
+  panelOutputs?: FusionRun['panelOutputs'];
+  panelFailures?: FusionRun['panelFailures'];
+  recovery?: FusionRun['recovery'];
   /** `null` clears an intent once the RPC returned its durable remote ID. */
-  spawnIntent?: FusionRun["spawnIntent"] | null;
+  spawnIntent?: FusionRun['spawnIntent'] | null;
   report?: string;
   error?: string;
   updatedAt?: number;
@@ -119,8 +119,8 @@ export interface FusionRunTransitionPatch {
   chainRunId?: string;
   panelRunId?: string;
   judgeRunId?: string;
-  recovery?: FusionRun["recovery"];
-  spawnIntent?: FusionRun["spawnIntent"];
+  recovery?: FusionRun['recovery'];
+  spawnIntent?: FusionRun['spawnIntent'];
   report?: string;
   error?: string;
   updatedAt?: number;
@@ -146,7 +146,7 @@ export interface FusionRunStoreOptions {
 export class FusionRunStoreError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = "FusionRunStoreError";
+    this.name = 'FusionRunStoreError';
   }
 }
 
@@ -183,7 +183,7 @@ export class FusionRunStore {
    */
   setDirectory(directory: string): void {
     if (!directory.trim()) {
-      throw new FusionRunStoreError("Fusion run directory must not be empty.");
+      throw new FusionRunStoreError('Fusion run directory must not be empty.');
     }
     this.durableStore = new DurableRunSnapshotStore(directory);
     this.restoreError = undefined;
@@ -237,7 +237,12 @@ export class FusionRunStore {
         this.durableRunsById.get(snapshot.data.id);
       if (snapshot.terminal) this.terminalRunIds.add(snapshot.data.id);
       if (snapshot.authoritative) this.revisionRunIds.add(snapshot.data.id);
-      if (snapshot.authoritative || snapshot.terminal || !previous || snapshot.data.updatedAt >= previous.updatedAt) {
+      if (
+        snapshot.authoritative ||
+        snapshot.terminal ||
+        !previous ||
+        snapshot.data.updatedAt >= previous.updatedAt
+      ) {
         next.set(snapshot.data.id, cloneRun(snapshot.data));
       }
     }
@@ -310,8 +315,12 @@ export class FusionRunStore {
     const createdAt = input.createdAt ?? this.now();
     const run: FusionRun = {
       id: input.id ?? this.idFactory(),
-      ...(input.spawnIntent ? { spawnIntent: cloneSpawnIntent(input.spawnIntent) } : {}),
-      ...(input.reviewContext ? { reviewContext: { ...input.reviewContext } } : {}),
+      ...(input.spawnIntent
+        ? { spawnIntent: cloneSpawnIntent(input.spawnIntent) }
+        : {}),
+      ...(input.reviewContext
+        ? { reviewContext: { ...input.reviewContext } }
+        : {}),
       ...(input.executionLifetime !== undefined
         ? { executionLifetime: cloneExecutionLifetime(input.executionLifetime) }
         : {}),
@@ -362,7 +371,7 @@ export class FusionRunStore {
       ...(input.effectiveTimeouts !== undefined
         ? { effectiveTimeouts: { ...input.effectiveTimeouts } }
         : {}),
-      phase: input.phase ?? "chain",
+      phase: input.phase ?? 'chain',
       createdAt,
       updatedAt: createdAt,
     };
@@ -372,7 +381,11 @@ export class FusionRunStore {
     } catch (error: unknown) {
       this.refreshDurable();
       const active = this.getActiveRun();
-      if (active && active.id !== run.id) throw new FusionRunStoreError(`Fusion run ${active.id} won shared admission.`, { cause: error });
+      if (active && active.id !== run.id)
+        throw new FusionRunStoreError(
+          `Fusion run ${active.id} won shared admission.`,
+          { cause: error },
+        );
       throw error;
     }
     this.activeRun = run;
@@ -390,15 +403,15 @@ export class FusionRunStore {
   }
 
   completeRun(id: string, patch: FusionRunTransitionPatch = {}): FusionRun {
-    return this.transitionRun(id, "done", patch);
+    return this.transitionRun(id, 'done', patch);
   }
 
   failRun(id: string, patch: FusionRunTransitionPatch = {}): FusionRun {
-    return this.transitionRun(id, "failed", patch);
+    return this.transitionRun(id, 'failed', patch);
   }
 
   cancelRun(id: string, patch: FusionRunTransitionPatch = {}): FusionRun {
-    return this.transitionRun(id, "cancelled", patch);
+    return this.transitionRun(id, 'cancelled', patch);
   }
 
   transitionRun(
@@ -415,9 +428,19 @@ export class FusionRunStore {
     );
     if (this.durableStore) {
       let terminal: unknown;
-      try { terminal = this.durableStore.finish(id, cloneRun(finished), cloneRun(active)); }
-      catch (error: unknown) { this.rethrowConflict(error); }
-      if (!isFusionRunState(terminal) || !isTerminalPhase(terminal.phase)) throw new FusionRunStoreError("Invalid immutable Fusion terminal state.");
+      try {
+        terminal = this.durableStore.finish(
+          id,
+          cloneRun(finished),
+          cloneRun(active),
+        );
+      } catch (error: unknown) {
+        this.rethrowConflict(error);
+      }
+      if (!isFusionRunState(terminal) || !isTerminalPhase(terminal.phase))
+        throw new FusionRunStoreError(
+          'Invalid immutable Fusion terminal state.',
+        );
       finished = { ...terminal, phase: terminal.phase };
       this.terminalRunIds.add(id);
     }
@@ -447,14 +470,15 @@ export class FusionRunStore {
     const latestPersisted = lastFusionRunEnvelope(entries);
     if (
       latestPersisted &&
-      (!isFusionRunEntry(latestPersisted) || !isFusionRunState(latestPersisted.data))
+      (!isFusionRunEntry(latestPersisted) ||
+        !isFusionRunState(latestPersisted.data))
     ) {
       // History readers may skip malformed entries, but restore must not adopt
       // an older active state after a newer snapshot was corrupted.
       this.activeRun = undefined;
       this.lastRunSummary = undefined;
       this.restoreError =
-        "Latest persisted fusion run snapshot is invalid; refusing stale active-run recovery.";
+        'Latest persisted fusion run snapshot is invalid; refusing stale active-run recovery.';
       return undefined;
     }
 
@@ -488,8 +512,16 @@ export class FusionRunStore {
     exclusive = false,
     expected?: FusionRun,
   ): void {
-    try { this.durableStore?.write(run.id, cloneRun(run), exclusive, expected ? cloneRun(expected) : undefined); }
-    catch (error: unknown) { this.rethrowConflict(error); }
+    try {
+      this.durableStore?.write(
+        run.id,
+        cloneRun(run),
+        exclusive,
+        expected ? cloneRun(expected) : undefined,
+      );
+    } catch (error: unknown) {
+      this.rethrowConflict(error);
+    }
     if (this.durableStore) {
       this.durableRunsById.set(run.id, cloneRun(run));
     }
@@ -531,7 +563,8 @@ export class FusionRunStore {
   }
 
   private mergeRestoredRun(run: FusionRun): void {
-    if (this.terminalRunIds.has(run.id) || this.revisionRunIds.has(run.id)) return;
+    if (this.terminalRunIds.has(run.id) || this.revisionRunIds.has(run.id))
+      return;
     const existing = this.runsById.get(run.id);
     const isDurableBaseline = this.durableRunsById.has(run.id);
     if (
@@ -544,17 +577,19 @@ export class FusionRunStore {
   }
 
   private selectActiveRun(): void {
-    if (this.restoreError === this.activeSelectionError) this.restoreError = undefined;
+    if (this.restoreError === this.activeSelectionError)
+      this.restoreError = undefined;
     this.activeSelectionError = undefined;
     const runs = Array.from(this.runsById.values());
     if (!this.durableStore) {
       const latest = latestRun(runs);
-      this.activeRun = latest && !isTerminalPhase(latest.phase) ? cloneRun(latest) : undefined;
+      this.activeRun =
+        latest && !isTerminalPhase(latest.phase) ? cloneRun(latest) : undefined;
       return;
     }
     const active = runs.filter((run) => !isTerminalPhase(run.phase));
     if (active.length > 1) {
-      this.activeSelectionError = `Multiple unfinished Fusion runs require recovery: ${active.map((run) => run.id).join(", ")}.`;
+      this.activeSelectionError = `Multiple unfinished Fusion runs require recovery: ${active.map((run) => run.id).join(', ')}.`;
       this.restoreError = this.activeSelectionError;
       this.activeRun = undefined;
       return;
@@ -564,7 +599,7 @@ export class FusionRunStore {
 
   private requireActiveRun(id: string): FusionRun {
     if (!this.activeRun) {
-      throw new FusionRunStoreError("No active fusion run.");
+      throw new FusionRunStoreError('No active fusion run.');
     }
     if (this.activeRun.id !== id) {
       throw new FusionRunStoreError(
@@ -628,7 +663,8 @@ function applyPatch(
       patch.effectiveExecutionLifetime,
     );
   }
-  if (patch.requestDigest !== undefined) updated.requestDigest = patch.requestDigest;
+  if (patch.requestDigest !== undefined)
+    updated.requestDigest = patch.requestDigest;
   if (patch.cancellationRequested !== undefined) {
     updated.cancellationRequested = patch.cancellationRequested;
   }
@@ -653,7 +689,8 @@ function applyPatch(
   if (patch.panelStoppedIndices !== undefined) {
     updated.panelStoppedIndices = [...patch.panelStoppedIndices];
   }
-  if (patch.panelDeadlines !== undefined) updated.panelDeadlines = patch.panelDeadlines.map((item) => ({ ...item }));
+  if (patch.panelDeadlines !== undefined)
+    updated.panelDeadlines = patch.panelDeadlines.map((item) => ({ ...item }));
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
   if (patch.judgeAsyncDir !== undefined) {
     updated.judgeAsyncDir = patch.judgeAsyncDir;
@@ -670,7 +707,8 @@ function applyPatch(
   if (patch.panelFailures !== undefined) {
     updated.panelFailures = clonePanelFailures(patch.panelFailures);
   }
-  if (patch.recovery !== undefined) updated.recovery = cloneRecovery(patch.recovery);
+  if (patch.recovery !== undefined)
+    updated.recovery = cloneRecovery(patch.recovery);
   if (patch.spawnIntent === null) delete updated.spawnIntent;
   else if (patch.spawnIntent !== undefined) {
     updated.spawnIntent = cloneSpawnIntent(patch.spawnIntent);
@@ -699,7 +737,8 @@ function applyTransitionPatch(
       patch.effectiveExecutionLifetime,
     );
   }
-  if (patch.requestDigest !== undefined) updated.requestDigest = patch.requestDigest;
+  if (patch.requestDigest !== undefined)
+    updated.requestDigest = patch.requestDigest;
   if (patch.cancellationRequested !== undefined) {
     updated.cancellationRequested = patch.cancellationRequested;
   }
@@ -712,7 +751,8 @@ function applyTransitionPatch(
   if (patch.chainRunId !== undefined) updated.chainRunId = patch.chainRunId;
   if (patch.panelRunId !== undefined) updated.panelRunId = patch.panelRunId;
   if (patch.judgeRunId !== undefined) updated.judgeRunId = patch.judgeRunId;
-  if (patch.recovery !== undefined) updated.recovery = cloneRecovery(patch.recovery);
+  if (patch.recovery !== undefined)
+    updated.recovery = cloneRecovery(patch.recovery);
   if (patch.spawnIntent !== undefined) {
     updated.spawnIntent = cloneSpawnIntent(patch.spawnIntent);
   }
@@ -761,7 +801,9 @@ function toRunSummary(
     ...(run.effectiveTimeouts !== undefined
       ? { effectiveTimeouts: { ...run.effectiveTimeouts } }
       : {}),
-    ...(run.recovery !== undefined ? { recovery: cloneRecovery(run.recovery) } : {}),
+    ...(run.recovery !== undefined
+      ? { recovery: cloneRecovery(run.recovery) }
+      : {}),
     phase: run.phase,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -861,7 +903,9 @@ function cloneRun(run: FusionRun): FusionRun {
     ...(run.panelFailures !== undefined
       ? { panelFailures: clonePanelFailures(run.panelFailures) }
       : {}),
-    ...(run.recovery !== undefined ? { recovery: cloneRecovery(run.recovery) } : {}),
+    ...(run.recovery !== undefined
+      ? { recovery: cloneRecovery(run.recovery) }
+      : {}),
     ...(run.spawnIntent !== undefined
       ? { spawnIntent: cloneSpawnIntent(run.spawnIntent) }
       : {}),
@@ -880,10 +924,12 @@ function cloneRunOrSummary(
   return isTerminalRun(value) ? cloneRunSummary(value) : cloneRun(value);
 }
 
-function cloneExecutionLifetime(lifetime: ExecutionLifetime): ExecutionLifetime {
-  return lifetime.mode === "bounded"
-    ? { mode: "bounded", timeoutMs: lifetime.timeoutMs }
-    : { mode: "unbounded" };
+function cloneExecutionLifetime(
+  lifetime: ExecutionLifetime,
+): ExecutionLifetime {
+  return lifetime.mode === 'bounded'
+    ? { mode: 'bounded', timeoutMs: lifetime.timeoutMs }
+    : { mode: 'unbounded' };
 }
 
 function cloneUnknown(value: unknown): unknown {
@@ -934,7 +980,7 @@ function invalidDurableSnapshotMessage(snapshot: DurableRunSnapshot): string {
 }
 
 function invalidDurableLoadMessage(error: string | undefined): string {
-  return `Latest persisted fusion run snapshot is invalid; refusing stale project-run recovery${error ? ` (${error})` : "."}`;
+  return `Latest persisted fusion run snapshot is invalid; refusing stale project-run recovery${error ? ` (${error})` : '.'}`;
 }
 
 function lastFusionRunEnvelope(entries: readonly unknown[]): unknown {
@@ -950,23 +996,27 @@ function lastFusionRunEnvelope(entries: readonly unknown[]): unknown {
 function isFusionRunEnvelope(value: unknown): value is Record<string, unknown> {
   return (
     isRecord(value) &&
-    value.type === "custom" &&
+    value.type === 'custom' &&
     value.customType === FUSION_RUN_ENTRY_TYPE
   );
 }
 
 function isFusionRunEntry(
   value: unknown,
-): value is { type: "custom"; customType: string; data: unknown } {
-  return isFusionRunEnvelope(value) && "data" in value;
+): value is { type: 'custom'; customType: string; data: unknown } {
+  return isFusionRunEnvelope(value) && 'data' in value;
 }
 
 function isFusionRunState(value: unknown): value is FusionRun {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.id)) return false;
-  if (typeof value.prompt !== "string") return false;
+  if (typeof value.prompt !== 'string') return false;
   if (!isNonEmptyString(value.profileName)) return false;
-  if (value.reviewContext !== undefined && !isReviewContext(value.reviewContext)) return false;
+  if (
+    value.reviewContext !== undefined &&
+    !isReviewContext(value.reviewContext)
+  )
+    return false;
   if (
     value.executionLifetime !== undefined &&
     !isExecutionLifetime(value.executionLifetime)
@@ -987,7 +1037,7 @@ function isFusionRunState(value: unknown): value is FusionRun {
   }
   if (
     value.cancellationRequested !== undefined &&
-    typeof value.cancellationRequested !== "boolean"
+    typeof value.cancellationRequested !== 'boolean'
   ) {
     return false;
   }
@@ -996,14 +1046,14 @@ function isFusionRunState(value: unknown): value is FusionRun {
   }
   if (
     value.outputContract !== undefined &&
-    value.outputContract !== "plan-review-v1"
+    value.outputContract !== 'plan-review-v1'
   ) {
     return false;
   }
   if (
     value.minimumSuccessfulPanelists !== undefined &&
-    value.minimumSuccessfulPanelists !== "majority" &&
-    value.minimumSuccessfulPanelists !== "all" &&
+    value.minimumSuccessfulPanelists !== 'majority' &&
+    value.minimumSuccessfulPanelists !== 'all' &&
     (!isFiniteNumber(value.minimumSuccessfulPanelists) ||
       !Number.isInteger(value.minimumSuccessfulPanelists) ||
       value.minimumSuccessfulPanelists < 1)
@@ -1028,16 +1078,22 @@ function isFusionRunState(value: unknown): value is FusionRun {
   ) {
     return false;
   }
-  if (value.timeoutOverrides !== undefined && !isTimeoutOverrides(value.timeoutOverrides)) {
+  if (
+    value.timeoutOverrides !== undefined &&
+    !isTimeoutOverrides(value.timeoutOverrides)
+  ) {
     return false;
   }
-  if (value.effectiveTimeouts !== undefined && !isEffectiveTimeouts(value.effectiveTimeouts)) {
+  if (
+    value.effectiveTimeouts !== undefined &&
+    !isEffectiveTimeouts(value.effectiveTimeouts)
+  ) {
     return false;
   }
   if (
     value.completionQuality !== undefined &&
-    value.completionQuality !== "complete" &&
-    value.completionQuality !== "partial"
+    value.completionQuality !== 'complete' &&
+    value.completionQuality !== 'partial'
   ) {
     return false;
   }
@@ -1057,27 +1113,27 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (!isFusionPhase(value.phase)) return false;
   if (!isFiniteNumber(value.createdAt)) return false;
   if (!isFiniteNumber(value.updatedAt)) return false;
-  if (value.chainRunId !== undefined && typeof value.chainRunId !== "string") {
+  if (value.chainRunId !== undefined && typeof value.chainRunId !== 'string') {
     return false;
   }
   if (
     value.chainAsyncDir !== undefined &&
-    typeof value.chainAsyncDir !== "string"
+    typeof value.chainAsyncDir !== 'string'
   ) {
     return false;
   }
-  if (value.panelRunId !== undefined && typeof value.panelRunId !== "string") {
+  if (value.panelRunId !== undefined && typeof value.panelRunId !== 'string') {
     return false;
   }
   if (
     value.panelAsyncDir !== undefined &&
-    typeof value.panelAsyncDir !== "string"
+    typeof value.panelAsyncDir !== 'string'
   ) {
     return false;
   }
   if (
     value.panelStopReason !== undefined &&
-    value.panelStopReason !== "agreement"
+    value.panelStopReason !== 'agreement'
   ) {
     return false;
   }
@@ -1086,18 +1142,22 @@ function isFusionRunState(value: unknown): value is FusionRun {
     (!Array.isArray(value.panelStoppedIndices) ||
       !value.panelStoppedIndices.every(
         (index: unknown) =>
-          typeof index === "number" && Number.isInteger(index) && index >= 0,
+          typeof index === 'number' && Number.isInteger(index) && index >= 0,
       ))
   ) {
     return false;
   }
-  if (value.panelDeadlines !== undefined && !isPanelDeadlines(value.panelDeadlines)) return false;
-  if (value.judgeRunId !== undefined && typeof value.judgeRunId !== "string") {
+  if (
+    value.panelDeadlines !== undefined &&
+    !isPanelDeadlines(value.panelDeadlines)
+  )
+    return false;
+  if (value.judgeRunId !== undefined && typeof value.judgeRunId !== 'string') {
     return false;
   }
   if (
     value.judgeAsyncDir !== undefined &&
-    typeof value.judgeAsyncDir !== "string"
+    typeof value.judgeAsyncDir !== 'string'
   ) {
     return false;
   }
@@ -1125,10 +1185,10 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (value.spawnIntent !== undefined && !isSpawnIntent(value.spawnIntent)) {
     return false;
   }
-  if (value.report !== undefined && typeof value.report !== "string") {
+  if (value.report !== undefined && typeof value.report !== 'string') {
     return false;
   }
-  if (value.error !== undefined && typeof value.error !== "string") {
+  if (value.error !== undefined && typeof value.error !== 'string') {
     return false;
   }
   return (
@@ -1147,12 +1207,21 @@ function isPanelDeadlines(value: unknown): boolean {
   const slots = new Set<number>();
   const children = new Set<string>();
   return value.every((item: unknown) => {
-    if (!isRecord(item) || !isPanelSlotIndex(item.index) || !isNonEmptyString(item.childRunId) ||
-      !isFiniteNumber(item.requestedAt) || !isFiniteNumber(item.finalizeAt) || !isFiniteNumber(item.hardDeadlineAt) ||
+    if (
+      !isRecord(item) ||
+      !isPanelSlotIndex(item.index) ||
+      !isNonEmptyString(item.childRunId) ||
+      !isFiniteNumber(item.requestedAt) ||
+      !isFiniteNumber(item.finalizeAt) ||
+      !isFiniteNumber(item.hardDeadlineAt) ||
       item.finalizeAt >= item.hardDeadlineAt ||
-      !["pending", "continued", "finishing"].includes(String(item.status)) ||
-      (item.deliveryError !== undefined && typeof item.deliveryError !== "string") ||
-      slots.has(item.index) || children.has(item.childRunId)) return false;
+      !['pending', 'continued', 'finishing'].includes(String(item.status)) ||
+      (item.deliveryError !== undefined &&
+        typeof item.deliveryError !== 'string') ||
+      slots.has(item.index) ||
+      children.has(item.childRunId)
+    )
+      return false;
     slots.add(item.index);
     children.add(item.childRunId);
     return true;
@@ -1167,7 +1236,11 @@ function isTimeoutOverrides(value: unknown): boolean {
     value.panelTimeoutMs,
     value.panelGraceMs,
     value.judgeTimeoutMs,
-  ].every((timeout) => timeout === undefined || (isFiniteNumber(timeout) && Number.isInteger(timeout) && timeout > 0));
+  ].every(
+    (timeout) =>
+      timeout === undefined ||
+      (isFiniteNumber(timeout) && Number.isInteger(timeout) && timeout > 0),
+  );
 }
 
 function isEffectiveTimeouts(value: unknown): boolean {
@@ -1178,26 +1251,26 @@ function isEffectiveTimeouts(value: unknown): boolean {
     isFiniteNumber(value.panelTimeoutMs) &&
     isFiniteNumber(value.panelGraceMs) &&
     isFiniteNumber(value.judgeTimeoutMs) &&
-    typeof value.usesLegacyTimeout === "boolean"
+    typeof value.usesLegacyTimeout === 'boolean'
   );
 }
 
 function isFusionPhase(value: unknown): value is FusionPhase {
   return (
-    value === "panel" ||
-    value === "chain" ||
-    value === "judge" ||
-    value === "done" ||
-    value === "failed" ||
-    value === "cancelled"
+    value === 'panel' ||
+    value === 'chain' ||
+    value === 'judge' ||
+    value === 'done' ||
+    value === 'failed' ||
+    value === 'cancelled'
   );
 }
 
 function isExecutionLifetime(value: unknown): value is ExecutionLifetime {
   if (!isRecord(value)) return false;
-  if (value.mode === "unbounded") return value.timeoutMs === undefined;
+  if (value.mode === 'unbounded') return value.timeoutMs === undefined;
   return (
-    value.mode === "bounded" &&
+    value.mode === 'bounded' &&
     isFiniteNumber(value.timeoutMs) &&
     Number.isSafeInteger(value.timeoutMs) &&
     value.timeoutMs > 0
@@ -1205,7 +1278,7 @@ function isExecutionLifetime(value: unknown): value is ExecutionLifetime {
 }
 
 function isTerminalPhase(value: unknown): value is FusionTerminalPhase {
-  return value === "done" || value === "failed" || value === "cancelled";
+  return value === 'done' || value === 'failed' || value === 'cancelled';
 }
 
 /**
@@ -1216,7 +1289,11 @@ function isTerminalPhase(value: unknown): value is FusionTerminalPhase {
 export function validateFusionRunPanelSlots(
   run: Pick<
     FusionRun,
-    "panelOutputs" | "panelFailures" | "panelStoppedIndices" | "panelDeadlines" | "recovery"
+    | 'panelOutputs'
+    | 'panelFailures'
+    | 'panelStoppedIndices'
+    | 'panelDeadlines'
+    | 'recovery'
   >,
   panelLength: number,
 ): string | undefined {
@@ -1238,11 +1315,11 @@ export function validateFusionRunPanelSlots(
 }
 
 function resolvePersistedQuorum(
-  policy: NonNullable<FusionRun["minimumSuccessfulPanelists"]>,
+  policy: NonNullable<FusionRun['minimumSuccessfulPanelists']>,
   panelLength: number,
 ): number {
-  if (policy === "all") return panelLength;
-  if (typeof policy === "number") {
+  if (policy === 'all') return panelLength;
+  if (typeof policy === 'number') {
     return panelLength > 1 ? Math.max(2, Math.min(policy, panelLength)) : 1;
   }
   return Math.ceil(panelLength / 2);
@@ -1250,26 +1327,26 @@ function resolvePersistedQuorum(
 
 function isPanelOutputArray(
   value: unknown,
-): value is NonNullable<FusionRun["panelOutputs"]> {
+): value is NonNullable<FusionRun['panelOutputs']> {
   return Array.isArray(value) && value.every(isPanelOutput);
 }
 
 function isPanelOutput(
   value: unknown,
-): value is NonNullable<FusionRun["panelOutputs"]>[number] {
+): value is NonNullable<FusionRun['panelOutputs']>[number] {
   return (
     isRecord(value) &&
     isPanelSlotIndex(value.index) &&
     isNonEmptyString(value.agent) &&
-    typeof value.output === "string" &&
-    (value.id === undefined || typeof value.id === "string") &&
-    (value.label === undefined || typeof value.label === "string") &&
+    typeof value.output === 'string' &&
+    (value.id === undefined || typeof value.id === 'string') &&
+    (value.label === undefined || typeof value.label === 'string') &&
     (value.configuredModel === undefined ||
-      typeof value.configuredModel === "string") &&
+      typeof value.configuredModel === 'string') &&
     (value.artifactPath === undefined ||
-      typeof value.artifactPath === "string") &&
+      typeof value.artifactPath === 'string') &&
     (value.sessionPath === undefined ||
-      typeof value.sessionPath === "string") &&
+      typeof value.sessionPath === 'string') &&
     (value.decision === undefined || isPanelDecision(value.decision)) &&
     (value.observation === undefined || isRunObservation(value.observation))
   );
@@ -1277,36 +1354,43 @@ function isPanelOutput(
 
 function isPanelFailureArray(
   value: unknown,
-): value is NonNullable<FusionRun["panelFailures"]> {
+): value is NonNullable<FusionRun['panelFailures']> {
   return Array.isArray(value) && value.every(isPanelFailure);
 }
 
 function isPanelFailure(
   value: unknown,
-): value is NonNullable<FusionRun["panelFailures"]>[number] {
+): value is NonNullable<FusionRun['panelFailures']>[number] {
   return (
     isRecord(value) &&
     isPanelSlotIndex(value.index) &&
     isNonEmptyString(value.agent) &&
-    typeof value.summary === "string" &&
-    (value.id === undefined || typeof value.id === "string") &&
-    (value.label === undefined || typeof value.label === "string") &&
+    typeof value.summary === 'string' &&
+    (value.id === undefined || typeof value.id === 'string') &&
+    (value.label === undefined || typeof value.label === 'string') &&
     (value.configuredModel === undefined ||
-      typeof value.configuredModel === "string") &&
+      typeof value.configuredModel === 'string') &&
     (value.artifactPath === undefined ||
-      typeof value.artifactPath === "string") &&
+      typeof value.artifactPath === 'string') &&
     (value.sessionPath === undefined ||
-      typeof value.sessionPath === "string") &&
+      typeof value.sessionPath === 'string') &&
     (value.reason === undefined || isPanelFailureReason(value.reason)) &&
     (value.observation === undefined || isRunObservation(value.observation))
   );
 }
 
 function isProfileSnapshot(value: unknown): value is FusionProfileSnapshot {
-  if (!isRecord(value) || !Array.isArray(value.panel) || value.panel.length === 0) {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.panel) ||
+    value.panel.length === 0
+  ) {
     return false;
   }
-  if (!value.panel.every(isSnapshotPanelMember) || !isSnapshotJudge(value.judge)) {
+  if (
+    !value.panel.every(isSnapshotPanelMember) ||
+    !isSnapshotJudge(value.judge)
+  ) {
     return false;
   }
   if (
@@ -1317,30 +1401,51 @@ function isProfileSnapshot(value: unknown): value is FusionProfileSnapshot {
   ) {
     return false;
   }
-  if (value.context !== undefined && value.context !== "fresh" && value.context !== "fork") {
+  if (
+    value.context !== undefined &&
+    value.context !== 'fresh' &&
+    value.context !== 'fork'
+  ) {
     return false;
   }
-  if (value.stopWhenPanelAgrees !== undefined && typeof value.stopWhenPanelAgrees !== "boolean") {
+  if (
+    value.stopWhenPanelAgrees !== undefined &&
+    typeof value.stopWhenPanelAgrees !== 'boolean'
+  ) {
     return false;
   }
-  if (value.blindPanelLabels !== undefined && typeof value.blindPanelLabels !== "boolean") {
+  if (
+    value.blindPanelLabels !== undefined &&
+    typeof value.blindPanelLabels !== 'boolean'
+  ) {
     return false;
   }
-  if (value.synthesis !== undefined && value.synthesis !== "select" && value.synthesis !== "merge") {
+  if (
+    value.synthesis !== undefined &&
+    value.synthesis !== 'select' &&
+    value.synthesis !== 'merge'
+  ) {
     return false;
   }
-  return value.judgeToolBudget === undefined || isSnapshotToolBudget(value.judgeToolBudget);
+  return (
+    value.judgeToolBudget === undefined ||
+    isSnapshotToolBudget(value.judgeToolBudget)
+  );
 }
 
 function isSnapshotPanelMember(value: unknown): boolean {
-  if (!isRecord(value) || !isNonEmptyString(value.id) || !isSnapshotAgent(value.agent)) {
+  if (
+    !isRecord(value) ||
+    !isNonEmptyString(value.id) ||
+    !isSnapshotAgent(value.agent)
+  ) {
     return false;
   }
   return (
     (value.label === undefined || isNonEmptyString(value.label)) &&
     (value.model === undefined || isNonEmptyString(value.model)) &&
     (value.thinking === undefined || isThinkingLevel(value.thinking)) &&
-    (value.role === undefined || typeof value.role === "string") &&
+    (value.role === undefined || typeof value.role === 'string') &&
     (value.question === undefined || isNonEmptyString(value.question))
   );
 }
@@ -1356,34 +1461,63 @@ function isSnapshotJudge(value: unknown): boolean {
 
 function isSnapshotAgent(value: unknown): boolean {
   return (
-    isNonEmptyString(value) &&
-    /^[^\s.]+(?:\.[^\s.]+)*$/.test(value.trim())
+    isNonEmptyString(value) && /^[^\s.]+(?:\.[^\s.]+)*$/.test(value.trim())
   );
 }
 
 function isThinkingLevel(value: unknown): boolean {
-  return value === "off" || value === "minimal" || value === "low" ||
-    value === "medium" || value === "high" || value === "xhigh";
+  return (
+    value === 'off' ||
+    value === 'minimal' ||
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  );
 }
 
 function isSnapshotToolBudget(value: unknown): boolean {
-  if (!isRecord(value) || (value.soft === undefined && value.hard === undefined)) {
+  if (
+    !isRecord(value) ||
+    (value.soft === undefined && value.hard === undefined)
+  ) {
     return false;
   }
-  if (value.soft !== undefined && (!isFiniteNumber(value.soft) || !Number.isInteger(value.soft) || value.soft < 1)) {
+  if (
+    value.soft !== undefined &&
+    (!isFiniteNumber(value.soft) ||
+      !Number.isInteger(value.soft) ||
+      value.soft < 1)
+  ) {
     return false;
   }
-  if (value.hard !== undefined && (!isFiniteNumber(value.hard) || !Number.isInteger(value.hard) || value.hard < 1)) {
+  if (
+    value.hard !== undefined &&
+    (!isFiniteNumber(value.hard) ||
+      !Number.isInteger(value.hard) ||
+      value.hard < 1)
+  ) {
     return false;
   }
-  if (typeof value.soft === "number" && typeof value.hard === "number" && value.soft > value.hard) {
+  if (
+    typeof value.soft === 'number' &&
+    typeof value.hard === 'number' &&
+    value.soft > value.hard
+  ) {
     return false;
   }
-  return value.block === undefined || value.block === "*" ||
-    (Array.isArray(value.block) && value.block.length > 0 && value.block.every(isNonEmptyString));
+  return (
+    value.block === undefined ||
+    value.block === '*' ||
+    (Array.isArray(value.block) &&
+      value.block.length > 0 &&
+      value.block.every(isNonEmptyString))
+  );
 }
 
-function cloneProfileSnapshot(snapshot: FusionProfileSnapshot): FusionProfileSnapshot {
+function cloneProfileSnapshot(
+  snapshot: FusionProfileSnapshot,
+): FusionProfileSnapshot {
   return {
     panel: snapshot.panel.map((member) => ({ ...member })),
     judge: { ...snapshot.judge },
@@ -1405,7 +1539,9 @@ function cloneProfileSnapshot(snapshot: FusionProfileSnapshot): FusionProfileSna
           },
         }
       : {}),
-    ...(snapshot.synthesis !== undefined ? { synthesis: snapshot.synthesis } : {}),
+    ...(snapshot.synthesis !== undefined
+      ? { synthesis: snapshot.synthesis }
+      : {}),
   };
 }
 
@@ -1426,20 +1562,21 @@ function cloneRecovery(recovery: FusionRecoveryState): FusionRecoveryState {
   return { ...recovery, failedPanelIndices: [...recovery.failedPanelIndices] };
 }
 
-function isSpawnIntent(value: unknown): value is FusionRun["spawnIntent"] {
+function isSpawnIntent(value: unknown): value is FusionRun['spawnIntent'] {
   return (
     isRecord(value) &&
-    (value.stage === "panel" || value.stage === "judge") &&
+    (value.stage === 'panel' || value.stage === 'judge') &&
     isFiniteNumber(value.requestedAt) &&
     (value.requestId === undefined || isNonEmptyString(value.requestId)) &&
-    (value.requestDigest === undefined || isNonEmptyString(value.requestDigest)) &&
+    (value.requestDigest === undefined ||
+      isNonEmptyString(value.requestDigest)) &&
     (value.params === undefined || isRecord(value.params))
   );
 }
 
 function cloneSpawnIntent(
-  intent: NonNullable<FusionRun["spawnIntent"]>,
-): NonNullable<FusionRun["spawnIntent"]> {
+  intent: NonNullable<FusionRun['spawnIntent']>,
+): NonNullable<FusionRun['spawnIntent']> {
   return {
     stage: intent.stage,
     requestedAt: intent.requestedAt,
@@ -1455,12 +1592,12 @@ function cloneSpawnIntent(
 
 function cloneObject(value: object): object {
   const cloned = cloneUnknown(value);
-  return typeof cloned === "object" && cloned !== null ? cloned : {};
+  return typeof cloned === 'object' && cloned !== null ? cloned : {};
 }
 
 function clonePanelOutputs(
-  outputs: NonNullable<FusionRun["panelOutputs"]>,
-): NonNullable<FusionRun["panelOutputs"]> {
+  outputs: NonNullable<FusionRun['panelOutputs']>,
+): NonNullable<FusionRun['panelOutputs']> {
   return outputs.map((output) => ({
     ...output,
     ...(output.decision
@@ -1473,8 +1610,8 @@ function clonePanelOutputs(
 }
 
 function clonePanelFailures(
-  failures: NonNullable<FusionRun["panelFailures"]>,
-): NonNullable<FusionRun["panelFailures"]> {
+  failures: NonNullable<FusionRun['panelFailures']>,
+): NonNullable<FusionRun['panelFailures']> {
   return failures.map((failure) => ({
     ...failure,
     ...(failure.observation
@@ -1509,7 +1646,7 @@ function clonePanelDecision(decision: PanelDecision): PanelDecision {
 
 function isRunObservation(value: unknown): value is RunObservation {
   if (!isRecord(value)) return false;
-  if (value.model !== undefined && typeof value.model !== "string")
+  if (value.model !== undefined && typeof value.model !== 'string')
     return false;
   if (value.durationMs !== undefined && !isFiniteNumber(value.durationMs)) {
     return false;
@@ -1540,9 +1677,9 @@ function isModelAttemptArray(value: unknown): value is ModelAttempt[] {
     value.every((item) => {
       if (!isRecord(item)) return false;
       return (
-        typeof item.model === "string" &&
-        typeof item.success === "boolean" &&
-        (item.error === undefined || typeof item.error === "string")
+        typeof item.model === 'string' &&
+        typeof item.success === 'boolean' &&
+        (item.error === undefined || typeof item.error === 'string')
       );
     })
   );
@@ -1551,9 +1688,9 @@ function isModelAttemptArray(value: unknown): value is ModelAttempt[] {
 function isProviderFailure(value: unknown): value is ProviderFailure {
   if (!isRecord(value)) return false;
   return (
-    typeof value.provider === "string" &&
-    typeof value.message === "string" &&
-    (value.model === undefined || typeof value.model === "string") &&
+    typeof value.provider === 'string' &&
+    typeof value.message === 'string' &&
+    (value.model === undefined || typeof value.model === 'string') &&
     (value.count === undefined || isFiniteNumber(value.count))
   );
 }
@@ -1561,20 +1698,20 @@ function isProviderFailure(value: unknown): value is ProviderFailure {
 function isPanelDecision(value: unknown): value is PanelDecision {
   if (!isRecord(value)) return false;
   return (
-    typeof value.recommendation === "string" &&
-    (value.confidence === "low" ||
-      value.confidence === "medium" ||
-      value.confidence === "high") &&
-    typeof value.needsMoreEvidence === "boolean" &&
-    typeof value.answerMarkdown === "string"
+    typeof value.recommendation === 'string' &&
+    (value.confidence === 'low' ||
+      value.confidence === 'medium' ||
+      value.confidence === 'high') &&
+    typeof value.needsMoreEvidence === 'boolean' &&
+    typeof value.answerMarkdown === 'string'
   );
 }
 
 function isPanelFailureReason(value: unknown): boolean {
   return (
-    value === "provider" ||
-    value === "timeout" ||
-    value === "interrupted" ||
-    value === "stopped-after-agreement"
+    value === 'provider' ||
+    value === 'timeout' ||
+    value === 'interrupted' ||
+    value === 'stopped-after-agreement'
   );
 }

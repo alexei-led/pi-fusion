@@ -1,4 +1,4 @@
-import type { MinimumSuccessfulPanelists } from "./types.js";
+import type { MinimumSuccessfulPanelists } from './types.js';
 
 /**
  * Resolves a configured panel-success policy to the number of successful
@@ -8,8 +8,8 @@ export function resolveMinimumSuccessfulPanelists(
   policy: MinimumSuccessfulPanelists | undefined,
   panelSize: number,
 ): number {
-  if (policy === "all") return panelSize;
-  if (typeof policy === "number") {
+  if (policy === 'all') return panelSize;
+  if (typeof policy === 'number') {
     // A multi-member synthesis cannot truthfully claim a panel conclusion from
     // one answer. Preserve one-member panels while making legacy numeric `1`
     // behave as the minimum meaningful two-candidate quorum.

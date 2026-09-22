@@ -1,25 +1,28 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from 'node:crypto';
 
 export const SUBAGENTS_RPC_VERSION = 1;
-export const SUBAGENTS_RPC_REQUEST_CHANNEL = "subagents:rpc:v1:request";
-export const SUBAGENTS_RPC_REPLY_CHANNEL_PREFIX = "subagents:rpc:v1:reply:";
+export const SUBAGENTS_RPC_REQUEST_CHANNEL = 'subagents:rpc:v1:request';
+export const SUBAGENTS_RPC_REPLY_CHANNEL_PREFIX = 'subagents:rpc:v1:reply:';
 export const DEFAULT_SUBAGENTS_RPC_TIMEOUT_MS = 15_000;
 
 export const SUBAGENTS_RPC_METHODS = [
-  "ping",
-  "spawn",
-  "status",
-  "stop",
-  "interrupt",
-  "steer",
-  "lookup",
-  "cancel",
+  'ping',
+  'spawn',
+  'status',
+  'stop',
+  'interrupt',
+  'steer',
+  'lookup',
+  'cancel',
 ] as const;
 
 export type SubagentsRpcMethod = (typeof SUBAGENTS_RPC_METHODS)[number];
 
 export interface SubagentsEventBus {
-  on(event: string, handler: (payload: unknown) => void): (() => void) | void;
+  on(
+    event: string,
+    handler: (payload: unknown) => void,
+  ): (() => void) | undefined;
   emit(event: string, payload: unknown): void;
 }
 
@@ -47,7 +50,7 @@ export interface SubagentsTargetParams {
 
 export interface SubagentsSteerParams extends SubagentsTargetParams {
   message: string;
-  mode: "auto";
+  mode: 'auto';
 }
 
 export type SubagentsSpawnParams = object;
@@ -91,7 +94,7 @@ export class SubagentsRpcRemoteError extends Error {
     method: SubagentsRpcMethod;
   }) {
     super(input.message);
-    this.name = "SubagentsRpcRemoteError";
+    this.name = 'SubagentsRpcRemoteError';
     this.code = input.code;
     this.requestId = input.requestId;
     this.method = input.method;
@@ -108,7 +111,7 @@ export class SubagentsRpcProtocolError extends Error {
     method: SubagentsRpcMethod;
   }) {
     super(input.message);
-    this.name = "SubagentsRpcProtocolError";
+    this.name = 'SubagentsRpcProtocolError';
     this.requestId = input.requestId;
     this.method = input.method;
   }
@@ -127,7 +130,7 @@ export class SubagentsRpcTimeoutError extends Error {
     super(
       `Subagents RPC ${input.method} request ${input.requestId} timed out after ${input.timeoutMs}ms.`,
     );
-    this.name = "SubagentsRpcTimeoutError";
+    this.name = 'SubagentsRpcTimeoutError';
     this.requestId = input.requestId;
     this.method = input.method;
     this.timeoutMs = input.timeoutMs;
@@ -150,11 +153,11 @@ export class SubagentsRpcClient {
       options.timeoutMs ?? DEFAULT_SUBAGENTS_RPC_TIMEOUT_MS,
     );
     this.createRequestId = options.requestId ?? randomUUID;
-    this.source = options.source ?? { extension: "pi-fusion" };
+    this.source = options.source ?? { extension: 'pi-fusion' };
   }
 
   steer(params: SubagentsSteerParams): Promise<unknown> {
-    return this.request("steer", params);
+    return this.request('steer', params);
   }
 
   request<T = unknown>(
@@ -237,7 +240,7 @@ export class SubagentsRpcClient {
           );
         },
       );
-      if (typeof maybeUnsubscribe === "function")
+      if (typeof maybeUnsubscribe === 'function')
         unsubscribe = maybeUnsubscribe;
 
       try {
@@ -257,43 +260,43 @@ export class SubagentsRpcClient {
   }
 
   ping(options?: SubagentsRpcRequestOptions): Promise<unknown> {
-    return this.request("ping", undefined, options);
+    return this.request('ping', undefined, options);
   }
 
   lookup(params: { operationId: string; digest?: string }): Promise<unknown> {
-    return this.request("lookup", params);
+    return this.request('lookup', params);
   }
 
   cancel(params: { operationId: string; digest: string }): Promise<unknown> {
-    return this.request("cancel", params);
+    return this.request('cancel', params);
   }
 
   spawn(
     params: SubagentsSpawnParams,
     options?: SubagentsRpcRequestOptions,
   ): Promise<unknown> {
-    return this.request("spawn", params, options);
+    return this.request('spawn', params, options);
   }
 
   status(
     params: SubagentsTargetParams = {},
     options?: SubagentsRpcRequestOptions,
   ): Promise<unknown> {
-    return this.request("status", params, options);
+    return this.request('status', params, options);
   }
 
   stop(
     params: SubagentsTargetParams,
     options?: SubagentsRpcRequestOptions,
   ): Promise<unknown> {
-    return this.request("stop", params, options);
+    return this.request('stop', params, options);
   }
 
   interrupt(
     params: SubagentsTargetParams,
     options?: SubagentsRpcRequestOptions,
   ): Promise<unknown> {
-    return this.request("interrupt", params, options);
+    return this.request('interrupt', params, options);
   }
 }
 
@@ -349,18 +352,18 @@ function parseReplyEnvelope(
       throw new SubagentsRpcProtocolError({
         requestId,
         method: expectedMethod,
-        message: "Subagents RPC failure reply did not include an error object.",
+        message: 'Subagents RPC failure reply did not include an error object.',
       });
     }
     if (
-      typeof payload.error.code !== "string" ||
-      typeof payload.error.message !== "string"
+      typeof payload.error.code !== 'string' ||
+      typeof payload.error.message !== 'string'
     ) {
       throw new SubagentsRpcProtocolError({
         requestId,
         method: expectedMethod,
         message:
-          "Subagents RPC failure reply error must include code and message.",
+          'Subagents RPC failure reply error must include code and message.',
       });
     }
     return {
@@ -378,7 +381,7 @@ function parseReplyEnvelope(
   throw new SubagentsRpcProtocolError({
     requestId,
     method: expectedMethod,
-    message: "Subagents RPC reply success flag must be true or false.",
+    message: 'Subagents RPC reply success flag must be true or false.',
   });
 }
 
@@ -389,7 +392,7 @@ function parseOptionalMethod(
 ): SubagentsRpcMethod | undefined {
   if (value === undefined) return undefined;
   if (
-    typeof value === "string" &&
+    typeof value === 'string' &&
     (SUBAGENTS_RPC_METHODS as readonly string[]).includes(value)
   ) {
     return value as SubagentsRpcMethod;
@@ -402,26 +405,26 @@ function parseOptionalMethod(
 }
 
 function formatUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
   try {
-    return JSON.stringify(value) ?? "unknown";
+    return JSON.stringify(value) ?? 'unknown';
   } catch {
-    return "unknown";
+    return 'unknown';
   }
 }
 
 function normalizeTimeoutMs(value: number): number {
   if (!Number.isInteger(value) || value <= 0) {
-    throw new RangeError("Subagents RPC timeoutMs must be a positive integer.");
+    throw new RangeError('Subagents RPC timeoutMs must be a positive integer.');
   }
   return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,89 +1,107 @@
-import { deadlineSteerMessage, planPanelDeadlines, PANEL_DECISION_WAIT_MS } from "./panel-deadlines.js";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { FusionOperationJournal } from "./operation-journal.js";
-import { isReviewContext, verifyReviewContext } from "./review-context.js";
-import { aggregateTerminalProof, expectedExecutionRoute, isExecutionLifetime, nativeTerminalProof, requestDigest, sameLifetime, supportsExecutionContract, supportsOwnedFusionRoutes, supportsTreeOwnership, verifiesExecutionOwnership } from "./runtime-contract.js";
-import { applyClaudeAliasShorthand } from "./claude-aliases.js";
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import {
   detectCallerOutputContract,
   validateCallerOutput,
-} from "./caller-contract.js";
+} from './caller-contract.js';
+import { applyClaudeAliasShorthand } from './claude-aliases.js';
 import {
   buildInlinePanelProfile,
   loadFusionConfig,
-  resolveProfile as resolveFusionProfile,
   type ResolvedFusionProfile,
-} from "./config.js";
-import { FusionArgsError } from "./errors.js";
-import { parseFusionArgs } from "./fusion-args.js";
+  resolveProfile as resolveFusionProfile,
+} from './config.js';
+import { FusionArgsError } from './errors.js';
+import { parseFusionArgs } from './fusion-args.js';
+import {
+  type ReconcilePanelResultsOptions,
+  reconcileIndexedLifecycleResult,
+  reconcilePanelResults,
+} from './lifecycle-reconcile.js';
+import { FusionOperationJournal } from './operation-journal.js';
 import {
   decidePanelCompletion,
   resolveMinimumSuccessfulPanelists,
-} from "./panel-completion.js";
+} from './panel-completion.js';
+import {
+  deadlineSteerMessage,
+  PANEL_DECISION_WAIT_MS,
+  planPanelDeadlines,
+} from './panel-deadlines.js';
 import {
   renderCancelledReport,
   renderFailureReport,
   renderJudgeReport,
-} from "./report.js";
+} from './report.js';
 import {
-  extractPanelResults,
-  type ExtractPanelResultsSuccess,
   type ExtractPanelResultsResult,
-} from "./result-extract.js";
-import {
-  reconcileIndexedLifecycleResult,
-  reconcilePanelResults,
-  type ReconcilePanelResultsOptions,
-} from "./lifecycle-reconcile.js";
+  type ExtractPanelResultsSuccess,
+  extractPanelResults,
+} from './result-extract.js';
+import { isReviewContext, verifyReviewContext } from './review-context.js';
 import {
   appendThinkingSuffix,
   buildPanelSpawnParams,
   resolveEffectiveTimeouts,
-} from "./run-builder.js";
-import {
-  FusionRunStore,
-  FusionRunStoreError,
-  FusionRunConflictError,
-  validateFusionRunPanelSlots,
-} from "./run-store.js";
-import {
-  clearFusionUi,
-  extractFusionProgressCounts,
-  formatProgressCounts,
-  isTerminalFusionProgress,
-  publishFusionStatus,
-  type FusionProgressCounts,
-  type FusionUi,
-} from "./status.js";
-import {
-  readSubagentResultArtifact,
-  readSubagentStatusArtifact,
-} from "./subagent-artifacts.js";
-import {
-  memberLabel,
-  resolveSynthesisMode,
-  type FailedPanelSummary,
-  type FusionProfile,
-  type FusionProfileSnapshot,
-  type FusionRun,
-  type PanelOutput,
-  type PanelDeadlineState,
-  type ParsedFusionArgs,
-} from "./types.js";
+} from './run-builder.js';
 import {
   extractRunObservation,
   hasStrongPanelAgreement,
   mergeRunObservations,
-} from "./run-observations.js";
-import type { SubagentsTargetParams, SubagentsSteerParams } from "./subagents-rpc.js";
+} from './run-observations.js';
+import {
+  FusionRunConflictError,
+  FusionRunStore,
+  FusionRunStoreError,
+  validateFusionRunPanelSlots,
+} from './run-store.js';
+import {
+  aggregateTerminalProof,
+  expectedExecutionRoute,
+  isExecutionLifetime,
+  nativeTerminalProof,
+  requestDigest,
+  sameLifetime,
+  supportsExecutionContract,
+  supportsOwnedFusionRoutes,
+  supportsTreeOwnership,
+  verifiesExecutionOwnership,
+} from './runtime-contract.js';
+import {
+  clearFusionUi,
+  extractFusionProgressCounts,
+  type FusionProgressCounts,
+  type FusionUi,
+  formatProgressCounts,
+  isTerminalFusionProgress,
+  publishFusionStatus,
+} from './status.js';
+import {
+  readSubagentResultArtifact,
+  readSubagentStatusArtifact,
+} from './subagent-artifacts.js';
+import type {
+  SubagentsSteerParams,
+  SubagentsTargetParams,
+} from './subagents-rpc.js';
+import {
+  type FailedPanelSummary,
+  type FusionProfile,
+  type FusionProfileSnapshot,
+  type FusionRun,
+  memberLabel,
+  type PanelDeadlineState,
+  type PanelOutput,
+  type ParsedFusionArgs,
+  resolveSynthesisMode,
+} from './types.js';
 
-export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export const SUBAGENT_ASYNC_COMPLETE_EVENT = 'subagent:async-complete';
 
 const RECONCILE_INTERVAL_MS = 2_000;
 const WORKFLOW_RESULT_ARTIFACT_GRACE_MS = 5_000;
 
-export type FusionNotifyType = "info" | "warning" | "error";
+export type FusionNotifyType = 'info' | 'warning' | 'error';
 
 export interface FusionCommandUi extends FusionUi {
   notify(message: string, type?: FusionNotifyType): void;
@@ -111,35 +129,38 @@ export interface FusionRpcClientLike {
 }
 
 export interface FusionMessageSink {
-  sendMessage(message: {
-    customType: string;
-    content: string;
-    display: boolean;
-    details?: unknown;
-  }, options?: { triggerTurn: boolean; deliverAs: "steer" }): void;
+  sendMessage(
+    message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details?: unknown;
+    },
+    options?: { triggerTurn: boolean; deliverAs: 'steer' },
+  ): void;
 }
 
 export interface FusionOrchestratorDeps {
   rpc: FusionRpcClientLike;
   runStore?: FusionRunStore;
-  sendMessage?: FusionMessageSink["sendMessage"];
+  sendMessage?: FusionMessageSink['sendMessage'];
   loadConfig?: typeof loadFusionConfig;
   resolveProfile?: typeof resolveFusionProfile;
 }
 
 export type FusionCommandResult =
-  | { status: "started"; run: FusionRun }
-  | { status: "done"; run: FusionRun; report: string }
-  | { status: "failed"; error: string; report?: string }
-  | { status: "conflict"; activeRunId: string }
-  | { status: "cancelled"; run: FusionRun; report: string }
-  | { status: "ignored" };
+  | { status: 'started'; run: FusionRun }
+  | { status: 'done'; run: FusionRun; report: string }
+  | { status: 'failed'; error: string; report?: string }
+  | { status: 'conflict'; activeRunId: string }
+  | { status: 'cancelled'; run: FusionRun; report: string }
+  | { status: 'ignored' };
 
 interface RunLifecycleSnapshot {
   statusPayload?: unknown;
   resultPayload?: unknown;
   /** Compact event results need stable slots; status/artifacts are ordered snapshots. */
-  resultSource?: "artifact" | "event" | "status";
+  resultSource?: 'artifact' | 'event' | 'status';
   resultIsTerminal: boolean;
   resultArtifactPending?: boolean;
 }
@@ -147,7 +168,7 @@ interface RunLifecycleSnapshot {
 export class FusionOrchestrator {
   private readonly rpc: FusionRpcClientLike;
   private readonly runStore: FusionRunStore;
-  private readonly sendMessage: FusionMessageSink["sendMessage"] | undefined;
+  private readonly sendMessage: FusionMessageSink['sendMessage'] | undefined;
   private readonly loadConfig: typeof loadFusionConfig;
   private readonly resolveProfile: typeof resolveFusionProfile;
   private context: FusionCommandContext | undefined;
@@ -161,7 +182,10 @@ export class FusionOrchestrator {
   private preflightRecoveryEnabled = false;
   private pendingCompletionPayload: unknown;
   private readonly incompleteTerminalSince = new Map<string, number>();
-  private readonly pendingCancellations = new Map<string, Promise<FusionCommandResult>>();
+  private readonly pendingCancellations = new Map<
+    string,
+    Promise<FusionCommandResult>
+  >();
 
   constructor(deps: FusionOrchestratorDeps) {
     this.rpc = deps.rpc;
@@ -177,20 +201,24 @@ export class FusionOrchestrator {
   ): Promise<FusionCommandResult> {
     this.context = ctx;
 
-    let args = typeof input === "string" ? parseFusionArgs(input) : input;
-    const preflight = args.operationId && args.executionLifetime ? this.operationJournal().preflight(args.operationId) : undefined;
+    let args = typeof input === 'string' ? parseFusionArgs(input) : input;
+    const preflight =
+      args.operationId && args.executionLifetime
+        ? this.operationJournal().preflight(args.operationId)
+        : undefined;
     if (preflight) args = preflight.args;
     const inputError = validateStartArgs(args);
     if (inputError) {
-      this.notify(ctx, inputError, "error");
-      return { status: "failed", error: inputError };
+      this.notify(ctx, inputError, 'error');
+      return { status: 'failed', error: inputError };
     }
     const existing = this.runStore.getActiveRun();
     if (existing) {
-      if (preflight && existing.id === preflight.runId) return this.adoptPreflightRun(existing);
+      if (preflight && existing.id === preflight.runId)
+        return this.adoptPreflightRun(existing);
       const message = `Fusion run ${existing.id} is already active.`;
-      this.notify(ctx, message, "warning");
-      return { status: "conflict", activeRunId: existing.id };
+      this.notify(ctx, message, 'warning');
+      return { status: 'conflict', activeRunId: existing.id };
     }
 
     let subagentsInfo: unknown;
@@ -200,24 +228,39 @@ export class FusionOrchestrator {
     } catch (error: unknown) {
       const message = `pi-subagents RPC is unavailable: ${errorMessage(error)}`;
       this.installWarning = message;
-      this.notify(ctx, message, "error");
-      return { status: "failed", error: message };
+      this.notify(ctx, message, 'error');
+      return { status: 'failed', error: message };
     }
 
     let resolved: ResolvedFusionProfile;
     let baseProfileName: string | undefined;
     try {
-      if (args.executionLifetime && (!supportsExecutionContract(subagentsInfo) || !this.rpc.lookup || !this.rpc.cancel)) {
-        throw new FusionArgsError("pi-subagents does not support the verified executionLifetime, durable operation lookup/cancel, and process-tree proof contract. Update pi-subagents and reload Pi.");
+      if (
+        args.executionLifetime &&
+        (!supportsExecutionContract(subagentsInfo) ||
+          !this.rpc.lookup ||
+          !this.rpc.cancel)
+      ) {
+        throw new FusionArgsError(
+          'pi-subagents does not support the verified executionLifetime, durable operation lookup/cancel, and process-tree proof contract. Update pi-subagents and reload Pi.',
+        );
       }
       if (args.executionLifetime && !supportsTreeOwnership(subagentsInfo)) {
-        throw new FusionArgsError("pi-subagents processTreeOwnership does not prove containment of escaped descendants; explicit execution cannot start safely.");
+        throw new FusionArgsError(
+          'pi-subagents processTreeOwnership does not prove containment of escaped descendants; explicit execution cannot start safely.',
+        );
       }
-      if (args.executionLifetime && !supportsOwnedFusionRoutes(subagentsInfo)) throw new FusionArgsError("pi-subagents does not expose kernel-owned single-async and parallel-data routes required by Fusion.");
+      if (args.executionLifetime && !supportsOwnedFusionRoutes(subagentsInfo))
+        throw new FusionArgsError(
+          'pi-subagents does not expose kernel-owned single-async and parallel-data routes required by Fusion.',
+        );
       const config = await this.loadConfig(ctx);
       resolved = this.resolveProfile(config, args.profile);
       baseProfileName = resolved.name;
-      if (args.executionLifetime && resolved.profile.stopWhenPanelAgrees) throw new FusionArgsError("stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.");
+      if (args.executionLifetime && resolved.profile.stopWhenPanelAgrees)
+        throw new FusionArgsError(
+          'stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.',
+        );
       if (args.panel?.length) {
         // The named profile still supplies the judge and every other setting;
         // only the panel is replaced. Inline models skip the alias pass that
@@ -237,18 +280,25 @@ export class FusionOrchestrator {
         );
         resolved = this.resolveProfile(aliased, inlineName);
       }
-      if (!args.executionLifetime && resolved.profile.panelistSoftTimeoutMs !== undefined &&
-        (!this.rpc.steer || !isRecord(subagentsInfo) || !isRecord(subagentsInfo.capabilities) ||
-          subagentsInfo.capabilities.nonRecoveringSteer !== true)) {
-        throw new FusionArgsError("Soft deadlines require pi-subagents RPC with nonRecoveringSteer. Update pi-subagents and reload Pi, or omit panelistSoftTimeoutMs.");
+      if (
+        !args.executionLifetime &&
+        resolved.profile.panelistSoftTimeoutMs !== undefined &&
+        (!this.rpc.steer ||
+          !isRecord(subagentsInfo) ||
+          !isRecord(subagentsInfo.capabilities) ||
+          subagentsInfo.capabilities.nonRecoveringSteer !== true)
+      ) {
+        throw new FusionArgsError(
+          'Soft deadlines require pi-subagents RPC with nonRecoveringSteer. Update pi-subagents and reload Pi, or omit panelistSoftTimeoutMs.',
+        );
       }
       verifyReviewContext(args.reviewContext);
       this.configWarning = undefined;
     } catch (error: unknown) {
       const message = errorMessage(error);
       this.configWarning = message;
-      this.notify(ctx, message, "error");
-      return { status: "failed", error: message };
+      this.notify(ctx, message, 'error');
+      return { status: 'failed', error: message };
     }
 
     const outputContract =
@@ -258,30 +308,65 @@ export class FusionOrchestrator {
     if (preflight) {
       const persisted = this.runStore.getRunById(preflight.runId);
       if (persisted) return this.adoptPreflightRun(persisted);
-      if (!args.operationId || this.operationJournal().preflight(args.operationId)?.runId !== preflight.runId) return { status: "failed", error: "Fusion preflight was superseded before launch." };
-      if (this.operationJournal().hasDispatchAdmission(args.operationId)) return { status: "failed", error: "Fusion dispatch was admitted but its frozen run snapshot is missing; launch remains unresolved." };
+      if (
+        !args.operationId ||
+        this.operationJournal().preflight(args.operationId)?.runId !==
+          preflight.runId
+      )
+        return {
+          status: 'failed',
+          error: 'Fusion preflight was superseded before launch.',
+        };
+      if (this.operationJournal().hasDispatchAdmission(args.operationId))
+        return {
+          status: 'failed',
+          error:
+            'Fusion dispatch was admitted but its frozen run snapshot is missing; launch remains unresolved.',
+        };
     }
     if (args.operationId && this.operationCancelled(args.operationId)) {
-      return { status: "failed", error: "Fusion operation was cancelled before launch." };
+      return {
+        status: 'failed',
+        error: 'Fusion operation was cancelled before launch.',
+      };
     }
     let run: FusionRun;
     const spawnParams = {
-      ...buildPanelSpawnParams(resolved.profile, args.prompt, outputContract, args.timeoutOverrides, args.executionLifetime),
-      ...(args.reviewContext ? { cwd: args.reviewContext.cwd, worktree: false } : {}),
+      ...buildPanelSpawnParams(
+        resolved.profile,
+        args.prompt,
+        outputContract,
+        args.timeoutOverrides,
+        args.executionLifetime,
+      ),
+      ...(args.reviewContext
+        ? { cwd: args.reviewContext.cwd, worktree: false }
+        : {}),
     };
-    const runId = preflight?.runId ?? (args.executionLifetime ? randomUUID() : undefined);
+    const runId =
+      preflight?.runId ?? (args.executionLifetime ? randomUUID() : undefined);
     try {
       run = this.runStore.startRun({
-        ...(runId ? {
-          id: runId,
-          spawnIntent: {
-            stage: "panel", requestedAt: Date.now(), requestId: `${runId}:panel`,
-            requestDigest: requestDigest(args.reviewContext ? { params: spawnParams, reviewContext: args.reviewContext } : spawnParams),
-            params: spawnParams,
-          },
-        } : {}),
+        ...(runId
+          ? {
+              id: runId,
+              spawnIntent: {
+                stage: 'panel',
+                requestedAt: Date.now(),
+                requestId: `${runId}:panel`,
+                requestDigest: requestDigest(
+                  args.reviewContext
+                    ? { params: spawnParams, reviewContext: args.reviewContext }
+                    : spawnParams,
+                ),
+                params: spawnParams,
+              },
+            }
+          : {}),
         ...(args.reviewContext ? { reviewContext: args.reviewContext } : {}),
-        ...(args.executionLifetime ? { executionLifetime: args.executionLifetime } : {}),
+        ...(args.executionLifetime
+          ? { executionLifetime: args.executionLifetime }
+          : {}),
         ...(args.requestDigest ? { requestDigest: args.requestDigest } : {}),
         prompt: args.prompt,
         profileName: resolved.name,
@@ -298,34 +383,38 @@ export class FusionOrchestrator {
         ...(args.timeoutOverrides
           ? { timeoutOverrides: args.timeoutOverrides }
           : {}),
-        ...(!args.executionLifetime ? { effectiveTimeouts: resolveEffectiveTimeouts(
-          resolved.profile,
-          args.timeoutOverrides,
-        ) } : {}),
-        phase: "panel",
+        ...(!args.executionLifetime
+          ? {
+              effectiveTimeouts: resolveEffectiveTimeouts(
+                resolved.profile,
+                args.timeoutOverrides,
+              ),
+            }
+          : {}),
+        phase: 'panel',
       });
     } catch (error: unknown) {
       this.runStore.refreshDurable();
       const persisted = runId ? this.runStore.getRunById(runId) : undefined;
       if (persisted) {
         this.adoptPreflightRun(persisted);
-        return { status: "started", run: persisted };
+        return { status: 'started', run: persisted };
       }
       if (!(error instanceof FusionRunStoreError)) {
         const message = errorMessage(error);
-        this.notify(ctx, message, "error");
-        return { status: "failed", error: message };
+        this.notify(ctx, message, 'error');
+        return { status: 'failed', error: message };
       }
       const active = this.runStore.getActiveRun();
       if (active) {
         this.notify(
           ctx,
           `Fusion run ${active.id} is already active.`,
-          "warning",
+          'warning',
         );
-        return { status: "conflict", activeRunId: active.id };
+        return { status: 'conflict', activeRunId: active.id };
       }
-      return { status: "failed", error: errorMessage(error) };
+      return { status: 'failed', error: errorMessage(error) };
     }
     // Keep runtime behavior aligned with the exact durable profile that a
     // restart will use, rather than retaining a mutable config object.
@@ -335,13 +424,13 @@ export class FusionOrchestrator {
 
     try {
       // The native correlation identity is persisted before the launch.
-      const spawnResult = await this.spawnStage(run, "panel", spawnParams);
+      const spawnResult = await this.spawnStage(run, 'panel', spawnParams);
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
       const panelRunId = extractSubagentRunId(spawnResult);
       if (!panelRunId) {
         throw new FusionArgsError(
-          "pi-subagents spawn did not return a fusion panel run ID.",
+          'pi-subagents spawn did not return a fusion panel run ID.',
         );
       }
       const panelAsyncDir = extractSubagentAsyncDir(spawnResult);
@@ -351,17 +440,19 @@ export class FusionOrchestrator {
         await this.stopOrphanedRun(panelRunId);
         const cancelled = this.runStore.getLastRunSummary();
         return cancelled?.id === run.id &&
-          cancelled.phase === "cancelled" &&
+          cancelled.phase === 'cancelled' &&
           cancelled.report
-          ? { status: "cancelled", run: cancelled, report: cancelled.report }
-          : { status: "ignored" };
+          ? { status: 'cancelled', run: cancelled, report: cancelled.report }
+          : { status: 'ignored' };
       }
       let updated: FusionRun;
       try {
         updated = this.runStore.updateRun(run.id, {
           ...(!args.executionLifetime ? { spawnIntent: null } : {}),
           panelRunId,
-          ...(args.executionLifetime ? { effectiveExecutionLifetime: args.executionLifetime } : {}),
+          ...(args.executionLifetime
+            ? { effectiveExecutionLifetime: args.executionLifetime }
+            : {}),
           ...(panelAsyncDir ? { panelAsyncDir } : {}),
         });
       } catch (persistenceError: unknown) {
@@ -375,26 +466,29 @@ export class FusionOrchestrator {
       this.notify(
         ctx,
         `Fusion ${resolved.name} started (${resolved.profile.panel.length} panelists): "${promptPreview(args.prompt)}" — ${panelRunId}`,
-        "info",
+        'info',
       );
-      return { status: "started", run: updated };
+      return { status: 'started', run: updated };
     } catch (error: unknown) {
-      if (error instanceof FusionRunConflictError) return this.reconcileConflict(run.id);
+      if (error instanceof FusionRunConflictError)
+        return this.reconcileConflict(run.id);
       this.runStore.refreshDurable();
       const cancelled = this.runStore.getLastRunSummary();
       if (
         cancelled?.id === run.id &&
-        cancelled.phase === "cancelled" &&
+        cancelled.phase === 'cancelled' &&
         cancelled.report
       ) {
         return {
-          status: "cancelled",
+          status: 'cancelled',
           run: cancelled,
           report: cancelled.report,
         };
       }
-      if (this.runStore.getActiveRun()?.id !== run.id) return { status: "ignored" };
-      if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
+      if (this.runStore.getActiveRun()?.id !== run.id)
+        return { status: 'ignored' };
+      if (run.executionLifetime)
+        return this.retainUnresolvedRun(run.id, errorMessage(error));
       return this.failActiveRun(errorMessage(error));
     }
   }
@@ -406,12 +500,12 @@ export class FusionOrchestrator {
       publishFusionStatus(this.context, run);
       this.ensureReconcileLoop();
     }
-    return { status: "ignored" };
+    return { status: 'ignored' };
   }
 
   private async stopOrphanedRun(
     runId: string,
-    kind: "panel" | "judge" = "panel",
+    kind: 'panel' | 'judge' = 'panel',
   ): Promise<void> {
     try {
       await this.rpc.stop({ id: runId });
@@ -428,52 +522,110 @@ export class FusionOrchestrator {
     this.notify(
       this.context,
       this.installWarning ?? `Could not stop orphaned ${kind} run.`,
-      "warning",
+      'warning',
     );
   }
 
   async executionCapabilities(): Promise<Record<string, unknown>> {
     try {
       const info = await this.rpc.ping();
-      if (this.rpc.lookup && this.rpc.cancel && supportsExecutionContract(info)) {
-        const ownership = isRecord(info) && isRecord(info.capabilities) ? info.capabilities.processTreeOwnership : undefined;
+      if (
+        this.rpc.lookup &&
+        this.rpc.cancel &&
+        supportsExecutionContract(info)
+      ) {
+        const ownership =
+          isRecord(info) && isRecord(info.capabilities)
+            ? info.capabilities.processTreeOwnership
+            : undefined;
         return {
-          executionLifetime: { version: 1, modes: ["unbounded", "bounded"] },
+          executionLifetime: { version: 1, modes: ['unbounded', 'bounded'] },
           durableOperationLookup: { version: 1 },
-          durableOperations: { version: 1, lookup: true, replay: true, cancelFence: true, neverStartedFence: true, absentReplay: true, requestDigestEcho: true, scope: "repository" },
+          durableOperations: {
+            version: 1,
+            lookup: true,
+            replay: true,
+            cancelFence: true,
+            neverStartedFence: true,
+            absentReplay: true,
+            requestDigestEcho: true,
+            scope: 'repository',
+          },
           processTerminalProof: { version: 1 },
           workflowTerminalProof: { version: 1 },
-          ...(ownership !== undefined ? { processTreeOwnership: ownership } : {}),
+          ...(ownership !== undefined
+            ? { processTreeOwnership: ownership }
+            : {}),
         };
       }
-    } catch { /* An unavailable lower layer cannot advertise effective support. */ }
+    } catch {
+      /* An unavailable lower layer cannot advertise effective support. */
+    }
     return {};
   }
 
-  private async spawnStage(run: FusionRun, stage: "panel" | "judge", params: object): Promise<unknown> {
+  private async spawnStage(
+    run: FusionRun,
+    stage: 'panel' | 'judge',
+    params: object,
+  ): Promise<unknown> {
     this.assertCurrentStage(run);
     verifyReviewContext(run.reviewContext);
-    params = { ...params, ...(run.reviewContext ? { cwd: run.reviewContext.cwd, worktree: false } : {}) };
-    if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
+    params = {
+      ...params,
+      ...(run.reviewContext
+        ? { cwd: run.reviewContext.cwd, worktree: false }
+        : {}),
+    };
+    if (
+      this.runStore.getActiveRun()?.cancellationRequested ||
+      (run.operationId && this.operationCancelled(run.operationId))
+    ) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
-      throw new FusionArgsError("Cancellation fenced further stage launches.");
+      throw new FusionArgsError('Cancellation fenced further stage launches.');
     }
     const requestId = `${run.id}:${stage}`;
-    const digest = requestDigest(run.reviewContext ? { params, reviewContext: run.reviewContext } : params);
+    const digest = requestDigest(
+      run.reviewContext ? { params, reviewContext: run.reviewContext } : params,
+    );
     this.runStore.updateRun(run.id, {
-      spawnIntent: { stage, requestedAt: Date.now(), ...(run.executionLifetime ? { requestId, requestDigest: digest, params } : {}) },
+      spawnIntent: {
+        stage,
+        requestedAt: Date.now(),
+        ...(run.executionLifetime
+          ? { requestId, requestDigest: digest, params }
+          : {}),
+      },
     });
     if (run.operationId && this.operationCancelled(run.operationId)) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
-      throw new FusionArgsError("Cancellation fenced native dispatch.");
+      throw new FusionArgsError('Cancellation fenced native dispatch.');
     }
-    if (run.operationId && !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)) {
+    if (
+      run.operationId &&
+      !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)
+    ) {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
-      throw new FusionArgsError("Cancellation won native dispatch admission.");
+      throw new FusionArgsError('Cancellation won native dispatch admission.');
     }
-    const reply = await this.rpc.spawn({ ...params, ...(run.executionLifetime ? { operationId: requestId, digest } : {}) });
-    if (run.executionLifetime && (!isRecord(reply) || reply.operationId !== requestId || reply.digest !== digest || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) || !verifiesExecutionOwnership(reply, params))) {
-      throw new FusionArgsError("pi-subagents did not verify the requested execution lifetime and kernel-owned route; launch remains unresolved.");
+    const reply = await this.rpc.spawn({
+      ...params,
+      ...(run.executionLifetime ? { operationId: requestId, digest } : {}),
+    });
+    if (
+      run.executionLifetime &&
+      (!isRecord(reply) ||
+        reply.operationId !== requestId ||
+        reply.digest !== digest ||
+        !sameLifetime(
+          reply.effectiveExecutionLifetime,
+          run.executionLifetime,
+        ) ||
+        !verifiesExecutionOwnership(reply, params))
+    ) {
+      throw new FusionArgsError(
+        'pi-subagents did not verify the requested execution lifetime and kernel-owned route; launch remains unresolved.',
+      );
     }
     return reply;
   }
@@ -483,52 +635,125 @@ export class FusionOrchestrator {
   }
 
   private operationJournal(): FusionOperationJournal {
-    if (!this.context) throw new FusionArgsError("Fusion session context is unavailable.");
-    return new FusionOperationJournal(join(this.context.cwd, ".pi", "fusion", "operations"));
+    if (!this.context)
+      throw new FusionArgsError('Fusion session context is unavailable.');
+    return new FusionOperationJournal(
+      join(this.context.cwd, '.pi', 'fusion', 'operations'),
+    );
   }
 
-  private retainUnresolvedRun(runId: string, error: string): FusionCommandResult {
-    if (this.runStore.getActiveRun()?.id !== runId) return { status: "ignored" };
+  private retainUnresolvedRun(
+    runId: string,
+    error: string,
+  ): FusionCommandResult {
+    if (this.runStore.getActiveRun()?.id !== runId)
+      return { status: 'ignored' };
     let run: FusionRun;
-    try { run = this.runStore.updateRun(runId, { error }); }
-    catch (conflict: unknown) { if (conflict instanceof FusionRunConflictError) return this.reconcileConflict(runId); throw conflict; }
+    try {
+      run = this.runStore.updateRun(runId, { error });
+    } catch (conflict: unknown) {
+      if (conflict instanceof FusionRunConflictError)
+        return this.reconcileConflict(runId);
+      throw conflict;
+    }
     this.installWarning = error;
     this.ensureReconcileLoop();
-    return { status: "started", run };
+    return { status: 'started', run };
   }
 
-  private async reconcileSpawnIntent(run: FusionRun): Promise<FusionRun | undefined> {
+  private async reconcileSpawnIntent(
+    run: FusionRun,
+  ): Promise<FusionRun | undefined> {
     const intent = run.spawnIntent;
-    if (!intent?.requestId || !intent.requestDigest || !this.rpc.lookup) return undefined;
-    const lookup = await this.rpc.lookup({ operationId: intent.requestId, digest: intent.requestDigest });
+    if (!intent?.requestId || !intent.requestDigest || !this.rpc.lookup)
+      return undefined;
+    const lookup = await this.rpc.lookup({
+      operationId: intent.requestId,
+      digest: intent.requestDigest,
+    });
     this.assertCurrentStage(run);
     if (!isRecord(lookup)) return undefined;
-    if (lookup.operationId !== intent.requestId || (lookup.state !== "absent" && lookup.digest !== intent.requestDigest)) return undefined;
+    if (
+      lookup.operationId !== intent.requestId ||
+      (lookup.state !== 'absent' && lookup.digest !== intent.requestDigest)
+    )
+      return undefined;
     let reply: unknown = lookup;
-    if (lookup.state === "absent" && !run.cancellationRequested && intent.params) {
+    if (
+      lookup.state === 'absent' &&
+      !run.cancellationRequested &&
+      intent.params
+    ) {
       verifyReviewContext(run.reviewContext);
-      const expectedDigest = requestDigest(run.reviewContext ? { params: intent.params, reviewContext: run.reviewContext } : intent.params);
-      if (expectedDigest !== intent.requestDigest || (run.reviewContext && (!isRecord(intent.params) || intent.params.cwd !== run.reviewContext.cwd))) throw new FusionArgsError("Persisted native launch parameters do not match the frozen review intent.");
+      const expectedDigest = requestDigest(
+        run.reviewContext
+          ? { params: intent.params, reviewContext: run.reviewContext }
+          : intent.params,
+      );
+      if (
+        expectedDigest !== intent.requestDigest ||
+        (run.reviewContext &&
+          (!isRecord(intent.params) ||
+            intent.params.cwd !== run.reviewContext.cwd))
+      )
+        throw new FusionArgsError(
+          'Persisted native launch parameters do not match the frozen review intent.',
+        );
       this.runStore.refreshDurable();
-      if (this.runStore.getActiveRun()?.cancellationRequested || (run.operationId && this.operationCancelled(run.operationId))) {
+      if (
+        this.runStore.getActiveRun()?.cancellationRequested ||
+        (run.operationId && this.operationCancelled(run.operationId))
+      ) {
         return this.runStore.updateRun(run.id, { cancellationRequested: true });
       }
-      if (run.operationId && !this.operationJournal().beginDispatch(run.operationId, run.requestDigest)) return this.runStore.updateRun(run.id, { cancellationRequested: true });
-      reply = await this.rpc.spawn({ ...intent.params, operationId: intent.requestId, digest: intent.requestDigest });
+      if (
+        run.operationId &&
+        !this.operationJournal().beginDispatch(
+          run.operationId,
+          run.requestDigest,
+        )
+      )
+        return this.runStore.updateRun(run.id, { cancellationRequested: true });
+      reply = await this.rpc.spawn({
+        ...intent.params,
+        operationId: intent.requestId,
+        digest: intent.requestDigest,
+      });
       this.assertCurrentStage(run);
     }
     const nativeId = extractSubagentRunId(reply);
-    if (!nativeId || !isRecord(reply) || reply.operationId !== intent.requestId || reply.digest !== intent.requestDigest || !run.executionLifetime || !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) || !verifiesExecutionOwnership(reply, intent.params)) return undefined;
+    if (
+      !nativeId ||
+      !isRecord(reply) ||
+      reply.operationId !== intent.requestId ||
+      reply.digest !== intent.requestDigest ||
+      !run.executionLifetime ||
+      !sameLifetime(reply.effectiveExecutionLifetime, run.executionLifetime) ||
+      !verifiesExecutionOwnership(reply, intent.params)
+    )
+      return undefined;
     const asyncDir = extractSubagentAsyncDir(reply);
     return this.runStore.updateRun(run.id, {
-      ...(intent.stage === "panel" ? { panelRunId: nativeId, ...(asyncDir ? { panelAsyncDir: asyncDir } : {}) }
-        : { phase: "judge", judgeRunId: nativeId, ...(asyncDir ? { judgeAsyncDir: asyncDir } : {}) }),
+      ...(intent.stage === 'panel'
+        ? {
+            panelRunId: nativeId,
+            ...(asyncDir ? { panelAsyncDir: asyncDir } : {}),
+          }
+        : {
+            phase: 'judge',
+            judgeRunId: nativeId,
+            ...(asyncDir ? { judgeAsyncDir: asyncDir } : {}),
+          }),
       effectiveExecutionLifetime: run.executionLifetime,
-      ...(run.operationId && this.operationCancelled(run.operationId) ? { cancellationRequested: true } : {}),
+      ...(run.operationId && this.operationCancelled(run.operationId)
+        ? { cancellationRequested: true }
+        : {}),
     });
   }
 
-  private reconcileContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
+  private reconcileContractCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
     const pending = this.pendingCancellations.get(run.id);
     if (pending) return pending;
     const cancellation = this.observeContractCancellation(run).finally(() => {
@@ -538,11 +763,26 @@ export class FusionOrchestrator {
     return cancellation;
   }
 
-  private async observeContractCancellation(run: FusionRun): Promise<FusionCommandResult> {
-    const admission = run.operationId ? this.operationJournal().lookup(run.operationId) : undefined;
-    if (admission?.state === "cancelled" && admission.neverStarted === true) {
-      const proof = { version: 1, kind: "workflow", state: "observed", runId: run.id, dispatchClosed: true, observedAt: Date.now(), children: [] };
-      this.runStore.updateRun(run.id, { observation: admission, processTerminalProof: this.bindCallerProof(run, proof) });
+  private async observeContractCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
+    const admission = run.operationId
+      ? this.operationJournal().lookup(run.operationId)
+      : undefined;
+    if (admission?.state === 'cancelled' && admission.neverStarted === true) {
+      const proof = {
+        version: 1,
+        kind: 'workflow',
+        state: 'observed',
+        runId: run.id,
+        dispatchClosed: true,
+        observedAt: Date.now(),
+        children: [],
+      };
+      this.runStore.updateRun(run.id, {
+        observation: admission,
+        processTerminalProof: this.bindCallerProof(run, proof),
+      });
       const report = `Fusion run ${run.id} cancelled before native dispatch admission.`;
       const cancelled = this.runStore.cancelRun(run.id, { report });
       this.clearActiveRuntime();
@@ -551,12 +791,37 @@ export class FusionOrchestrator {
     }
     const intent = run.spawnIntent;
     if (intent?.requestId && intent.requestDigest && this.rpc.cancel) {
-      const receipt = await this.rpc.cancel({ operationId: intent.requestId, digest: intent.requestDigest });
+      const receipt = await this.rpc.cancel({
+        operationId: intent.requestId,
+        digest: intent.requestDigest,
+      });
       this.assertCurrentStage(run);
-      if (isRecord(receipt) && receipt.neverStarted === true && receipt.state === "cancelled" &&
-        receipt.operationId === intent.requestId && receipt.digest === intent.requestDigest) {
-        const proof = { version: 1, kind: "workflow", state: "observed", runId: typeof receipt.runId === "string" ? receipt.runId : intent.requestId, dispatchClosed: true, observedAt: Date.now(), children: [] };
-        this.runStore.updateRun(run.id, { observation: receipt, processTerminalProof: this.bindCallerProof(run, aggregateTerminalProof(run, proof)) });
+      if (
+        isRecord(receipt) &&
+        receipt.neverStarted === true &&
+        receipt.state === 'cancelled' &&
+        receipt.operationId === intent.requestId &&
+        receipt.digest === intent.requestDigest
+      ) {
+        const proof = {
+          version: 1,
+          kind: 'workflow',
+          state: 'observed',
+          runId:
+            typeof receipt.runId === 'string'
+              ? receipt.runId
+              : intent.requestId,
+          dispatchClosed: true,
+          observedAt: Date.now(),
+          children: [],
+        };
+        this.runStore.updateRun(run.id, {
+          observation: receipt,
+          processTerminalProof: this.bindCallerProof(
+            run,
+            aggregateTerminalProof(run, proof),
+          ),
+        });
         const report = `Fusion run ${run.id} cancelled before the native stage launched.`;
         const cancelled = this.runStore.cancelRun(run.id, { report });
         this.clearActiveRuntime();
@@ -565,13 +830,18 @@ export class FusionOrchestrator {
       }
     }
     const target = hasUnresolvedSpawnIntent(run) ? undefined : activeRunId(run);
-    if (!target) return { status: "started", run };
+    if (!target) return { status: 'started', run };
     const payload = await this.nativeStatus(run, target);
     this.assertCurrentStage(run);
     const proof = this.stageTerminalProof(run, payload, target);
     this.persistNativeObservation(run, payload);
-    if (!proof) return { status: "started", run };
-    this.runStore.updateRun(run.id, { processTerminalProof: this.bindCallerProof(run, aggregateTerminalProof(run, proof)) });
+    if (!proof) return { status: 'started', run };
+    this.runStore.updateRun(run.id, {
+      processTerminalProof: this.bindCallerProof(
+        run,
+        aggregateTerminalProof(run, proof),
+      ),
+    });
     const report = `Fusion run ${run.id} cancelled after native process-tree exit was observed.`;
     const cancelled = this.runStore.cancelRun(run.id, { report });
     this.clearActiveRuntime();
@@ -581,52 +851,87 @@ export class FusionOrchestrator {
 
   private async nativeStatus(run: FusionRun, target: string): Promise<unknown> {
     const intent = run.spawnIntent;
-    if (run.executionLifetime && intent?.requestId && intent.requestDigest && this.rpc.lookup) {
-      const lookup = await this.rpc.lookup({ operationId: intent.requestId, digest: intent.requestDigest });
-      if (isRecord(lookup) && lookup.operationId === intent.requestId && lookup.digest === intent.requestDigest && lookup.runId === target && isRecord(lookup.statusPayload)) return lookup.statusPayload;
+    if (
+      run.executionLifetime &&
+      intent?.requestId &&
+      intent.requestDigest &&
+      this.rpc.lookup
+    ) {
+      const lookup = await this.rpc.lookup({
+        operationId: intent.requestId,
+        digest: intent.requestDigest,
+      });
+      if (
+        isRecord(lookup) &&
+        lookup.operationId === intent.requestId &&
+        lookup.digest === intent.requestDigest &&
+        lookup.runId === target &&
+        isRecord(lookup.statusPayload)
+      )
+        return lookup.statusPayload;
     }
     return await this.rpc.status({ id: target });
   }
 
   private persistNativeObservation(run: FusionRun, payload: unknown): void {
-    if (JSON.stringify(run.observation) !== JSON.stringify(payload)) this.runStore.updateRun(run.id, { observation: payload });
+    if (JSON.stringify(run.observation) !== JSON.stringify(payload))
+      this.runStore.updateRun(run.id, { observation: payload });
   }
 
-  private stageTerminalProof(run: FusionRun, payload: unknown, target: string): Record<string, unknown> | undefined {
+  private stageTerminalProof(
+    run: FusionRun,
+    payload: unknown,
+    target: string,
+  ): Record<string, unknown> | undefined {
     const intent = run.spawnIntent;
     if (expectedExecutionRoute(intent?.params)) {
       if (!intent?.requestId || !intent.requestDigest) return undefined;
-      return nativeTerminalProof(payload, target, { operationId: intent.requestId, digest: intent.requestDigest });
+      return nativeTerminalProof(payload, target, {
+        operationId: intent.requestId,
+        digest: intent.requestDigest,
+      });
     }
     return nativeTerminalProof(payload, target);
   }
 
-  private bindCallerProof(run: FusionRun, proof: Record<string, unknown>): Record<string, unknown> {
+  private bindCallerProof(
+    run: FusionRun,
+    proof: Record<string, unknown>,
+  ): Record<string, unknown> {
     if (!run.operationId) return proof;
     const evidence = this.operationJournal().lookup(run.operationId);
     if (!evidence.requestDigest) return proof;
-    if (evidence.fusionRequestDigest !== run.requestDigest) throw new FusionArgsError("Fusion caller proof binding does not match the durable request digest.");
-    return { ...proof, callerBinding: { operationId: run.operationId, requestDigest: evidence.requestDigest } };
+    if (evidence.fusionRequestDigest !== run.requestDigest)
+      throw new FusionArgsError(
+        'Fusion caller proof binding does not match the durable request digest.',
+      );
+    return {
+      ...proof,
+      callerBinding: {
+        operationId: run.operationId,
+        requestDigest: evidence.requestDigest,
+      },
+    };
   }
 
   async handleSubagentComplete(payload: unknown): Promise<FusionCommandResult> {
     this.runStore.refreshDurable();
     const active = this.runStore.getActiveRun();
-    if (!active) return { status: "ignored" };
+    if (!active) return { status: 'ignored' };
 
     const completedRunId = extractSubagentRunId(payload);
-    if (!completedRunId) return { status: "ignored" };
+    if (!completedRunId) return { status: 'ignored' };
 
-    if (active.phase === "judge") {
+    if (active.phase === 'judge') {
       if (!active.judgeRunId || completedRunId !== active.judgeRunId) {
-        return { status: "ignored" };
+        return { status: 'ignored' };
       }
       return this.reconcileActiveRun(payload);
     }
 
     const rootRunId = active.chainRunId ?? active.panelRunId;
     if (!rootRunId || completedRunId !== rootRunId) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
     return this.reconcileActiveRun(payload);
   }
@@ -648,7 +953,11 @@ export class FusionOrchestrator {
         this.context,
         active,
         progress,
-        deriveFusionStatusPhase(active, statusPayload, this.profileForRun(active)),
+        deriveFusionStatusPhase(
+          active,
+          statusPayload,
+          this.profileForRun(active),
+        ),
       );
     }
     return statusPayload;
@@ -661,8 +970,8 @@ export class FusionOrchestrator {
     this.runStore.refreshDurable();
     let active = this.runStore.getActiveRun();
     if (!active) {
-      this.notify(ctx, "No active fusion run.", "info");
-      return { status: "ignored" };
+      this.notify(ctx, 'No active fusion run.', 'info');
+      return { status: 'ignored' };
     }
 
     if (active.executionLifetime) {
@@ -676,39 +985,50 @@ export class FusionOrchestrator {
         this.runStore.refreshDurable();
         const current = this.runStore.getActiveRun();
         if (current?.id !== active.id) return this.reconcileConflict(active.id);
-        try { cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true }); break; }
-        catch (error: unknown) { if (!(error instanceof FusionRunConflictError)) throw error; }
+        try {
+          cancelling = this.runStore.updateRun(active.id, {
+            cancellationRequested: true,
+          });
+          break;
+        } catch (error: unknown) {
+          if (!(error instanceof FusionRunConflictError)) throw error;
+        }
       }
       this.ensureReconcileLoop();
-      try { return await this.reconcileContractCancellation(cancelling); }
-      catch (error: unknown) {
-        if (error instanceof FusionRunConflictError) return this.reconcileConflict(active.id);
-        return this.retainUnresolvedRun(active.id, `Cancellation pending: ${errorMessage(error)}`);
+      try {
+        return await this.reconcileContractCancellation(cancelling);
+      } catch (error: unknown) {
+        if (error instanceof FusionRunConflictError)
+          return this.reconcileConflict(active.id);
+        return this.retainUnresolvedRun(
+          active.id,
+          `Cancellation pending: ${errorMessage(error)}`,
+        );
       }
     }
 
     const targetRunId = activeRunId(active);
-    let method: "stop" | "interrupt" | "local" = "local";
+    let method: 'stop' | 'interrupt' | 'local' = 'local';
     if (targetRunId) {
       try {
         await this.rpc.stop({ id: targetRunId });
-        method = "stop";
+        method = 'stop';
       } catch (stopError: unknown) {
         this.installWarning = `Subagent stop failed for ${targetRunId}: ${errorMessage(stopError)}`;
         try {
           await this.rpc.interrupt({ id: targetRunId });
-          method = "interrupt";
+          method = 'interrupt';
         } catch (interruptError: unknown) {
           const message = `Could not cancel subagent run ${targetRunId}: ${errorMessage(interruptError)}`;
-          this.notify(ctx, message, "error");
-          return { status: "failed", error: message };
+          this.notify(ctx, message, 'error');
+          return { status: 'failed', error: message };
         }
       }
     }
 
     this.runStore.refreshDurable();
     if (!sameStage(active, this.runStore.getActiveRun())) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
 
     const profile = this.profileForRun(active);
@@ -718,11 +1038,7 @@ export class FusionOrchestrator {
       ...(targetRunId ? { targetRunId } : {}),
       panelOutputs: storedPanelOutputs(active),
       failures: storedPanelFailures(active),
-      ...withJudgeModel(
-        profile
-          ? configuredJudgeModel(profile)
-          : undefined,
-      ),
+      ...withJudgeModel(profile ? configuredJudgeModel(profile) : undefined),
       ...(profile
         ? {
             synthesis: resolveSynthesisMode(profile),
@@ -737,16 +1053,16 @@ export class FusionOrchestrator {
       report,
       error: `Cancellation requested with ${method}.`,
     });
-    this.postMessage("fusion-report", report, { runId: cancelled.id });
+    this.postMessage('fusion-report', report, { runId: cancelled.id });
     this.clearActiveRuntime();
     this.clearUi();
-    this.notify(ctx, `Fusion run ${cancelled.id} cancelled.`, "info");
+    this.notify(ctx, `Fusion run ${cancelled.id} cancelled.`, 'info');
     return terminalResult(cancelled, report);
   }
 
   async restore(
     ctx: FusionCommandContext,
-  ): Promise<ReturnType<FusionRunStore["restoreFromSession"]>> {
+  ): Promise<ReturnType<FusionRunStore['restoreFromSession']>> {
     this.context = ctx;
     this.preflightRecoveryEnabled = true;
     const summary = this.runStore.restoreFromSession(ctx);
@@ -756,16 +1072,22 @@ export class FusionOrchestrator {
     if (restoreError) {
       this.stopReconcileLoop();
       this.configWarning = restoreError;
-      this.notify(ctx, restoreError, "warning");
+      this.notify(ctx, restoreError, 'warning');
       clearFusionUi(ctx);
       return summary;
     }
 
     const active = this.runStore.getActiveRun();
-    if (active && hasUnresolvedSpawnIntent(active) && !active.executionLifetime) {
-      const message = `Fusion recovery stopped: ${active.spawnIntent!.stage} spawn may have reached pi-subagents, but its run ID was not persisted. It will not be replayed because public RPC cannot safely adopt it.`;
+    const spawnIntent = active?.spawnIntent;
+    if (
+      active &&
+      spawnIntent &&
+      hasUnresolvedSpawnIntent(active) &&
+      !active.executionLifetime
+    ) {
+      const message = `Fusion recovery stopped: ${spawnIntent.stage} spawn may have reached pi-subagents, but its run ID was not persisted. It will not be replayed because public RPC cannot safely adopt it.`;
       this.failActiveRun(message);
-      this.notify(ctx, message, "warning");
+      this.notify(ctx, message, 'warning');
       return this.runStore.getLastRunSummary();
     }
     if (!active) {
@@ -775,10 +1097,12 @@ export class FusionOrchestrator {
       return summary;
     }
 
-    const lifecycleError = active.executionLifetime ? undefined : validateRestoredRunLifecycle(active);
+    const lifecycleError = active.executionLifetime
+      ? undefined
+      : validateRestoredRunLifecycle(active);
     if (lifecycleError) {
       this.failActiveRun(lifecycleError);
-      this.notify(ctx, lifecycleError, "warning");
+      this.notify(ctx, lifecycleError, 'warning');
       return this.runStore.getLastRunSummary();
     }
 
@@ -809,7 +1133,7 @@ export class FusionOrchestrator {
       } catch (error: unknown) {
         const message = `Could not restore legacy fusion profile "${active.profileName}": ${errorMessage(error)}`;
         this.configWarning = message;
-        this.notify(ctx, message, "warning");
+        this.notify(ctx, message, 'warning');
       }
     }
     const panelSlotError = validateFusionRunPanelSlots(
@@ -818,7 +1142,7 @@ export class FusionOrchestrator {
     );
     if (panelSlotError) {
       this.failActiveRun(panelSlotError);
-      this.notify(ctx, panelSlotError, "warning");
+      this.notify(ctx, panelSlotError, 'warning');
       return this.runStore.getLastRunSummary();
     }
 
@@ -840,7 +1164,7 @@ export class FusionOrchestrator {
   async showStatus(ctx: FusionCommandContext): Promise<string> {
     this.context = ctx;
     const report = await this.getStatusReport();
-    this.postMessage("fusion-status", report);
+    this.postMessage('fusion-status', report);
     return report;
   }
 
@@ -893,30 +1217,63 @@ export class FusionOrchestrator {
   async resolvePanelDeadline(
     runId: string,
     panelist: number,
-    decision: "continue" | "finish",
+    decision: 'continue' | 'finish',
   ): Promise<{ decision: string; receipt: unknown }> {
     const active = this.runStore.getActiveRun();
-    if (!active || active.id !== runId || active.phase !== "panel" || !active.panelRunId) {
-      throw new FusionArgsError("The requested Fusion panel is no longer active.");
+    if (
+      !active ||
+      active.id !== runId ||
+      active.phase !== 'panel' ||
+      !active.panelRunId
+    ) {
+      throw new FusionArgsError(
+        'The requested Fusion panel is no longer active.',
+      );
     }
-    if (!Number.isInteger(panelist) || panelist < 1 || (decision !== "continue" && decision !== "finish")) {
-      throw new FusionArgsError("Expected a one-based panelist number and continue or finish.");
+    if (
+      !Number.isInteger(panelist) ||
+      panelist < 1 ||
+      (decision !== 'continue' && decision !== 'finish')
+    ) {
+      throw new FusionArgsError(
+        'Expected a one-based panelist number and continue or finish.',
+      );
     }
-    const state = active.panelDeadlines?.find((item) => item.index === panelist - 1);
-    if (!state || state.status !== "pending") throw new FusionArgsError("No pending deadline decision for that panelist.");
+    const state = active.panelDeadlines?.find(
+      (item) => item.index === panelist - 1,
+    );
+    if (state?.status !== 'pending')
+      throw new FusionArgsError(
+        'No pending deadline decision for that panelist.',
+      );
     const payload = await this.rpc.status({ id: active.panelRunId });
     this.assertCurrentStage(active);
-    const matches = findStepsArray(payload).filter((step) => isRecord(step) &&
-      step.runId === state.childRunId && (step.status ?? step.state) === "running" &&
-      (step.workflowKey ?? step.key ?? step.agent) === `panel-${panelist}`);
+    const matches = findStepsArray(payload).filter(
+      (step) =>
+        isRecord(step) &&
+        step.runId === state.childRunId &&
+        (step.status ?? step.state) === 'running' &&
+        (step.workflowKey ?? step.key ?? step.agent) === `panel-${panelist}`,
+    );
     const latest = this.runStore.getActiveRun();
-    if (latest?.id !== runId || latest.phase !== "panel" ||
-      latest.panelDeadlines?.find((item) => item.index === state.index)?.status !== "pending" ||
-      isTerminalSubagentState(extractSubagentState(payload)) || matches.length !== 1 ||
-      Date.now() >= Math.min(state.requestedAt + PANEL_DECISION_WAIT_MS, state.finalizeAt)) {
-      throw new FusionArgsError("Deadline decision expired or the panelist is no longer running.");
+    if (
+      latest?.id !== runId ||
+      latest.phase !== 'panel' ||
+      latest.panelDeadlines?.find((item) => item.index === state.index)
+        ?.status !== 'pending' ||
+      isTerminalSubagentState(extractSubagentState(payload)) ||
+      matches.length !== 1 ||
+      Date.now() >=
+        Math.min(state.requestedAt + PANEL_DECISION_WAIT_MS, state.finalizeAt)
+    ) {
+      throw new FusionArgsError(
+        'Deadline decision expired or the panelist is no longer running.',
+      );
     }
-    const updated: PanelDeadlineState = { ...state, status: decision === "continue" ? "continued" : "finishing" };
+    const updated: PanelDeadlineState = {
+      ...state,
+      status: decision === 'continue' ? 'continued' : 'finishing',
+    };
     this.savePanelDeadline(runId, updated);
     const receipt = await this.steerPanelDeadline(runId, updated);
     return { decision, receipt };
@@ -924,48 +1281,89 @@ export class FusionOrchestrator {
 
   private savePanelDeadline(runId: string, state: PanelDeadlineState): void {
     const active = this.runStore.getActiveRun();
-    if (active?.id !== runId || active.phase !== "panel") return;
+    if (active?.id !== runId || active.phase !== 'panel') return;
     this.runStore.updateRun(runId, {
-      panelDeadlines: [...(active.panelDeadlines ?? []).filter((item) => item.index !== state.index), state],
+      panelDeadlines: [
+        ...(active.panelDeadlines ?? []).filter(
+          (item) => item.index !== state.index,
+        ),
+        state,
+      ],
     });
   }
 
-  private async steerPanelDeadline(runId: string, state: PanelDeadlineState): Promise<unknown> {
+  private async steerPanelDeadline(
+    runId: string,
+    state: PanelDeadlineState,
+  ): Promise<unknown> {
     try {
-      if (!this.rpc.steer) throw new Error("pi-subagents steer RPC is unavailable.");
-      return await this.rpc.steer({ id: state.childRunId, message: deadlineSteerMessage(state), mode: "auto" });
+      if (!this.rpc.steer)
+        throw new Error('pi-subagents steer RPC is unavailable.');
+      return await this.rpc.steer({
+        id: state.childRunId,
+        message: deadlineSteerMessage(state),
+        mode: 'auto',
+      });
     } catch (error: unknown) {
       if (error instanceof FusionRunConflictError) throw error;
       const message = `Could not send deadline guidance to panel-${state.index + 1}: ${errorMessage(error)}`;
       this.runStore.refreshDurable();
       const latest = this.runStore.getActiveRun();
-      if (latest?.id === runId && latest.panelDeadlines?.find((item) => item.index === state.index)?.status === state.status) {
+      if (
+        latest?.id === runId &&
+        latest.panelDeadlines?.find((item) => item.index === state.index)
+          ?.status === state.status
+      ) {
         this.savePanelDeadline(runId, { ...state, deliveryError: message });
       }
-      this.notify(this.context, message, "warning");
+      this.notify(this.context, message, 'warning');
       throw new Error(message, { cause: error });
     }
   }
 
-  private async handlePanelDeadlines(active: FusionRun, statusPayload: unknown): Promise<void> {
-    const actions = planPanelDeadlines(this.runStore.getActiveRun() ?? active, findStepsArray(statusPayload), Date.now());
+  private async handlePanelDeadlines(
+    active: FusionRun,
+    statusPayload: unknown,
+  ): Promise<void> {
+    const actions = planPanelDeadlines(
+      this.runStore.getActiveRun() ?? active,
+      findStepsArray(statusPayload),
+      Date.now(),
+    );
     for (const action of actions) {
       this.assertCurrentStage(active);
-      if (requestDigest(this.runStore.getActiveRun()?.panelDeadlines?.find((item) => item.index === action.state.index)) !== requestDigest(active.panelDeadlines?.find((item) => item.index === action.state.index))) continue;
+      if (
+        requestDigest(
+          this.runStore
+            .getActiveRun()
+            ?.panelDeadlines?.find((item) => item.index === action.state.index),
+        ) !==
+        requestDigest(
+          active.panelDeadlines?.find(
+            (item) => item.index === action.state.index,
+          ),
+        )
+      )
+        continue;
       this.savePanelDeadline(active.id, action.state);
-      if (action.kind === "ask") {
+      if (action.kind === 'ask') {
         const panelist = action.state.index + 1;
         const member = active.profileSnapshot?.panel[action.state.index];
-        const step = findStepsArray(statusPayload).find((item) => isRecord(item) && item.runId === action.state.childRunId);
+        const step = findStepsArray(statusPayload).find(
+          (item) => isRecord(item) && item.runId === action.state.childRunId,
+        );
         const content = [
           `Fusion soft deadline: ${member ? memberLabel(member) : `panel-${panelist}`}.`,
           `Fusion run: ${active.id}. Child run: ${action.state.childRunId}.`,
-          `Last observed activity (not verified findings): ${describeStepActivity(step)?.slice(0,500) ?? "unknown"}.`,
+          `Last observed activity (not verified findings): ${describeStepActivity(step)?.slice(0, 500) ?? 'unknown'}.`,
           `Call resolve_fusion_deadline with runId=${active.id}, panelist=${panelist}, decision=continue or finish. Ask the user if the extra work needs their decision.`,
           `Without a decision within ${PANEL_DECISION_WAIT_MS / 1000}s, the panelist will be asked to return its current answer. One continuation is allowed, only within the existing hard deadline.`,
           `User command: /fusion continue ${active.id} ${panelist} or /fusion finish ${active.id} ${panelist}.`,
-        ].join("\n");
-        this.sendMessage?.({ customType: "fusion-deadline", content, display: true }, { triggerTurn: true, deliverAs: "steer" });
+        ].join('\n');
+        this.sendMessage?.(
+          { customType: 'fusion-deadline', content, display: true },
+          { triggerTurn: true, deliverAs: 'steer' },
+        );
       }
       try {
         await this.steerPanelDeadline(active.id, action.state);
@@ -985,13 +1383,28 @@ export class FusionOrchestrator {
     options: ReconcilePanelResultsOptions,
   ): ExtractPanelResultsResult | undefined {
     const since = this.incompleteTerminalSince.get(active.id);
-    const graceExpired = since !== undefined && Date.now() - since >= WORKFLOW_RESULT_ARTIFACT_GRACE_MS;
-    const result = reconcilePanelResults(extracted, statusPayload, profile, lifecyclePayload, {
-      ...options,
-      ...(graceExpired && options.terminalizeRunning ? { allowMissingAtDeadline: true } : {}),
-    });
-    if (!result.ok && result.error.code === "incomplete-lifecycle" && !graceExpired) {
-      if (since === undefined) this.incompleteTerminalSince.set(active.id, Date.now());
+    const graceExpired =
+      since !== undefined &&
+      Date.now() - since >= WORKFLOW_RESULT_ARTIFACT_GRACE_MS;
+    const result = reconcilePanelResults(
+      extracted,
+      statusPayload,
+      profile,
+      lifecyclePayload,
+      {
+        ...options,
+        ...(graceExpired && options.terminalizeRunning
+          ? { allowMissingAtDeadline: true }
+          : {}),
+      },
+    );
+    if (
+      !result.ok &&
+      result.error.code === 'incomplete-lifecycle' &&
+      !graceExpired
+    ) {
+      if (since === undefined)
+        this.incompleteTerminalSince.set(active.id, Date.now());
       return undefined;
     }
     this.incompleteTerminalSince.delete(active.id);
@@ -1005,54 +1418,70 @@ export class FusionOrchestrator {
       if (eventPayload !== undefined) {
         this.pendingCompletionPayload = eventPayload;
       }
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
     this.runStore.refreshDurable();
-    if (this.runStore.getRestoreError()) return { status: "ignored" };
+    if (this.runStore.getRestoreError()) return { status: 'ignored' };
     let active = this.runStore.getActiveRun();
     if (!active) {
-      if (this.preflightRecoveryEnabled && this.context) await this.resumePreflights(this.context);
-      return { status: "ignored" };
+      if (this.preflightRecoveryEnabled && this.context)
+        await this.resumePreflights(this.context);
+      return { status: 'ignored' };
     }
-    if (eventPayload !== undefined && extractSubagentRunId(eventPayload) !== activeRunId(active)) return { status: "ignored" };
+    if (
+      eventPayload !== undefined &&
+      extractSubagentRunId(eventPayload) !== activeRunId(active)
+    )
+      return { status: 'ignored' };
 
     this.reconciling = true;
     try {
       if (active.executionLifetime) {
-        if (active.operationId && this.operationCancelled(active.operationId)) active = this.runStore.updateRun(active.id, { cancellationRequested: true });
+        if (active.operationId && this.operationCancelled(active.operationId))
+          active = this.runStore.updateRun(active.id, {
+            cancellationRequested: true,
+          });
         if (hasUnresolvedSpawnIntent(active)) {
           const recovered = await this.reconcileSpawnIntent(active);
           if (!recovered) {
-            if (active.cancellationRequested) return await this.reconcileContractCancellation(active);
-            return { status: "ignored" };
+            if (active.cancellationRequested)
+              return await this.reconcileContractCancellation(active);
+            return { status: 'ignored' };
           }
           active = recovered;
         }
-        if (active.cancellationRequested) return await this.reconcileContractCancellation(active);
+        if (active.cancellationRequested)
+          return await this.reconcileContractCancellation(active);
         const target = activeRunId(active);
-        if (!target) return { status: "ignored" };
+        if (!target) return { status: 'ignored' };
         const payload = await this.nativeStatus(active, target);
-        const interruption = this.completionInterruption(active);
+        const interruption = await this.completionInterruption(active);
         if (interruption) return interruption;
         const proof = this.stageTerminalProof(active, payload, target);
         this.persistNativeObservation(active, payload);
-        if (!proof) return { status: "ignored" };
+        if (!proof) return { status: 'ignored' };
         verifyReviewContext(active.reviewContext);
-        active = this.runStore.updateRun(active.id, { processTerminalProof: this.bindCallerProof(active, aggregateTerminalProof(active, proof)) });
-        if (active.cancellationRequested) return await this.reconcileContractCancellation(active);
+        active = this.runStore.updateRun(active.id, {
+          processTerminalProof: this.bindCallerProof(
+            active,
+            aggregateTerminalProof(active, proof),
+          ),
+        });
+        if (active.cancellationRequested)
+          return await this.reconcileContractCancellation(active);
       }
-      if (active.phase === "panel") {
+      if (active.phase === 'panel') {
         return await this.handleLegacyPanelComplete(active, eventPayload);
       }
-      if (active.phase === "chain") {
+      if (active.phase === 'chain') {
         return await this.handleChainComplete(active, eventPayload);
       }
-      if (active.phase === "judge") {
+      if (active.phase === 'judge') {
         return await this.handleJudgeComplete(active, eventPayload);
       }
-      return { status: "ignored" };
+      return { status: 'ignored' };
     } catch (error: unknown) {
-      if (error instanceof FusionRunConflictError) return { status: "ignored" };
+      if (error instanceof FusionRunConflictError) return { status: 'ignored' };
       throw error;
     } finally {
       this.reconciling = false;
@@ -1062,7 +1491,7 @@ export class FusionOrchestrator {
         void this.reconcileActiveRun(pendingPayload).catch((error: unknown) => {
           const message = `Could not reconcile completed fusion run: ${errorMessage(error)}`;
           this.installWarning = message;
-          this.notify(this.context, message, "warning");
+          this.notify(this.context, message, 'warning');
         });
       }
     }
@@ -1075,7 +1504,7 @@ export class FusionOrchestrator {
     const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
-        "Fusion chain is active, but the profile could not be restored.",
+        'Fusion chain is active, but the profile could not be restored.',
       );
     }
 
@@ -1085,9 +1514,9 @@ export class FusionOrchestrator {
       ...(active.chainAsyncDir ? { asyncDir: active.chainAsyncDir } : {}),
       eventPayload: payload,
     });
-    const interruption = this.completionInterruption(active);
+    const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
-    if (snapshot.resultArtifactPending) return { status: "ignored" };
+    if (snapshot.resultArtifactPending) return { status: 'ignored' };
     this.persistVerifiedPanelResults(active, profile, snapshot.statusPayload);
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
@@ -1095,7 +1524,7 @@ export class FusionOrchestrator {
       !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
 
     const lifecyclePayload =
@@ -1108,7 +1537,7 @@ export class FusionOrchestrator {
     const extracted = extractPanelResults(lifecyclePayload, {
       panel: profile.panel,
       limit: profile.panel.length,
-      ...(snapshot.resultSource === "event"
+      ...(snapshot.resultSource === 'event'
         ? { requireStableSlotIdentity: true }
         : {}),
     });
@@ -1132,7 +1561,7 @@ export class FusionOrchestrator {
           : {}),
       },
     );
-    if (!observedPanels) return { status: "ignored" };
+    if (!observedPanels) return { status: 'ignored' };
     if (!observedPanels.ok) {
       return this.failActiveRun(
         `${observedPanels.error.message} (${observedPanels.error.path})`,
@@ -1154,26 +1583,32 @@ export class FusionOrchestrator {
       panelFailures: observedPanels.failures,
       fallbackJudge: true,
     });
-    if (completion.kind === "fail") {
+    if (completion.kind === 'fail') {
       return this.failActiveRun(completion.error, completion.report);
     }
-    if (completion.kind === "complete") {
+    if (completion.kind === 'complete') {
       this.runStore.updateRun(updated.id, {
-        completionQuality: completionQuality(profile, observedPanels.outputs, observedPanels.failures),
+        completionQuality: completionQuality(
+          profile,
+          observedPanels.outputs,
+          observedPanels.failures,
+        ),
       });
       return this.completeActiveRun(completion.report);
     }
 
-    const judgePayload =
-      hasJudgeResult(snapshot.resultPayload, profile.panel.length)
-        ? snapshot.resultPayload
-        : snapshot.statusPayload;
+    const judgePayload = hasJudgeResult(
+      snapshot.resultPayload,
+      profile.panel.length,
+    )
+      ? snapshot.resultPayload
+      : snapshot.statusPayload;
     if (hasJudgeResult(judgePayload, profile.panel.length)) {
       const lifecycleConflict = reconcileIndexedLifecycleResult(
         snapshot.resultPayload,
         snapshot.statusPayload,
         profile.panel.length,
-        "judge",
+        'judge',
       );
       if (lifecycleConflict) return this.failActiveRun(lifecycleConflict);
       const output = extractJudgeOutput(judgePayload, {
@@ -1191,7 +1626,11 @@ export class FusionOrchestrator {
         ),
       );
       const observed = this.runStore.updateRun(updated.id, {
-        completionQuality: completionQuality(profile, observedPanels.outputs, observedPanels.failures),
+        completionQuality: completionQuality(
+          profile,
+          observedPanels.outputs,
+          observedPanels.failures,
+        ),
         judgeObservation,
       });
       const callerContract =
@@ -1229,7 +1668,7 @@ export class FusionOrchestrator {
     const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
-        "Fusion panel completed, but the active profile was not available.",
+        'Fusion panel completed, but the active profile was not available.',
       );
     }
 
@@ -1243,9 +1682,9 @@ export class FusionOrchestrator {
           : {}),
       eventPayload: payload,
     });
-    const interruption = this.completionInterruption(active);
+    const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
-    if (snapshot.resultArtifactPending) return { status: "ignored" };
+    if (snapshot.resultArtifactPending) return { status: 'ignored' };
 
     const partial = this.persistVerifiedPanelResults(
       active,
@@ -1257,7 +1696,7 @@ export class FusionOrchestrator {
       isTerminalSubagentState(extractSubagentState(snapshot.statusPayload));
     if (!panelIsTerminal) {
       await this.handlePanelDeadlines(active, snapshot.statusPayload);
-      const interruption = this.completionInterruption(active);
+      const interruption = await this.completionInterruption(active);
       if (interruption) return interruption;
     }
     if (!active.panelStopReason && !panelIsTerminal) {
@@ -1284,7 +1723,7 @@ export class FusionOrchestrator {
       !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
 
     const lifecyclePayload =
@@ -1294,12 +1733,11 @@ export class FusionOrchestrator {
       return this.failActiveRun(lifecycleError);
     }
 
-    const workflowStoppedIndices = extractWorkflowStoppedPanelIndices(
-      lifecyclePayload,
-    );
+    const workflowStoppedIndices =
+      extractWorkflowStoppedPanelIndices(lifecyclePayload);
     if (workflowStoppedIndices.some((index) => index >= profile.panel.length)) {
       return this.failActiveRun(
-        "Terminal subagents data referenced a panel slot outside the configured panel.",
+        'Terminal subagents data referenced a panel slot outside the configured panel.',
       );
     }
     const stoppedPanelIndices =
@@ -1309,7 +1747,7 @@ export class FusionOrchestrator {
       panel: profile.panel,
       limit: profile.panel.length,
       ...(stoppedPanelIndices ? { stoppedPanelIndices } : {}),
-      ...(snapshot.resultSource === "event"
+      ...(snapshot.resultSource === 'event'
         ? { requireStableSlotIdentity: true }
         : {}),
     });
@@ -1333,7 +1771,7 @@ export class FusionOrchestrator {
           : {}),
       },
     );
-    if (!observedPanels) return { status: "ignored" };
+    if (!observedPanels) return { status: 'ignored' };
     if (!observedPanels.ok) {
       return this.failActiveRun(
         `${observedPanels.error.message} (${observedPanels.error.path})`,
@@ -1343,8 +1781,8 @@ export class FusionOrchestrator {
       observedPanels.failures,
       isWorkflowDeadline(lifecyclePayload) ||
         isWorkflowDeadline(snapshot.statusPayload)
-        ? extractSubagentFailure(snapshot.statusPayload) ??
-            extractSubagentFailure(lifecyclePayload)
+        ? (extractSubagentFailure(snapshot.statusPayload) ??
+            extractSubagentFailure(lifecyclePayload))
         : undefined,
     );
     const stored = this.storePanelResults(
@@ -1355,7 +1793,7 @@ export class FusionOrchestrator {
     const updated =
       workflowStoppedIndices.length > 0 && !active.panelStopReason
         ? this.runStore.updateRun(stored.id, {
-            panelStopReason: "agreement",
+            panelStopReason: 'agreement',
             panelStoppedIndices: workflowStoppedIndices,
           })
         : stored;
@@ -1374,26 +1812,26 @@ export class FusionOrchestrator {
     partial: ExtractPanelResultsSuccess,
     panelSize: number,
   ): Promise<FusionCommandResult> {
-    if (!active.panelRunId) return { status: "ignored" };
+    if (!active.panelRunId) return { status: 'ignored' };
 
-    let method: "stop" | "interrupt" = "stop";
+    let method: 'stop' | 'interrupt' = 'stop';
     try {
       await this.rpc.stop({ id: active.panelRunId });
     } catch (stopError: unknown) {
       try {
         await this.rpc.interrupt({ id: active.panelRunId });
-        method = "interrupt";
+        method = 'interrupt';
       } catch (interruptError: unknown) {
         this.installWarning = `Could not stop panel run ${active.panelRunId} after agreement: ${errorMessage(interruptError)}`;
-        this.notify(this.context, this.installWarning, "warning");
-        return { status: "ignored" };
+        this.notify(this.context, this.installWarning, 'warning');
+        return { status: 'ignored' };
       }
       this.installWarning = `Panel stop fell back to interrupt for ${active.panelRunId}: ${errorMessage(stopError)}`;
     }
 
     this.runStore.refreshDurable();
     if (!sameStage(active, this.runStore.getActiveRun())) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
 
     const completedIndices = new Set([
@@ -1405,7 +1843,7 @@ export class FusionOrchestrator {
       (_, index) => index,
     ).filter((index) => !completedIndices.has(index));
     const updated = this.runStore.updateRun(active.id, {
-      panelStopReason: "agreement",
+      panelStopReason: 'agreement',
       panelStoppedIndices,
       panelOutputs: partial.outputs,
       panelFailures: partial.failures,
@@ -1414,14 +1852,14 @@ export class FusionOrchestrator {
       this.context,
       updated,
       undefined,
-      "stopping after panel agreement",
+      'stopping after panel agreement',
     );
     this.notify(
       this.context,
       `Panel agreement found; stopping remaining panelists (${method}).`,
-      "info",
+      'info',
     );
-    return { status: "started", run: updated };
+    return { status: 'started', run: updated };
   }
 
   private async finishPanelCompletion(
@@ -1439,18 +1877,22 @@ export class FusionOrchestrator {
       fallbackJudge: options.fallbackJudge,
     });
 
-    if (decision.kind === "fail") {
+    if (decision.kind === 'fail') {
       return this.failActiveRun(decision.error, decision.report);
     }
-    if (decision.kind === "complete") {
+    if (decision.kind === 'complete') {
       this.runStore.updateRun(run.id, {
-        completionQuality: completionQuality(profile, panelOutputs, panelFailures),
+        completionQuality: completionQuality(
+          profile,
+          panelOutputs,
+          panelFailures,
+        ),
       });
       return this.completeActiveRun(decision.report);
     }
 
     try {
-      const spawnResult = await this.spawnStage(run, "judge", decision.params);
+      const spawnResult = await this.spawnStage(run, 'judge', decision.params);
       const spawnError = extractSubagentFailure(spawnResult);
       if (spawnError) throw new FusionArgsError(spawnError);
       const judgeRunId = extractSubagentRunId(spawnResult);
@@ -1460,15 +1902,19 @@ export class FusionOrchestrator {
       const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
       this.runStore.refreshDurable();
       if (this.runStore.getActiveRun()?.id !== run.id) {
-        await this.stopOrphanedRun(judgeRunId, "judge");
-        return { status: "ignored" };
+        await this.stopOrphanedRun(judgeRunId, 'judge');
+        return { status: 'ignored' };
       }
       let nextRun: FusionRun;
       try {
         nextRun = this.runStore.updateRun(run.id, {
           ...(!run.executionLifetime ? { spawnIntent: null } : {}),
-          phase: "judge",
-          completionQuality: completionQuality(profile, panelOutputs, panelFailures),
+          phase: 'judge',
+          completionQuality: completionQuality(
+            profile,
+            panelOutputs,
+            panelFailures,
+          ),
           judgeRunId,
           ...(judgeAsyncDir ? { judgeAsyncDir } : {}),
           panelOutputs: [...panelOutputs],
@@ -1477,21 +1923,23 @@ export class FusionOrchestrator {
       } catch (persistenceError: unknown) {
         // As for the panel, never leave a remotely started synthesis run
         // alive when recording its public ID failed.
-        await this.stopOrphanedRun(judgeRunId, "judge");
+        await this.stopOrphanedRun(judgeRunId, 'judge');
         throw persistenceError;
       }
       publishFusionStatus(this.context, nextRun);
       this.notify(
         this.context,
         `${decision.notification}: ${judgeRunId}`,
-        "info",
+        'info',
       );
-      return { status: "started", run: nextRun };
+      return { status: 'started', run: nextRun };
     } catch (error: unknown) {
-      if (error instanceof FusionRunConflictError) return { status: "ignored" };
+      if (error instanceof FusionRunConflictError) return { status: 'ignored' };
       this.runStore.refreshDurable();
-      if (this.runStore.getActiveRun()?.id !== run.id) return { status: "ignored" };
-      if (run.executionLifetime) return this.retainUnresolvedRun(run.id, errorMessage(error));
+      if (this.runStore.getActiveRun()?.id !== run.id)
+        return { status: 'ignored' };
+      if (run.executionLifetime)
+        return this.retainUnresolvedRun(run.id, errorMessage(error));
       return this.failActiveRun(errorMessage(error));
     }
   }
@@ -1506,16 +1954,16 @@ export class FusionOrchestrator {
       ...(active.judgeAsyncDir ? { asyncDir: active.judgeAsyncDir } : {}),
       eventPayload: payload,
     });
-    const interruption = this.completionInterruption(active);
+    const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
-    if (snapshot.resultArtifactPending) return { status: "ignored" };
+    if (snapshot.resultArtifactPending) return { status: 'ignored' };
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
       !snapshot.resultIsTerminal &&
       !isTerminalSubagentState(extractSubagentState(terminalPayload))
     ) {
-      return { status: "ignored" };
+      return { status: 'ignored' };
     }
 
     const lifecyclePayload =
@@ -1529,7 +1977,7 @@ export class FusionOrchestrator {
       snapshot.resultPayload,
       snapshot.statusPayload,
       0,
-      "judge",
+      'judge',
     );
     if (lifecycleConflict) return this.failActiveRun(lifecycleConflict);
 
@@ -1542,7 +1990,7 @@ export class FusionOrchestrator {
         (error, index, all): error is string =>
           Boolean(error) && all.indexOf(error) === index,
       );
-      return this.failActiveRun(errors.join(" "));
+      return this.failActiveRun(errors.join(' '));
     }
 
     // The panel and chain handlers already treat a missing profile as fatal.
@@ -1551,7 +1999,7 @@ export class FusionOrchestrator {
     const profile = this.profileForRun(active);
     if (!profile) {
       return this.failActiveRun(
-        "Fusion judge completed, but the active profile was not available.",
+        'Fusion judge completed, but the active profile was not available.',
       );
     }
 
@@ -1615,7 +2063,11 @@ export class FusionOrchestrator {
         this.context,
         input.run,
         progress,
-        deriveFusionStatusPhase(input.run, statusPayload, this.profileForRun(input.run)),
+        deriveFusionStatusPhase(
+          input.run,
+          statusPayload,
+          this.profileForRun(input.run),
+        ),
       );
     }
 
@@ -1638,15 +2090,12 @@ export class FusionOrchestrator {
       return {
         statusPayload: artifactResult,
         resultPayload: artifactResult,
-        resultSource: "artifact",
+        resultSource: 'artifact',
         resultIsTerminal: true,
       };
     }
 
-    if (
-      statusIsTerminal &&
-      isWorkflowResultArtifactPending(statusPayload)
-    ) {
+    if (statusIsTerminal && isWorkflowResultArtifactPending(statusPayload)) {
       return {
         statusPayload,
         resultIsTerminal: false,
@@ -1658,7 +2107,7 @@ export class FusionOrchestrator {
       return {
         statusPayload,
         resultPayload: input.eventPayload,
-        resultSource: "event",
+        resultSource: 'event',
         resultIsTerminal: eventIsTerminal || statusIsTerminal,
       };
     }
@@ -1667,7 +2116,7 @@ export class FusionOrchestrator {
       return {
         statusPayload,
         resultPayload: statusPayload,
-        resultSource: "status",
+        resultSource: 'status',
         resultIsTerminal: statusIsTerminal,
       };
     }
@@ -1752,41 +2201,59 @@ export class FusionOrchestrator {
     });
   }
 
-  private completionInterruption(run: FusionRun): FusionCommandResult | Promise<FusionCommandResult> | undefined {
+  private completionInterruption(
+    run: FusionRun,
+  ): FusionCommandResult | Promise<FusionCommandResult> | undefined {
     this.runStore.refreshDurable();
     const active = this.runStore.getActiveRun();
     if (active?.id !== run.id) {
       const saved = this.runStore.getRunById(run.id);
-      return saved?.phase === "cancelled" && saved.report
-        ? { status: "cancelled", run: saved, report: saved.report }
-        : { status: "ignored" };
+      return saved?.phase === 'cancelled' && saved.report
+        ? { status: 'cancelled', run: saved, report: saved.report }
+        : { status: 'ignored' };
     }
-    if (run.executionLifetime && (active.cancellationRequested || (active.operationId && this.operationCancelled(active.operationId)))) {
-      const cancelling = this.runStore.updateRun(active.id, { cancellationRequested: true });
+    if (
+      run.executionLifetime &&
+      (active.cancellationRequested ||
+        (active.operationId && this.operationCancelled(active.operationId)))
+    ) {
+      const cancelling = this.runStore.updateRun(active.id, {
+        cancellationRequested: true,
+      });
       return this.reconcileContractCancellation(cancelling);
     }
-    if (!sameStage(run, active)) return { status: "ignored" };
+    if (!sameStage(run, active)) return { status: 'ignored' };
     return undefined;
   }
 
   private assertCurrentStage(run: FusionRun): void {
     this.runStore.refreshDurable();
-    if (!sameStage(run, this.runStore.getActiveRun())) throw new FusionRunConflictError(`Fusion run ${run.id} advanced while awaiting native work.`);
+    if (!sameStage(run, this.runStore.getActiveRun()))
+      throw new FusionRunConflictError(
+        `Fusion run ${run.id} advanced while awaiting native work.`,
+      );
   }
 
   private reconcileConflict(runId: string): FusionCommandResult {
     this.runStore.refreshDurable();
     const run = this.runStore.getRunById(runId);
-    if (!run) return { status: "ignored" };
-    if (run.phase === "done" || run.phase === "cancelled" || run.phase === "failed") return terminalResult(run, run.report ?? "Fusion run finished.");
+    if (!run) return { status: 'ignored' };
+    if (
+      run.phase === 'done' ||
+      run.phase === 'cancelled' ||
+      run.phase === 'failed'
+    )
+      return terminalResult(run, run.report ?? 'Fusion run finished.');
     this.ensureReconcileLoop();
-    return { status: "started", run };
+    return { status: 'started', run };
   }
 
-  private async completeActiveRun(report: string): Promise<FusionCommandResult> {
+  private async completeActiveRun(
+    report: string,
+  ): Promise<FusionCommandResult> {
     const active = this.runStore.getActiveRun();
-    if (!active) return { status: "failed", error: "No active fusion run." };
-    const interruption = this.completionInterruption(active);
+    if (!active) return { status: 'failed', error: 'No active fusion run.' };
+    const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
     const done = this.runStore.completeRun(active.id, {
       ...(active.chainRunId ? { chainRunId: active.chainRunId } : {}),
@@ -1794,7 +2261,9 @@ export class FusionOrchestrator {
       ...(active.judgeRunId ? { judgeRunId: active.judgeRunId } : {}),
       report,
     });
-    this.postMessage("fusion-report", done.report ?? report, { runId: done.id });
+    this.postMessage('fusion-report', done.report ?? report, {
+      runId: done.id,
+    });
     this.clearActiveRuntime();
     this.clearUi();
     return terminalResult(done, report);
@@ -1805,7 +2274,7 @@ export class FusionOrchestrator {
     report = this.defaultFailureReport(error),
   ): FusionCommandResult {
     const active = this.runStore.getActiveRun();
-    if (!active) return { status: "failed", error };
+    if (!active) return { status: 'failed', error };
     let failed: FusionRun;
     try {
       failed = this.runStore.failRun(active.id, {
@@ -1823,12 +2292,14 @@ export class FusionOrchestrator {
       });
     } catch (storeError: unknown) {
       if (!(storeError instanceof FusionRunStoreError)) throw storeError;
-      return { status: "failed", error: errorMessage(storeError), report };
+      return { status: 'failed', error: errorMessage(storeError), report };
     }
-    this.postMessage("fusion-report", failed.report ?? report, { runId: failed.id });
+    this.postMessage('fusion-report', failed.report ?? report, {
+      runId: failed.id,
+    });
     this.clearActiveRuntime();
     this.clearUi();
-    this.notify(this.context, `Fusion run ${failed.id} failed.`, "error");
+    this.notify(this.context, `Fusion run ${failed.id} failed.`, 'error');
     return terminalResult(failed, report);
   }
 
@@ -1841,11 +2312,7 @@ export class FusionOrchestrator {
       error,
       panelOutputs: storedPanelOutputs(active),
       failures: storedPanelFailures(active),
-      ...withJudgeModel(
-        profile
-          ? configuredJudgeModel(profile)
-          : undefined,
-      ),
+      ...withJudgeModel(profile ? configuredJudgeModel(profile) : undefined),
       ...(profile
         ? {
             synthesis: resolveSynthesisMode(profile),
@@ -1879,7 +2346,11 @@ export class FusionOrchestrator {
         await this.startRun(preflight.args, ctx);
         if (this.runStore.getActiveRun()) break;
       }
-      if (this.preflightRecoveryEnabled && (pending || this.runStore.getActiveRun())) this.ensureReconcileLoop();
+      if (
+        this.preflightRecoveryEnabled &&
+        (pending || this.runStore.getActiveRun())
+      )
+        this.ensureReconcileLoop();
       else this.stopReconcileLoop();
     } finally {
       this.recoveringPreflight = false;
@@ -1892,7 +2363,7 @@ export class FusionOrchestrator {
       void this.reconcileActiveRun().catch((error: unknown) => {
         const message = `Could not reconcile fusion run: ${errorMessage(error)}`;
         this.installWarning = message;
-        this.notify(this.context, message, "warning");
+        this.notify(this.context, message, 'warning');
       });
     }, RECONCILE_INTERVAL_MS);
     this.reconcileTimer.unref?.();
@@ -1911,7 +2382,7 @@ export class FusionOrchestrator {
   }
 
   private postMessage(
-    customType: "fusion-report" | "fusion-status",
+    customType: 'fusion-report' | 'fusion-status',
     content: string,
     details?: unknown,
   ): void {
@@ -1965,7 +2436,9 @@ function snapshotProfile(profile: FusionProfile): FusionProfileSnapshot {
           },
         }
       : {}),
-    ...(profile.synthesis !== undefined ? { synthesis: profile.synthesis } : {}),
+    ...(profile.synthesis !== undefined
+      ? { synthesis: profile.synthesis }
+      : {}),
   };
 }
 
@@ -1991,7 +2464,9 @@ function profileFromSnapshot(snapshot: FusionProfileSnapshot): FusionProfile {
           },
         }
       : {}),
-    ...(snapshot.synthesis !== undefined ? { synthesis: snapshot.synthesis } : {}),
+    ...(snapshot.synthesis !== undefined
+      ? { synthesis: snapshot.synthesis }
+      : {}),
   };
 }
 
@@ -1999,37 +2474,43 @@ function completionQuality(
   profile: FusionProfile,
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
-): "complete" | "partial" {
+): 'complete' | 'partial' {
   return outputs.length === profile.panel.length ||
     (profile.stopWhenPanelAgrees === true &&
       failures.length > 0 &&
-      failures.every((failure) => failure.reason === "stopped-after-agreement"))
-    ? "complete"
-    : "partial";
+      failures.every((failure) => failure.reason === 'stopped-after-agreement'))
+    ? 'complete'
+    : 'partial';
 }
 
 function validateStartArgs(args: ParsedFusionArgs): string | undefined {
-  if (args.reviewContext !== undefined && !isReviewContext(args.reviewContext)) return "Invalid Fusion review context.";
-  if (args.executionLifetime !== undefined && !isExecutionLifetime(args.executionLifetime)) return "Invalid executionLifetime.";
-  if (args.executionLifetime && args.timeoutOverrides) return "executionLifetime cannot be combined with stage timeout overrides.";
-  if (typeof args.prompt !== "string" || !args.prompt.trim()) {
-    return "Fusion prompt must not be blank.";
+  if (args.reviewContext !== undefined && !isReviewContext(args.reviewContext))
+    return 'Invalid Fusion review context.';
+  if (
+    args.executionLifetime !== undefined &&
+    !isExecutionLifetime(args.executionLifetime)
+  )
+    return 'Invalid executionLifetime.';
+  if (args.executionLifetime && args.timeoutOverrides)
+    return 'executionLifetime cannot be combined with stage timeout overrides.';
+  if (typeof args.prompt !== 'string' || !args.prompt.trim()) {
+    return 'Fusion prompt must not be blank.';
   }
   if (args.profile !== undefined && !args.profile.trim()) {
-    return "Fusion profile must not be blank.";
+    return 'Fusion profile must not be blank.';
   }
   if (
     args.panel !== undefined &&
     (args.panel.length === 0 || args.panel.some((entry) => !entry.trim()))
   ) {
-    return "Fusion panel must contain at least one non-blank entry.";
+    return 'Fusion panel must contain at least one non-blank entry.';
   }
   return undefined;
 }
 
 function hasUnresolvedSpawnIntent(run: FusionRun): boolean {
   if (!run.spawnIntent) return false;
-  return run.spawnIntent.stage === "panel"
+  return run.spawnIntent.stage === 'panel'
     ? !run.panelRunId && !run.chainRunId
     : !run.judgeRunId;
 }
@@ -2041,14 +2522,14 @@ function hasUnresolvedSpawnIntent(run: FusionRun): boolean {
  * active forever.
  */
 function validateRestoredRunLifecycle(run: FusionRun): string | undefined {
-  if (run.phase === "judge" && !run.judgeRunId) {
-    return "Fusion recovery stopped: judge phase has no persisted judge run ID.";
+  if (run.phase === 'judge' && !run.judgeRunId) {
+    return 'Fusion recovery stopped: judge phase has no persisted judge run ID.';
   }
-  if (run.phase === "chain" && !run.chainRunId) {
-    return "Fusion recovery stopped: chain phase has no persisted chain run ID.";
+  if (run.phase === 'chain' && !run.chainRunId) {
+    return 'Fusion recovery stopped: chain phase has no persisted chain run ID.';
   }
-  if (run.phase === "panel" && !run.panelRunId && !run.chainRunId) {
-    return "Fusion recovery stopped: panel phase has no persisted panel run ID.";
+  if (run.phase === 'panel' && !run.panelRunId && !run.chainRunId) {
+    return 'Fusion recovery stopped: panel phase has no persisted panel run ID.';
   }
   return undefined;
 }
@@ -2103,7 +2584,7 @@ export function extractJudgeOutput(
         ok: false,
         error:
           firstNonBlankString(result.error, output) ??
-          "Fusion judge failed without output.",
+          'Fusion judge failed without output.',
       };
     }
     if (output) return { ok: true, output };
@@ -2115,7 +2596,7 @@ export function extractJudgeOutput(
 
   const output = firstNonBlankStringFromPayload(payload);
   if (output) return { ok: true, output };
-  return { ok: false, error: "Fusion judge completed without output." };
+  return { ok: false, error: 'Fusion judge completed without output.' };
 }
 
 interface FusionStatusPanelLine {
@@ -2143,14 +2624,14 @@ interface FusionStatusDetails {
 
 function formatFusionStatusReport(input: {
   active?: FusionRun;
-  last?: ReturnType<FusionRunStore["getLastRunSummary"]>;
+  last?: ReturnType<FusionRunStore['getLastRunSummary']>;
   progress?: FusionProgressCounts;
   details?: FusionStatusDetails;
   warnings: readonly string[];
 }): string {
-  const lines = ["Fusion status"];
+  const lines = ['Fusion status'];
   if (input.active) {
-    lines.push("State: active");
+    lines.push('State: active');
     lines.push(`Run: ${input.active.id}`);
     lines.push(
       `Prompt: ${firstLine(input.details?.prompt ?? input.active.prompt)}`,
@@ -2159,7 +2640,9 @@ function formatFusionStatusReport(input: {
     lines.push(`Phase: ${input.details?.phaseLabel ?? input.active.phase}`);
     appendEffectiveTimeouts(lines, input.active);
     for (const deadline of input.active.panelDeadlines ?? []) {
-      lines.push(`Panel-${deadline.index + 1} deadline: ${deadline.status}${deadline.deliveryError ? ` (${deadline.deliveryError})` : ""}`);
+      lines.push(
+        `Panel-${deadline.index + 1} deadline: ${deadline.status}${deadline.deliveryError ? ` (${deadline.deliveryError})` : ''}`,
+      );
     }
     if (input.active.chainRunId)
       lines.push(`Chain run: ${input.active.chainRunId}`);
@@ -2169,15 +2652,15 @@ function formatFusionStatusReport(input: {
       const synthesisLabel =
         input.details?.fallbackJudge?.label ??
         input.details?.judge?.label ??
-        (input.active.chainRunId ? "Fallback judge" : "Judge");
+        (input.active.chainRunId ? 'Fallback judge' : 'Judge');
       lines.push(`${synthesisLabel} run: ${input.active.judgeRunId}`);
     }
     lines.push(
-      `Progress: ${input.progress ? formatProgressCounts(input.progress) : "unknown"}`,
+      `Progress: ${input.progress ? formatProgressCounts(input.progress) : 'unknown'}`,
     );
     appendStatusDetails(lines, input.details);
   } else if (input.last) {
-    lines.push("State: idle");
+    lines.push('State: idle');
     lines.push(`Last run: ${input.last.id}`);
     lines.push(`Prompt: ${firstLine(input.last.prompt)}`);
     lines.push(`Profile: ${input.last.profileName}`);
@@ -2189,24 +2672,24 @@ function formatFusionStatusReport(input: {
       lines.push(`Panel run: ${input.last.panelRunId}`);
     if (input.last.judgeRunId) {
       lines.push(
-        `${input.last.chainRunId ? "Fallback judge run" : "Judge run"}: ${input.last.judgeRunId}`,
+        `${input.last.chainRunId ? 'Fallback judge run' : 'Judge run'}: ${input.last.judgeRunId}`,
       );
     }
   } else {
-    lines.push("State: idle");
-    lines.push("Last run: none");
+    lines.push('State: idle');
+    lines.push('Last run: none');
   }
 
-  if (input.warnings.length === 0) lines.push("Warnings: none");
+  if (input.warnings.length === 0) lines.push('Warnings: none');
   else {
-    lines.push("Warnings:", ...input.warnings.map((warning) => `- ${warning}`));
+    lines.push('Warnings:', ...input.warnings.map((warning) => `- ${warning}`));
   }
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 function appendEffectiveTimeouts(
   lines: string[],
-  run: Pick<FusionRun, "effectiveTimeouts">,
+  run: Pick<FusionRun, 'effectiveTimeouts'>,
 ): void {
   const timeouts = run.effectiveTimeouts;
   if (!timeouts) return;
@@ -2214,10 +2697,14 @@ function appendEffectiveTimeouts(
     `Deadlines: panelist ${timeouts.panelistTimeoutMs}ms, panel ${timeouts.panelTimeoutMs}ms (+${timeouts.panelGraceMs}ms grace), judge ${timeouts.judgeTimeoutMs}ms`,
   );
   if (timeouts.panelistSoftTimeoutMs !== undefined) {
-    lines.push(`Soft deadline: ${timeouts.panelistSoftTimeoutMs}ms per child; decision wait ${PANEL_DECISION_WAIT_MS}ms; hard deadlines are unchanged.`);
+    lines.push(
+      `Soft deadline: ${timeouts.panelistSoftTimeoutMs}ms per child; decision wait ${PANEL_DECISION_WAIT_MS}ms; hard deadlines are unchanged.`,
+    );
   }
   if (timeouts.usesLegacyTimeout) {
-    lines.push("Warning: legacy timeoutMs supplied one or more effective deadlines.");
+    lines.push(
+      'Warning: legacy timeoutMs supplied one or more effective deadlines.',
+    );
   }
 }
 
@@ -2227,7 +2714,7 @@ function appendStatusDetails(
 ): void {
   if (!details) return;
   if (details.panelists && details.panelists.length > 0) {
-    lines.push("", "Panelists");
+    lines.push('', 'Panelists');
     for (const panelist of details.panelists) {
       lines.push(`- ${panelist.label}: ${panelist.status}`);
       if (panelist.role) lines.push(`  Role: ${panelist.role}`);
@@ -2236,14 +2723,14 @@ function appendStatusDetails(
     }
   }
   if (details.judge) {
-    lines.push("", details.judge.label);
+    lines.push('', details.judge.label);
     lines.push(`- Status: ${details.judge.status}`);
     if (details.judge.model) lines.push(`  Model: ${details.judge.model}`);
     if (details.judge.activity)
       lines.push(`  Activity: ${details.judge.activity}`);
   }
   if (details.fallbackJudge) {
-    lines.push("", details.fallbackJudge.label);
+    lines.push('', details.fallbackJudge.label);
     lines.push(`- Status: ${details.fallbackJudge.status}`);
     if (details.fallbackJudge.model) {
       lines.push(`  Model: ${details.fallbackJudge.model}`);
@@ -2256,14 +2743,14 @@ function appendStatusDetails(
 
 function activeRunId(run: FusionRun | undefined): string | undefined {
   if (!run) return undefined;
-  if (run.phase === "judge") return run.judgeRunId;
+  if (run.phase === 'judge') return run.judgeRunId;
   return run.chainRunId ?? run.panelRunId;
 }
 
 function activeAsyncDir(run: FusionRun | undefined): string | undefined {
   if (!run) return undefined;
-  if (run.phase === "judge") return run.judgeAsyncDir;
-  return run.phase === "panel"
+  if (run.phase === 'judge') return run.judgeAsyncDir;
+  return run.phase === 'panel'
     ? (run.panelAsyncDir ?? run.chainAsyncDir)
     : run.chainAsyncDir;
 }
@@ -2281,7 +2768,7 @@ function buildFusionStatusDetails(
 
   const judgeModel = configuredJudgeModel(profile);
 
-  if (run.phase === "judge") {
+  if (run.phase === 'judge') {
     details.panelists = buildCompletedPanelStatusLines(
       profile.panel,
       storedPanelOutputs(run),
@@ -2308,7 +2795,7 @@ function buildFusionStatusDetails(
       ...(model ? { model } : {}),
       status: describePanelStatus(step),
       ...([activity, metrics].filter(Boolean).length > 0
-        ? { activity: [activity, metrics].filter(Boolean).join(" · ") }
+        ? { activity: [activity, metrics].filter(Boolean).join(' · ') }
         : {}),
     };
   });
@@ -2321,56 +2808,59 @@ function buildFusionStatusDetails(
     ...(judgeModel ? { model: judgeModel } : {}),
     status: describeChainJudgeStatus(steps[profile.panel.length], panelists),
     ...([judgeActivity, judgeMetrics].filter(Boolean).length > 0
-      ? { activity: [judgeActivity, judgeMetrics].filter(Boolean).join(" · ") }
+      ? { activity: [judgeActivity, judgeMetrics].filter(Boolean).join(' · ') }
       : {}),
   };
   return details;
 }
 
 function deriveFusionStatusPhase(
-  run: Pick<FusionRun, "phase" | "chainRunId">,
+  run: Pick<FusionRun, 'phase' | 'chainRunId'>,
   payload: unknown,
-  profile?: Pick<FusionProfile, "panel" | "synthesis">,
+  profile?: Pick<FusionProfile, 'panel' | 'synthesis'>,
 ): string {
-  if (run.phase === "judge") {
+  if (run.phase === 'judge') {
     return synthesisStatusLabel(profile, Boolean(run.chainRunId)).toLowerCase();
   }
-  if (run.phase !== "chain") return run.phase;
+  if (run.phase !== 'chain') return run.phase;
 
   const steps = findStepsArray(payload);
-  if (steps.length === 0) return "chain";
+  if (steps.length === 0) return 'chain';
   const judgeStatus = normalizeStatusLabel(steps.at(-1));
-  if (judgeStatus === "running" || judgeStatus === "completed") {
+  if (judgeStatus === 'running' || judgeStatus === 'completed') {
     return synthesisStatusLabel(profile).toLowerCase();
   }
   const panelSteps = steps.slice(0, -1);
-  if (panelSteps.some((step) => normalizeStatusLabel(step) === "running")) {
-    return "panel";
+  if (panelSteps.some((step) => normalizeStatusLabel(step) === 'running')) {
+    return 'panel';
   }
-  if (judgeStatus === "pending") {
+  if (judgeStatus === 'pending') {
     const allPanelsFinished = panelSteps.every((step) => {
       const status = normalizeStatusLabel(step);
-      return status === "completed" || status === "failed";
+      return status === 'completed' || status === 'failed';
     });
     return allPanelsFinished
       ? synthesisStatusLabel(profile).toLowerCase()
-      : "panel";
+      : 'panel';
   }
-  return "panel";
+  return 'panel';
 }
 
 function synthesisStatusLabel(
-  profile: Pick<FusionProfile, "panel" | "synthesis"> | undefined,
+  profile: Pick<FusionProfile, 'panel' | 'synthesis'> | undefined,
   fallback = false,
-): "Judge" | "Fallback judge" | "Composer" | "Fallback composer" {
-  const base = profile && resolveSynthesisMode(profile) === "merge"
-    ? "Composer"
-    : "Judge";
-  return fallback ? `Fallback ${base.toLowerCase()}` as "Fallback judge" | "Fallback composer" : base;
+): 'Judge' | 'Fallback judge' | 'Composer' | 'Fallback composer' {
+  const base =
+    profile && resolveSynthesisMode(profile) === 'merge' ? 'Composer' : 'Judge';
+  return fallback
+    ? (`Fallback ${base.toLowerCase()}` as
+        | 'Fallback judge'
+        | 'Fallback composer')
+    : base;
 }
 
 function buildCompletedPanelStatusLines(
-  panel: FusionProfile["panel"],
+  panel: FusionProfile['panel'],
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
 ): FusionStatusPanelLine[] {
@@ -2384,7 +2874,7 @@ function buildCompletedPanelStatusLines(
         label: memberLabel(member),
         ...(member.role ? { role: member.role } : {}),
         ...(model ? { model } : {}),
-        status: "completed",
+        status: 'completed',
       };
     }
     const failure = failures.find(
@@ -2394,7 +2884,7 @@ function buildCompletedPanelStatusLines(
       label: memberLabel(member),
       ...(member.role ? { role: member.role } : {}),
       ...(model ? { model } : {}),
-      status: failure ? "failed" : "unknown",
+      status: failure ? 'failed' : 'unknown',
       ...(failure ? { activity: firstLine(failure.summary) } : {}),
     };
   });
@@ -2408,14 +2898,14 @@ function describeChainJudgeStatus(
   step: unknown,
   panelists: readonly FusionStatusPanelLine[],
 ): string {
-  if (step === undefined) return "waiting for panel results";
+  if (step === undefined) return 'waiting for panel results';
   const normalized = normalizeStatusLabel(step);
-  if (normalized === "pending") {
+  if (normalized === 'pending') {
     const waitingOnPanel = panelists.some(
       (panelist) =>
-        panelist.status !== "completed" && panelist.status !== "failed",
+        panelist.status !== 'completed' && panelist.status !== 'failed',
     );
-    return waitingOnPanel ? "waiting for panel results" : "pending";
+    return waitingOnPanel ? 'waiting for panel results' : 'pending';
   }
   return normalized;
 }
@@ -2423,38 +2913,38 @@ function describeChainJudgeStatus(
 function describeStandaloneRunStatus(payload: unknown): string {
   const state = extractSubagentState(payload);
   if (state) {
-    if (state === "complete" || state === "completed" || state === "done") {
-      return "completed";
+    if (state === 'complete' || state === 'completed' || state === 'done') {
+      return 'completed';
     }
-    if (state === "running" || state === "active") return "running";
-    if (state === "pending" || state === "queued") return "pending";
-    if (state === "failed" || state === "paused" || state === "detached") {
-      return "failed";
+    if (state === 'running' || state === 'active') return 'running';
+    if (state === 'pending' || state === 'queued') return 'pending';
+    if (state === 'failed' || state === 'paused' || state === 'detached') {
+      return 'failed';
     }
     return state;
   }
-  if (hasResultsArray(payload)) return "completed";
-  return "running";
+  if (hasResultsArray(payload)) return 'completed';
+  return 'running';
 }
 
 function normalizeStatusLabel(step: unknown): string {
-  if (!isRecord(step)) return "pending";
-  if (step.success === true) return "completed";
-  if (step.success === false) return "failed";
-  if (step.timedOut === true || step.interrupted === true) return "failed";
-  if (typeof step.exitCode === "number") {
-    return step.exitCode === 0 ? "completed" : "failed";
+  if (!isRecord(step)) return 'pending';
+  if (step.success === true) return 'completed';
+  if (step.success === false) return 'failed';
+  if (step.timedOut === true || step.interrupted === true) return 'failed';
+  if (typeof step.exitCode === 'number') {
+    return step.exitCode === 0 ? 'completed' : 'failed';
   }
   const status = firstString(step.status, step.state);
-  if (status === "complete" || status === "completed" || status === "done") {
-    return "completed";
+  if (status === 'complete' || status === 'completed' || status === 'done') {
+    return 'completed';
   }
-  if (status === "running" || status === "active") return "running";
-  if (status === "pending" || status === "queued") return "pending";
-  if (status === "failed" || status === "paused" || status === "detached") {
-    return "failed";
+  if (status === 'running' || status === 'active') return 'running';
+  if (status === 'pending' || status === 'queued') return 'pending';
+  if (status === 'failed' || status === 'paused' || status === 'detached') {
+    return 'failed';
   }
-  return "pending";
+  return 'pending';
 }
 
 function findStepsArray(payload: unknown): readonly unknown[] {
@@ -2474,12 +2964,12 @@ function describeStepActivity(step: unknown): string | undefined {
   const tools = unknownArray(step.recentTools);
   const lastTool = tools?.at(-1);
   if (isRecord(lastTool)) {
-    const tool = firstString(lastTool.tool) ?? "tool";
+    const tool = firstString(lastTool.tool) ?? 'tool';
     const args = firstString(lastTool.args);
     return args ? `${tool} ${summarizeActivityArg(args)}` : tool;
   }
   const recentOutput = unknownArray(step.recentOutput)
-    ?.map((item) => (typeof item === "string" ? item.trim() : ""))
+    ?.map((item) => (typeof item === 'string' ? item.trim() : ''))
     .find(Boolean);
   return recentOutput || undefined;
 }
@@ -2494,17 +2984,17 @@ function describeStepMetrics(step: unknown): string | undefined {
       ? `$${observation.usage.costUsd.toFixed(4)}`
       : undefined,
   ].filter((value): value is string => Boolean(value));
-  return metrics.length > 0 ? metrics.join(", ") : undefined;
+  return metrics.length > 0 ? metrics.join(', ') : undefined;
 }
 
 function summarizeActivityArg(value: string): string {
-  const parts = value.split("/").filter(Boolean);
-  if (parts.length >= 3) return parts.slice(-3).join("/");
+  const parts = value.split('/').filter(Boolean);
+  if (parts.length >= 3) return parts.slice(-3).join('/');
   return value;
 }
 
 function configuredPanelModel(
-  member: FusionProfile["panel"][number],
+  member: FusionProfile['panel'][number],
 ): string | undefined {
   return appendThinkingSuffix(member.model, member.thinking);
 }
@@ -2560,7 +3050,7 @@ function resultFailed(result: Record<string, unknown>): boolean {
   if (firstNonBlankString(result.error)) return true;
   const status = firstString(result.status, result.state);
   if (!status) return false;
-  return status === "failed" || status === "paused" || status === "detached";
+  return status === 'failed' || status === 'paused' || status === 'detached';
 }
 
 function extractSubagentState(payload: unknown): string | undefined {
@@ -2591,12 +3081,12 @@ function extractStateFromText(text: string): string | undefined {
 
 function isTerminalSubagentState(state: string | undefined): boolean {
   return (
-    state === "complete" ||
-    state === "completed" ||
-    state === "done" ||
-    state === "failed" ||
-    state === "paused" ||
-    state === "detached"
+    state === 'complete' ||
+    state === 'completed' ||
+    state === 'done' ||
+    state === 'failed' ||
+    state === 'paused' ||
+    state === 'detached'
   );
 }
 
@@ -2605,7 +3095,7 @@ function isWorkflowResultArtifactPending(payload: unknown): boolean {
   const details = isRecord(payload.details) ? payload.details : undefined;
   const mode = firstString(payload.mode, details?.mode);
   const endedAtValue = payload.endedAt ?? details?.endedAt;
-  if (mode === "workflow" && typeof endedAtValue === "number") {
+  if (mode === 'workflow' && typeof endedAtValue === 'number') {
     return Date.now() - endedAtValue < WORKFLOW_RESULT_ARTIFACT_GRACE_MS;
   }
   return isRecord(payload.data)
@@ -2624,9 +3114,9 @@ function extractWorkflowStoppedPanelIndices(payload: unknown): number[] {
     : undefined;
   const indices = new Set<number>();
   for (const emit of emits ?? []) {
-    if (!isRecord(emit) || emit.type !== "pi-fusion-panel-stop") continue;
+    if (!isRecord(emit) || emit.type !== 'pi-fusion-panel-stop') continue;
     for (const index of unknownArray(emit.indices) ?? []) {
-      if (typeof index === "number" && Number.isInteger(index) && index >= 0) {
+      if (typeof index === 'number' && Number.isInteger(index) && index >= 0) {
         indices.add(index);
       }
     }
@@ -2636,7 +3126,8 @@ function extractWorkflowStoppedPanelIndices(payload: unknown): number[] {
     const nested = extractWorkflowStoppedPanelIndices(payload.details);
     if (nested.length > 0) return nested;
   }
-  if (isRecord(payload.data)) return extractWorkflowStoppedPanelIndices(payload.data);
+  if (isRecord(payload.data))
+    return extractWorkflowStoppedPanelIndices(payload.data);
   return [];
 }
 
@@ -2650,7 +3141,7 @@ function withWorkflowDeadlineFailures(
     summary: failure.summary.includes(deadlineError)
       ? failure.summary
       : `${deadlineError} ${failure.summary}`,
-    reason: failure.reason ?? "timeout",
+    reason: failure.reason ?? 'timeout',
   }));
 }
 
@@ -2658,10 +3149,16 @@ function isWorkflowDeadline(payload: unknown): boolean {
   if (!isRecord(payload)) return false;
   if (payload.timedOut === true) return true;
   const error = firstNonBlankString(payload.error, payload.errorMessage);
-  if (error && /(?:workflow.*(?:timed out|timeout)|(?:timed out|timeout).*workflow)/i.test(error)) {
+  if (
+    error &&
+    /(?:workflow.*(?:timed out|timeout)|(?:timed out|timeout).*workflow)/i.test(
+      error,
+    )
+  ) {
     return true;
   }
-  if (isRecord(payload.details) && isWorkflowDeadline(payload.details)) return true;
+  if (isRecord(payload.details) && isWorkflowDeadline(payload.details))
+    return true;
   return isRecord(payload.data) ? isWorkflowDeadline(payload.data) : false;
 }
 
@@ -2743,7 +3240,7 @@ function shouldStopWhenPanelAgrees(
   profile: FusionProfile,
   outputs: readonly PanelOutput[],
   failures: readonly FailedPanelSummary[],
-  persistedPolicy?: FusionRun["minimumSuccessfulPanelists"],
+  persistedPolicy?: FusionRun['minimumSuccessfulPanelists'],
 ): boolean {
   const required = resolveMinimumSuccessfulPanelists(
     persistedPolicy ?? profile.minimumSuccessfulPanelists,
@@ -2783,12 +3280,12 @@ function promptPreview(prompt: string): string {
 }
 
 function firstLine(value: string): string {
-  return value.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return value.split(/\r?\n/, 1)[0]?.trim() ?? '';
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string") return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -2797,24 +3294,38 @@ function firstNonBlankString(
   ...values: readonly unknown[]
 ): string | undefined {
   for (const value of values) {
-    if (typeof value !== "string") continue;
+    if (typeof value !== 'string') continue;
     const trimmed = value.trim();
     if (trimmed) return trimmed;
   }
   return undefined;
 }
 
-function terminalResult(run: FusionRun, fallbackReport: string): FusionCommandResult {
+function terminalResult(
+  run: FusionRun,
+  fallbackReport: string,
+): FusionCommandResult {
   const report = run.report ?? fallbackReport;
-  if (run.phase === "done" || run.phase === "cancelled") return { status: run.phase, run, report };
-  return { status: "failed", error: run.error ?? "Fusion run failed.", report };
+  if (run.phase === 'done' || run.phase === 'cancelled')
+    return { status: run.phase, run, report };
+  return { status: 'failed', error: run.error ?? 'Fusion run failed.', report };
 }
 
-function sameStage(expected: FusionRun, current: FusionRun | undefined): boolean {
-  return current !== undefined && expected.id === current.id && expected.phase === current.phase &&
-    expected.panelRunId === current.panelRunId && expected.judgeRunId === current.judgeRunId && expected.chainRunId === current.chainRunId &&
-    expected.spawnIntent?.stage === current.spawnIntent?.stage && expected.spawnIntent?.requestId === current.spawnIntent?.requestId &&
-    expected.spawnIntent?.requestDigest === current.spawnIntent?.requestDigest;
+function sameStage(
+  expected: FusionRun,
+  current: FusionRun | undefined,
+): boolean {
+  return (
+    current !== undefined &&
+    expected.id === current.id &&
+    expected.phase === current.phase &&
+    expected.panelRunId === current.panelRunId &&
+    expected.judgeRunId === current.judgeRunId &&
+    expected.chainRunId === current.chainRunId &&
+    expected.spawnIntent?.stage === current.spawnIntent?.stage &&
+    expected.spawnIntent?.requestId === current.spawnIntent?.requestId &&
+    expected.spawnIntent?.requestDigest === current.spawnIntent?.requestDigest
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -2826,5 +3337,5 @@ function unknownArray(value: unknown): readonly unknown[] | undefined {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,36 +1,36 @@
 export const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-export const PANEL_AGENT = "pi-fusion.fusion-panelist";
-export const PANEL_AGENT_WEB = "pi-fusion.fusion-panelist-web";
-export const PANEL_AGENT_FULL = "pi-fusion.fusion-panelist-full";
-export const JUDGE_AGENT = "pi-fusion.fusion-judge";
-export const COMPOSER_AGENT = "pi-fusion.fusion-composer";
+export const PANEL_AGENT = 'pi-fusion.fusion-panelist';
+export const PANEL_AGENT_WEB = 'pi-fusion.fusion-panelist-web';
+export const PANEL_AGENT_FULL = 'pi-fusion.fusion-panelist-full';
+export const JUDGE_AGENT = 'pi-fusion.fusion-judge';
+export const COMPOSER_AGENT = 'pi-fusion.fusion-composer';
 
-export type FusionContextMode = "fresh" | "fork";
+export type FusionContextMode = 'fresh' | 'fork';
 export type ExecutionLifetime =
-  | { mode: "unbounded" }
-  | { mode: "bounded"; timeoutMs: number };
+  | { mode: 'unbounded' }
+  | { mode: 'bounded'; timeoutMs: number };
 
 export interface FusionReviewContext {
   cwd: string;
   reviewedCommit: string;
 }
-export type CallerOutputContract = "plan-review-v1";
+export type CallerOutputContract = 'plan-review-v1';
 
 /**
  * How panel answers become one report.
  * `select` — panelists answered the same question; the judge picks or reconciles.
  * `merge`  — panelists answered different facets; the composer unions them.
  */
-export type FusionSynthesisMode = "select" | "merge";
+export type FusionSynthesisMode = 'select' | 'merge';
 
 export interface PanelMemberConfig {
   id: string;
@@ -53,7 +53,7 @@ export interface JudgeConfig {
   thinking?: ThinkingLevel;
 }
 
-export type MinimumSuccessfulPanelists = "majority" | "all" | number;
+export type MinimumSuccessfulPanelists = 'majority' | 'all' | number;
 
 /** Per-run deadline overrides accepted by CLI, tool, and RPC starts. */
 export interface FusionTimeoutOverrides {
@@ -133,34 +133,34 @@ export interface FusionProfile {
  * then to the position. One definition so report and prompt never disagree.
  */
 export function panelItemLabel(
-  item: Pick<PanelOutput, "index" | "id" | "label">,
+  item: Pick<PanelOutput, 'index' | 'id' | 'label'>,
 ): string {
   return item.label?.trim() || item.id?.trim() || `Panelist ${item.index + 1}`;
 }
 
 /** Report label for a member; `label` is optional and falls back to `id`. */
 export function memberLabel(
-  member: Pick<PanelMemberConfig, "id" | "label">,
+  member: Pick<PanelMemberConfig, 'id' | 'label'>,
 ): string {
   return member.label?.trim() || member.id;
 }
 
 export function resolveSynthesisMode(
-  profile: Pick<FusionProfile, "panel" | "synthesis">,
+  profile: Pick<FusionProfile, 'panel' | 'synthesis'>,
 ): FusionSynthesisMode {
   if (profile.synthesis) return profile.synthesis;
   return profile.panel.some((member) => member.question?.trim())
-    ? "merge"
-    : "select";
+    ? 'merge'
+    : 'select';
 }
 
 export interface ToolBudget {
   soft?: number;
   hard?: number;
-  block?: "*" | string[];
+  block?: '*' | string[];
 }
 
-export type PanelConfidence = "low" | "medium" | "high";
+export type PanelConfidence = 'low' | 'medium' | 'high';
 
 export interface PanelDecision {
   recommendation: string;
@@ -230,7 +230,10 @@ export interface PanelOutput {
 }
 
 export type PanelFailureReason =
-  "provider" | "timeout" | "interrupted" | "stopped-after-agreement";
+  | 'provider'
+  | 'timeout'
+  | 'interrupted'
+  | 'stopped-after-agreement';
 
 export interface FailedPanelSummary {
   index: number;
@@ -248,9 +251,14 @@ export interface FailedPanelSummary {
 }
 
 export type FusionPhase =
-  "panel" | "chain" | "judge" | "done" | "failed" | "cancelled";
+  | 'panel'
+  | 'chain'
+  | 'judge'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
 
-export type CompletionQuality = "complete" | "partial";
+export type CompletionQuality = 'complete' | 'partial';
 
 /**
  * The start-time settings required after a process restart. This intentionally
@@ -286,7 +294,7 @@ export interface FusionSpawnIntent {
   requestId?: string;
   requestDigest?: string;
   params?: object;
-  stage: "panel" | "judge";
+  stage: 'panel' | 'judge';
   requestedAt: number;
 }
 
@@ -296,7 +304,7 @@ export interface PanelDeadlineState {
   requestedAt: number;
   finalizeAt: number;
   hardDeadlineAt: number;
-  status: "pending" | "continued" | "finishing";
+  status: 'pending' | 'continued' | 'finishing';
   deliveryError?: string;
 }
 
@@ -338,7 +346,7 @@ export interface FusionRun {
   chainAsyncDir?: string;
   panelRunId?: string;
   panelAsyncDir?: string;
-  panelStopReason?: "agreement";
+  panelStopReason?: 'agreement';
   panelStoppedIndices?: number[];
   panelDeadlines?: PanelDeadlineState[];
   judgeRunId?: string;

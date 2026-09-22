@@ -1,26 +1,27 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
 import {
   extractPanelDecision,
   extractRunObservation,
   hasStrongPanelAgreement,
   mergeRunObservations,
   summarizeProviderFailures,
-} from "../../src/run-observations.js";
-import type { PanelOutput } from "../../src/types.js";
+} from '../../src/run-observations.js';
+import type { PanelOutput } from '../../src/types.js';
+import { required } from '../support/required.js';
 
-test("extractPanelDecision parses and removes the tagged decision record", () => {
+test('extractPanelDecision parses and removes the tagged decision record', () => {
   assert.deepEqual(
     extractPanelDecision([
-      "## Summary",
-      "Choose A.",
+      '## Summary',
+      'Choose A.',
       '<fusion-panel-decision>{"recommendation":"Choose A","confidence":"high","needsMoreEvidence":false}</fusion-panel-decision>',
     ]),
     {
-      recommendation: "Choose A",
-      confidence: "high",
+      recommendation: 'Choose A',
+      confidence: 'high',
       needsMoreEvidence: false,
-      answerMarkdown: "## Summary\nChoose A.",
+      answerMarkdown: '## Summary\nChoose A.',
     },
   );
   assert.equal(
@@ -40,38 +41,41 @@ test("extractPanelDecision parses and removes the tagged decision record", () =>
 const AGREED_OUTPUTS: PanelOutput[] = [
   {
     index: 0,
-    agent: "panel",
-    output: "Choose A.",
+    agent: 'panel',
+    output: 'Choose A.',
     decision: {
-      recommendation: "Choose A",
-      confidence: "high",
+      recommendation: 'Choose A',
+      confidence: 'high',
       needsMoreEvidence: false,
-      answerMarkdown: "Choose A.",
+      answerMarkdown: 'Choose A.',
     },
   },
   {
     index: 1,
-    agent: "panel",
-    output: "Choose A.",
+    agent: 'panel',
+    output: 'Choose A.',
     decision: {
-      recommendation: "choose a.",
-      confidence: "high",
+      recommendation: 'choose a.',
+      confidence: 'high',
       needsMoreEvidence: false,
-      answerMarkdown: "Choose A.",
+      answerMarkdown: 'Choose A.',
     },
   },
 ];
 
-test("hasStrongPanelAgreement requires agreement while work remains", () => {
+test('hasStrongPanelAgreement requires agreement while work remains', () => {
   assert.equal(hasStrongPanelAgreement(AGREED_OUTPUTS, 2, 3), true);
   assert.equal(hasStrongPanelAgreement(AGREED_OUTPUTS, 2, 2), false);
   assert.equal(
     hasStrongPanelAgreement(
       [
-        AGREED_OUTPUTS[0]!,
+        required(AGREED_OUTPUTS[0]),
         {
-          ...AGREED_OUTPUTS[1]!,
-          decision: { ...AGREED_OUTPUTS[1]!.decision!, confidence: "medium" },
+          ...required(AGREED_OUTPUTS[1]),
+          decision: {
+            ...required(AGREED_OUTPUTS[1]?.decision),
+            confidence: 'medium',
+          },
         },
       ],
       2,
@@ -82,12 +86,12 @@ test("hasStrongPanelAgreement requires agreement while work remains", () => {
   assert.equal(
     hasStrongPanelAgreement(
       [
-        AGREED_OUTPUTS[0]!,
+        required(AGREED_OUTPUTS[0]),
         {
-          ...AGREED_OUTPUTS[1]!,
+          ...required(AGREED_OUTPUTS[1]),
           decision: {
-            ...AGREED_OUTPUTS[1]!.decision!,
-            recommendation: "Choose B",
+            ...required(AGREED_OUTPUTS[1]?.decision),
+            recommendation: 'Choose B',
           },
         },
       ],
@@ -98,116 +102,130 @@ test("hasStrongPanelAgreement requires agreement while work remains", () => {
   );
 });
 
-test("mergeRunObservations preserves status timing and result usage", () => {
+test('mergeRunObservations preserves status timing and result usage', () => {
   assert.deepEqual(
     mergeRunObservations(
       {
-        model: "deepseek/model",
+        model: 'deepseek/model',
         durationMs: 1200,
         usage: { inputTokens: 10 },
       },
       {
-        model: "deepseek/model",
+        model: 'deepseek/model',
         usage: { inputTokens: 12, outputTokens: 4, costUsd: 0.01 },
       },
     ),
     {
-      model: "deepseek/model",
+      model: 'deepseek/model',
       durationMs: 1200,
       usage: { inputTokens: 12, outputTokens: 4, costUsd: 0.01 },
     },
   );
 });
 
-test("mergeRunObservations does not duplicate cumulative provider failures", () => {
+test('mergeRunObservations does not duplicate cumulative provider failures', () => {
   assert.deepEqual(
     mergeRunObservations(
       {
         providerFailures: [
-          { provider: "openai", model: "openai/gpt", message: "retry" },
+          { provider: 'openai', model: 'openai/gpt', message: 'retry' },
         ],
       },
       {
         providerFailures: [
-          { provider: "openai", model: "openai/gpt", message: "retry" },
+          { provider: 'openai', model: 'openai/gpt', message: 'retry' },
         ],
       },
     ).providerFailures,
-    [{ provider: "openai", model: "openai/gpt", message: "retry" }],
+    [{ provider: 'openai', model: 'openai/gpt', message: 'retry' }],
   );
 });
 
-test("extractRunObservation reads lifecycle timing, usage, model, and attempts", () => {
+test('extractRunObservation reads lifecycle timing, usage, model, and attempts', () => {
   const observation = extractRunObservation({
-    model: "anthropic/claude-haiku",
+    model: 'anthropic/claude-haiku',
     durationMs: 1234,
     totalCost: { inputTokens: 120, outputTokens: 40, costUsd: 0 },
     modelAttempts: [
       {
-        model: "openai/gpt-mini",
+        model: 'openai/gpt-mini',
         success: false,
-        error: "rate limited",
+        error: 'rate limited',
       },
-      { model: "anthropic/claude-haiku", success: true },
+      { model: 'anthropic/claude-haiku', success: true },
     ],
   });
 
   assert.deepEqual(observation, {
-    model: "anthropic/claude-haiku",
+    model: 'anthropic/claude-haiku',
     durationMs: 1234,
     usage: { inputTokens: 120, outputTokens: 40, costUsd: 0 },
     attempts: [
-      { model: "openai/gpt-mini", success: false, error: "rate limited" },
-      { model: "anthropic/claude-haiku", success: true },
+      { model: 'openai/gpt-mini', success: false, error: 'rate limited' },
+      { model: 'anthropic/claude-haiku', success: true },
     ],
     providerFailures: [
       {
-        provider: "openai",
-        model: "openai/gpt-mini",
-        message: "rate limited",
+        provider: 'openai',
+        model: 'openai/gpt-mini',
+        message: 'rate limited',
       },
     ],
   });
 });
 
-for (const failure of [{ state: "failed" }, { status: "failed" }, { success: false }]) {
+for (const failure of [
+  { state: 'failed' },
+  { status: 'failed' },
+  { success: false },
+]) {
   test(`extractRunObservation reports direct errors for ${JSON.stringify(failure)}`, () => {
     assert.deepEqual(
       extractRunObservation({
-        model: "openai/gpt-mini",
+        model: 'openai/gpt-mini',
         ...failure,
-        error: "authentication failed",
+        error: 'authentication failed',
       }).providerFailures,
-      [{ provider: "openai", model: "openai/gpt-mini", message: "authentication failed" }],
+      [
+        {
+          provider: 'openai',
+          model: 'openai/gpt-mini',
+          message: 'authentication failed',
+        },
+      ],
     );
   });
 }
 
-test("extractRunObservation ignores stale error text on a successful record", () => {
-  assert.equal(extractRunObservation({ status: "complete", error: "old error" }).providerFailures, undefined);
+test('extractRunObservation ignores stale error text on a successful record', () => {
+  assert.equal(
+    extractRunObservation({ status: 'complete', error: 'old error' })
+      .providerFailures,
+    undefined,
+  );
 });
 
-test("extractRunObservation does not double-count the final attempt error", () => {
+test('extractRunObservation does not double-count the final attempt error', () => {
   assert.deepEqual(
     extractRunObservation({
-      model: "deepseek/model",
-      status: "failed",
-      error: "rate limited",
+      model: 'deepseek/model',
+      status: 'failed',
+      error: 'rate limited',
       modelAttempts: [
-        { model: "deepseek/model", success: false, error: "rate limited" },
+        { model: 'deepseek/model', success: false, error: 'rate limited' },
       ],
     }).providerFailures,
     [
       {
-        provider: "deepseek",
-        model: "deepseek/model",
-        message: "rate limited",
+        provider: 'deepseek',
+        model: 'deepseek/model',
+        message: 'rate limited',
       },
     ],
   );
 });
 
-test("extractRunObservation supports native usage and derives duration", () => {
+test('extractRunObservation supports native usage and derives duration', () => {
   const observation = extractRunObservation({
     startedAt: 100,
     endedAt: 450,
@@ -224,38 +242,38 @@ test("extractRunObservation supports native usage and derives duration", () => {
   });
 });
 
-test("missing usage and duration remain unknown", () => {
-  assert.deepEqual(extractRunObservation({ model: "ollama/qwen" }), {
-    model: "ollama/qwen",
+test('missing usage and duration remain unknown', () => {
+  assert.deepEqual(extractRunObservation({ model: 'ollama/qwen' }), {
+    model: 'ollama/qwen',
   });
 });
 
-test("summarizeProviderFailures groups duplicate provider errors", () => {
+test('summarizeProviderFailures groups duplicate provider errors', () => {
   assert.deepEqual(
     summarizeProviderFailures([
       {
-        provider: "openai",
-        model: "openai/gpt-mini",
-        message: "rate limited",
+        provider: 'openai',
+        model: 'openai/gpt-mini',
+        message: 'rate limited',
       },
       {
-        provider: "openai",
-        model: "openai/gpt-mini",
-        message: "rate limited",
+        provider: 'openai',
+        model: 'openai/gpt-mini',
+        message: 'rate limited',
         count: 2,
       },
-      { provider: "anthropic", message: "authentication failed" },
+      { provider: 'anthropic', message: 'authentication failed' },
     ]),
     [
       {
-        provider: "anthropic",
-        message: "authentication failed",
+        provider: 'anthropic',
+        message: 'authentication failed',
         count: 1,
       },
       {
-        provider: "openai",
-        model: "openai/gpt-mini",
-        message: "rate limited",
+        provider: 'openai',
+        model: 'openai/gpt-mini',
+        message: 'rate limited',
         count: 3,
       },
     ],

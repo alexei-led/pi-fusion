@@ -6,18 +6,18 @@ import type {
   ProviderFailure,
   RunObservation,
   RunUsage,
-} from "./types.js";
-import { isFiniteNumber, isRecord } from "./utils.js";
+} from './types.js';
+import { isFiniteNumber, isRecord } from './utils.js';
 
-export const PANEL_DECISION_OPEN = "<fusion-panel-decision>";
-export const PANEL_DECISION_CLOSE = "</fusion-panel-decision>";
+export const PANEL_DECISION_OPEN = '<fusion-panel-decision>';
+export const PANEL_DECISION_CLOSE = '</fusion-panel-decision>';
 
 export function extractPanelDecision(
   value: unknown,
 ): PanelDecision | undefined {
-  if (typeof value === "string") return extractTaggedPanelDecision(value);
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return extractTaggedPanelDecision(value.join("\n"));
+  if (typeof value === 'string') return extractTaggedPanelDecision(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return extractTaggedPanelDecision(value.join('\n'));
   }
   return isRecord(value) ? panelDecisionFromRecord(value) : undefined;
 }
@@ -55,7 +55,7 @@ function panelDecisionFromRecord(
     !recommendation ||
     !answerMarkdown ||
     !isPanelConfidence(confidence) ||
-    typeof value.needsMoreEvidence !== "boolean"
+    typeof value.needsMoreEvidence !== 'boolean'
   ) {
     return undefined;
   }
@@ -70,7 +70,7 @@ function panelDecisionFromRecord(
 export function normalizeRecommendation(value: string): string {
   return value
     .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
@@ -87,21 +87,21 @@ export function hasStrongPanelAgreement(
   if (
     decisions.some(
       (decision) =>
-        decision?.confidence !== "high" || decision.needsMoreEvidence,
+        decision?.confidence !== 'high' || decision.needsMoreEvidence,
     )
   ) {
     return false;
   }
   const recommendation = normalizeRecommendation(
-    decisions[0]?.recommendation ?? "",
+    decisions[0]?.recommendation ?? '',
   );
   return Boolean(
     recommendation &&
-    decisions.every(
-      (decision) =>
-        decision &&
-        normalizeRecommendation(decision.recommendation) === recommendation,
-    ),
+      decisions.every(
+        (decision) =>
+          decision &&
+          normalizeRecommendation(decision.recommendation) === recommendation,
+      ),
   );
 }
 
@@ -152,11 +152,11 @@ export function extractRunObservation(value: unknown): RunObservation {
     rawError &&
       attemptFailures.length === 0 &&
       (value.success === false ||
-        value.state === "failed" ||
-        value.status === "failed")
+        value.state === 'failed' ||
+        value.status === 'failed')
       ? [
           {
-            provider: model ? providerFromModel(model) : "unknown provider",
+            provider: model ? providerFromModel(model) : 'unknown provider',
             ...(model ? { model } : {}),
             message: rawError,
           },
@@ -182,7 +182,7 @@ export function summarizeProviderFailures(
   for (const failure of failures) {
     const message = failure.message.trim();
     if (!message) continue;
-    const key = `${failure.provider}\u0000${failure.model ?? ""}\u0000${message}`;
+    const key = `${failure.provider}\u0000${failure.model ?? ''}\u0000${message}`;
     const existing = grouped.get(key);
     if (existing) {
       existing.count += failure.count ?? 1;
@@ -197,8 +197,8 @@ export function summarizeProviderFailures(
 
   return [...grouped.values()]
     .sort((left, right) =>
-      `${left.provider}\u0000${left.model ?? ""}\u0000${left.message}`.localeCompare(
-        `${right.provider}\u0000${right.model ?? ""}\u0000${right.message}`,
+      `${left.provider}\u0000${left.model ?? ''}\u0000${left.message}`.localeCompare(
+        `${right.provider}\u0000${right.model ?? ''}\u0000${right.message}`,
       ),
     )
     .map(({ count, ...failure }) => ({ ...failure, count }));
@@ -290,7 +290,7 @@ function extractAttempts(value: unknown): ModelAttempt[] {
   for (const item of value) {
     if (!isRecord(item)) continue;
     const model = firstString(item.model);
-    if (!model || typeof item.success !== "boolean") continue;
+    if (!model || typeof item.success !== 'boolean') continue;
     const error = firstString(item.error);
     attempts.push({
       model,
@@ -305,12 +305,12 @@ function providerFailureFromAttempt(attempt: ModelAttempt): ProviderFailure {
   return {
     provider: providerFromModel(attempt.model),
     model: attempt.model,
-    message: attempt.error ?? "model attempt failed",
+    message: attempt.error ?? 'model attempt failed',
   };
 }
 
 function providerFromModel(model: string): string {
-  return model.split("/", 1)[0] || "unknown provider";
+  return model.split('/', 1)[0] || 'unknown provider';
 }
 
 function firstFinite(...values: readonly unknown[]): number | undefined {
@@ -318,14 +318,14 @@ function firstFinite(...values: readonly unknown[]): number | undefined {
 }
 
 function isPanelConfidence(value: unknown): value is PanelConfidence {
-  return value === "low" || value === "medium" || value === "high";
+  return value === 'low' || value === 'medium' || value === 'high';
 }
 
 function firstNonBlankString(
   ...values: readonly unknown[]
 ): string | undefined {
   for (const value of values) {
-    if (typeof value !== "string") continue;
+    if (typeof value !== 'string') continue;
     const trimmed = value.trim();
     if (trimmed) return trimmed;
   }
@@ -333,5 +333,5 @@ function firstNonBlankString(
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string");
+  return values.find((value): value is string => typeof value === 'string');
 }

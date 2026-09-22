@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-const STATUS_FILE = "status.json";
-const ASYNC_RESULTS_DIR = "async-subagent-results";
-const ASYNC_RUNS_DIR = "async-subagent-runs";
+const STATUS_FILE = 'status.json';
+const ASYNC_RESULTS_DIR = 'async-subagent-results';
+const ASYNC_RUNS_DIR = 'async-subagent-runs';
 
 export function deriveSubagentResultPath(
   asyncDir: string,
@@ -33,7 +33,7 @@ export function readSubagentResultArtifact(input: {
 function readJsonArtifact(path: string): unknown {
   if (!existsSync(path)) return undefined;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return JSON.parse(readFileSync(path, 'utf8')) as unknown;
   } catch {
     return undefined;
   }

@@ -1,28 +1,28 @@
+import { readFile } from 'node:fs/promises';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
-import { readFile } from "node:fs/promises";
+} from '@earendil-works/pi-coding-agent';
 import {
   getProjectFusionConfigPath,
   writeProjectFusionConfigTemplate,
-} from "./config.js";
-import { FusionConfigError } from "./errors.js";
-import { parseFusionInlineCommand } from "./fusion-args.js";
-import type { ParsedFusionArgs } from "./types.js";
-import { isNodeErrorCode } from "./utils.js";
+} from './config.js';
+import { FusionConfigError } from './errors.js';
+import { parseFusionInlineCommand } from './fusion-args.js';
+import type { ParsedFusionArgs } from './types.js';
+import { isNodeErrorCode } from './utils.js';
 
 const FUSION_HELP = [
-  "Fusion commands",
-  "/fusion <prompt>",
-  "/fusion --profile <name> <prompt>",
-  "/fusion --panel <models> <prompt>",
-  "/fusion status",
-  "/fusion stop",
-  "/fusion continue <fusion-run-id> <panelist-number>",
-  "/fusion finish <fusion-run-id> <panelist-number>",
-  "/fusion init",
-].join("\n");
+  'Fusion commands',
+  '/fusion <prompt>',
+  '/fusion --profile <name> <prompt>',
+  '/fusion --panel <models> <prompt>',
+  '/fusion status',
+  '/fusion stop',
+  '/fusion continue <fusion-run-id> <panelist-number>',
+  '/fusion finish <fusion-run-id> <panelist-number>',
+  '/fusion init',
+].join('\n');
 
 export interface FusionRuntimeCommandHandler {
   startRun(
@@ -31,45 +31,65 @@ export interface FusionRuntimeCommandHandler {
   ): Promise<unknown>;
   showStatus(ctx: ExtensionCommandContext): Promise<unknown>;
   cancelActiveRun(ctx: ExtensionCommandContext): Promise<unknown>;
-  resolvePanelDeadline?(runId: string, panelist: number, decision: "continue" | "finish"): Promise<unknown>;
+  resolvePanelDeadline?(
+    runId: string,
+    panelist: number,
+    decision: 'continue' | 'finish',
+  ): Promise<unknown>;
 }
 
 export function registerFusionCommands(
-  pi: Pick<ExtensionAPI, "registerCommand">,
+  pi: Pick<ExtensionAPI, 'registerCommand'>,
   handler: FusionRuntimeCommandHandler,
 ): void {
-  pi.registerCommand("fusion", {
-    description: "Run a fusion review, or use status/stop/init",
+  pi.registerCommand('fusion', {
+    description: 'Run a fusion review, or use status/stop/init',
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (args.trim() === "") {
-        ctx.ui.notify(FUSION_HELP, "info");
+      if (args.trim() === '') {
+        ctx.ui.notify(FUSION_HELP, 'info');
         return;
       }
 
-      const decision = args.trim().match(/^(continue|finish)\s+(\S+)\s+([1-9]\d*)$/);
-      if (decision && handler.resolvePanelDeadline) {
+      const decision = args
+        .trim()
+        .match(/^(continue|finish)\s+(\S+)\s+([1-9]\d*)$/);
+      const [, action, panelist, index] = decision ?? [];
+      if (action && panelist && index && handler.resolvePanelDeadline) {
         try {
-          await handler.resolvePanelDeadline(decision[2]!, Number(decision[3]), decision[1] === "continue" ? "continue" : "finish");
-          ctx.ui.notify("Deadline decision recorded; guidance requested. Hard deadline unchanged.", "info");
+          await handler.resolvePanelDeadline(
+            panelist,
+            Number(index),
+            action === 'continue' ? 'continue' : 'finish',
+          );
+          ctx.ui.notify(
+            'Deadline decision recorded; guidance requested. Hard deadline unchanged.',
+            'info',
+          );
         } catch (error: unknown) {
-          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+          ctx.ui.notify(
+            error instanceof Error ? error.message : String(error),
+            'error',
+          );
         }
         return;
       }
       if (/^(continue|finish)(?:\s|$)/.test(args.trim())) {
-        ctx.ui.notify("Use /fusion continue|finish <fusion-run-id> <panelist-number>.", "error");
+        ctx.ui.notify(
+          'Use /fusion continue|finish <fusion-run-id> <panelist-number>.',
+          'error',
+        );
         return;
       }
       const inlineCommand = parseFusionInlineCommand(args);
-      if (inlineCommand === "init") {
+      if (inlineCommand === 'init') {
         await runFusionInit(ctx);
         return;
       }
-      if (inlineCommand === "status") {
+      if (inlineCommand === 'status') {
         await handler.showStatus(ctx);
         return;
       }
-      if (inlineCommand === "stop") {
+      if (inlineCommand === 'stop') {
         await handler.cancelActiveRun(ctx);
         return;
       }
@@ -84,10 +104,10 @@ export async function runFusionInit(
 ): Promise<FusionInitResult> {
   if (!ctx.isProjectTrusted()) {
     ctx.ui.notify(
-      "Project is not trusted. /fusion init did not write .pi/fusion.json.",
-      "error",
+      'Project is not trusted. /fusion init did not write .pi/fusion.json.',
+      'error',
     );
-    return { status: "skipped", reason: "untrusted" };
+    return { status: 'skipped', reason: 'untrusted' };
   }
 
   const configPath = getProjectFusionConfigPath(ctx.cwd);
@@ -95,24 +115,24 @@ export async function runFusionInit(
     if (!ctx.hasUI) {
       ctx.ui.notify(
         `${configPath} already exists. Run /fusion init in UI mode to confirm overwrite.`,
-        "warning",
+        'warning',
       );
-      return { status: "skipped", reason: "exists", path: configPath };
+      return { status: 'skipped', reason: 'exists', path: configPath };
     }
 
     const overwrite = await ctx.ui.confirm(
-      "Overwrite fusion config?",
+      'Overwrite fusion config?',
       `${configPath} already exists. Overwrite it?`,
     );
     if (!overwrite) {
-      ctx.ui.notify("Kept existing .pi/fusion.json.", "info");
-      return { status: "skipped", reason: "cancelled", path: configPath };
+      ctx.ui.notify('Kept existing .pi/fusion.json.', 'info');
+      return { status: 'skipped', reason: 'cancelled', path: configPath };
     }
   }
 
   const writtenPath = await writeProjectFusionConfigTemplate(ctx.cwd, deps);
-  ctx.ui.notify(`Wrote ${writtenPath}.`, "info");
-  return { status: "written", path: writtenPath };
+  ctx.ui.notify(`Wrote ${writtenPath}.`, 'info');
+  return { status: 'written', path: writtenPath };
 }
 
 interface FusionInitContext {
@@ -121,7 +141,7 @@ interface FusionInitContext {
   isProjectTrusted(): boolean;
   ui: {
     confirm(title: string, message: string): Promise<boolean>;
-    notify(message: string, type?: "info" | "warning" | "error"): void;
+    notify(message: string, type?: 'info' | 'warning' | 'error'): void;
   };
 }
 
@@ -132,10 +152,10 @@ export interface FusionInitDeps {
 }
 
 export type FusionInitResult =
-  | { status: "written"; path: string }
+  | { status: 'written'; path: string }
   | {
-      status: "skipped";
-      reason: "untrusted" | "exists" | "cancelled";
+      status: 'skipped';
+      reason: 'untrusted' | 'exists' | 'cancelled';
       path?: string;
     };
 
@@ -147,7 +167,7 @@ async function fileExists(
     await readTextFile(path);
     return true;
   } catch (error: unknown) {
-    if (isNodeErrorCode(error, "ENOENT")) return false;
+    if (isNodeErrorCode(error, 'ENOENT')) return false;
     const message = error instanceof Error ? error.message : String(error);
     throw new FusionConfigError(
       `Could not check fusion config at ${path}: ${message}`,
@@ -156,5 +176,5 @@ async function fileExists(
 }
 
 async function readUtf8File(path: string): Promise<string> {
-  return readFile(path, "utf8");
+  return readFile(path, 'utf8');
 }

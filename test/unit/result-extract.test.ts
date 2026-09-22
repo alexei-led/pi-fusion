@@ -1,39 +1,40 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { extractPanelResults } from "../../src/result-extract.js";
-import type { PanelMemberConfig } from "../../src/types.js";
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
+import { extractPanelResults } from '../../src/result-extract.js';
+import type { PanelMemberConfig } from '../../src/types.js';
+import { required } from '../support/required.js';
 
 const PANEL: PanelMemberConfig[] = [
   {
-    id: "architect",
-    label: "Architect",
-    agent: "pi-fusion.fusion-panelist",
+    id: 'architect',
+    label: 'Architect',
+    agent: 'pi-fusion.fusion-panelist',
   },
   {
-    id: "tester",
-    label: "Tester",
-    agent: "pi-fusion.fusion-panelist",
+    id: 'tester',
+    label: 'Tester',
+    agent: 'pi-fusion.fusion-panelist',
   },
 ];
 
-test("extractPanelResults reads successful and failed async result children", () => {
+test('extractPanelResults reads successful and failed async result children', () => {
   const result = extractPanelResults(
     {
-      runId: "panel-run",
-      mode: "parallel",
+      runId: 'panel-run',
+      mode: 'parallel',
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
-          output: "Architecture says choose A.",
+          agent: 'pi-fusion.fusion-panelist',
+          output: 'Architecture says choose A.',
           success: true,
-          artifactPaths: { outputPath: "/tmp/architect.md" },
+          artifactPaths: { outputPath: '/tmp/architect.md' },
         },
         {
-          agent: "pi-fusion.fusion-panelist",
-          output: "stderr tail",
-          error: "Timed out",
+          agent: 'pi-fusion.fusion-panelist',
+          output: 'stderr tail',
+          error: 'Timed out',
           success: false,
-          sessionFile: "/tmp/tester-session.jsonl",
+          sessionFile: '/tmp/tester-session.jsonl',
         },
       ],
     },
@@ -42,50 +43,50 @@ test("extractPanelResults reads successful and failed async result children", ()
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.runId, "panel-run");
+  assert.equal(result.runId, 'panel-run');
   assert.deepEqual(result.outputs, [
     {
       index: 0,
-      id: "architect",
-      label: "Architect",
-      agent: "pi-fusion.fusion-panelist",
-      output: "Architecture says choose A.",
-      artifactPath: "/tmp/architect.md",
+      id: 'architect',
+      label: 'Architect',
+      agent: 'pi-fusion.fusion-panelist',
+      output: 'Architecture says choose A.',
+      artifactPath: '/tmp/architect.md',
     },
   ]);
   assert.deepEqual(result.failures, [
     {
       index: 1,
-      id: "tester",
-      label: "Tester",
-      agent: "pi-fusion.fusion-panelist",
-      summary: "Timed out\n\nstderr tail",
-      reason: "timeout",
+      id: 'tester',
+      label: 'Tester',
+      agent: 'pi-fusion.fusion-panelist',
+      summary: 'Timed out\n\nstderr tail',
+      reason: 'timeout',
       observation: {
         providerFailures: [
-          { provider: "unknown provider", message: "Timed out" },
+          { provider: 'unknown provider', message: 'Timed out' },
         ],
       },
-      sessionPath: "/tmp/tester-session.jsonl",
+      sessionPath: '/tmp/tester-session.jsonl',
     },
   ]);
 });
 
-test("extractPanelResults uses structured panel output for the human-readable answer", () => {
+test('extractPanelResults uses structured panel output for the human-readable answer', () => {
   const result = extractPanelResults(
     {
-      runId: "panel-run",
+      runId: 'panel-run',
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
+          agent: 'pi-fusion.fusion-panelist',
           success: true,
           structuredOutput: {
-            recommendation: "Choose A",
-            confidence: "high",
+            recommendation: 'Choose A',
+            confidence: 'high',
             needsMoreEvidence: false,
-            answerMarkdown: "## Summary\\nChoose A.",
+            answerMarkdown: '## Summary\\nChoose A.',
           },
-          output: "compact structured output",
+          output: 'compact structured output',
         },
       ],
     },
@@ -95,23 +96,23 @@ test("extractPanelResults uses structured panel output for the human-readable an
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.outputs[0]?.decision, {
-    recommendation: "Choose A",
-    confidence: "high",
+    recommendation: 'Choose A',
+    confidence: 'high',
     needsMoreEvidence: false,
-    answerMarkdown: "## Summary\\nChoose A.",
+    answerMarkdown: '## Summary\\nChoose A.',
   });
-  assert.equal(result.outputs[0]?.output, "## Summary\\nChoose A.");
+  assert.equal(result.outputs[0]?.output, '## Summary\\nChoose A.');
 });
 
-test("extractPanelResults preserves configured agent identity for workflow result keys", () => {
+test('extractPanelResults preserves configured agent identity for workflow result keys', () => {
   const result = extractPanelResults(
     {
-      mode: "workflow",
+      mode: 'workflow',
       results: [
         {
-          agent: "panel-1",
+          agent: 'panel-1',
           success: true,
-          output: "Choose A.",
+          output: 'Choose A.',
         },
       ],
     },
@@ -120,26 +121,26 @@ test("extractPanelResults preserves configured agent identity for workflow resul
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.outputs[0]?.agent, "pi-fusion.fusion-panelist");
+  assert.equal(result.outputs[0]?.agent, 'pi-fusion.fusion-panelist');
 });
 
-test("extractPanelResults preserves configured and observed model identities", () => {
+test('extractPanelResults preserves configured and observed model identities', () => {
   const result = extractPanelResults(
     {
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
+          agent: 'pi-fusion.fusion-panelist',
           success: true,
-          model: "anthropic/fallback",
-          output: "Choose A.",
+          model: 'anthropic/fallback',
+          output: 'Choose A.',
         },
       ],
     },
     {
       panel: [
         {
-          ...PANEL[0]!,
-          model: "openai/requested",
+          ...required(PANEL[0]),
+          model: 'openai/requested',
         },
       ],
     },
@@ -147,25 +148,25 @@ test("extractPanelResults preserves configured and observed model identities", (
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.outputs[0]?.model, "anthropic/fallback");
-  assert.equal(result.outputs[0]?.configuredModel, "openai/requested");
+  assert.equal(result.outputs[0]?.model, 'anthropic/fallback');
+  assert.equal(result.outputs[0]?.configuredModel, 'openai/requested');
 });
 
-test("extractPanelResults reads completed status steps for partial panel observations", () => {
+test('extractPanelResults reads completed status steps for partial panel observations', () => {
   const result = extractPanelResults(
     {
-      runId: "panel-run",
+      runId: 'panel-run',
       steps: [
         {
-          agent: "pi-fusion.fusion-panelist",
-          status: "complete",
+          agent: 'pi-fusion.fusion-panelist',
+          status: 'complete',
           recentOutput: [
-            "## Summary",
-            "Choose A.",
+            '## Summary',
+            'Choose A.',
             '<fusion-panel-decision>{"recommendation":"Choose A","confidence":"high","needsMoreEvidence":false}</fusion-panel-decision>',
           ],
         },
-        { agent: "pi-fusion.fusion-panelist", status: "running" },
+        { agent: 'pi-fusion.fusion-panelist', status: 'running' },
       ],
     },
     { panel: PANEL, completedOnly: true },
@@ -176,25 +177,25 @@ test("extractPanelResults reads completed status steps for partial panel observa
   assert.equal(result.outputs.length, 1);
   assert.equal(result.outputs[0]?.index, 0);
   assert.deepEqual(result.outputs[0]?.decision, {
-    recommendation: "Choose A",
-    confidence: "high",
+    recommendation: 'Choose A',
+    confidence: 'high',
     needsMoreEvidence: false,
-    answerMarkdown: "## Summary\nChoose A.",
+    answerMarkdown: '## Summary\nChoose A.',
   });
   assert.equal(result.failures.length, 0);
 });
 
-test("extractPanelResults reads status RPC details results", () => {
+test('extractPanelResults reads status RPC details results', () => {
   const result = extractPanelResults(
     {
-      text: "Run complete",
+      text: 'Run complete',
       details: {
-        runId: "details-run",
-        mode: "parallel",
+        runId: 'details-run',
+        mode: 'parallel',
         results: [
           {
-            agent: "pi-fusion.fusion-panelist",
-            finalOutput: "Details output",
+            agent: 'pi-fusion.fusion-panelist',
+            finalOutput: 'Details output',
             exitCode: 0,
           },
         ],
@@ -205,22 +206,22 @@ test("extractPanelResults reads status RPC details results", () => {
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.runId, "details-run");
+  assert.equal(result.runId, 'details-run');
   assert.equal(result.outputs.length, 1);
-  assert.equal(result.outputs[0]?.output, "Details output");
+  assert.equal(result.outputs[0]?.output, 'Details output');
   assert.equal(result.failures.length, 0);
 });
 
-test("extractPanelResults prefers populated nested results to an empty wrapper array", () => {
+test('extractPanelResults prefers populated nested results to an empty wrapper array', () => {
   const result = extractPanelResults(
     {
       results: [],
       details: {
         results: [
           {
-            agent: "pi-fusion.fusion-panelist",
+            agent: 'pi-fusion.fusion-panelist',
             success: true,
-            output: "Nested result.",
+            output: 'Nested result.',
           },
         ],
       },
@@ -230,19 +231,19 @@ test("extractPanelResults prefers populated nested results to an empty wrapper a
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.outputs[0]?.output, "Nested result.");
+  assert.equal(result.outputs[0]?.output, 'Nested result.');
 });
 
-test("extractPanelResults treats failed statuses as failed panel summaries", () => {
+test('extractPanelResults treats failed statuses as failed panel summaries', () => {
   const result = extractPanelResults(
     {
-      id: "panel-run",
+      id: 'panel-run',
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
-          status: "failed",
-          summary: "Panel failed after tool error",
-          artifactPath: "/tmp/failure.md",
+          agent: 'pi-fusion.fusion-panelist',
+          status: 'failed',
+          summary: 'Panel failed after tool error',
+          artifactPath: '/tmp/failure.md',
         },
       ],
     },
@@ -255,25 +256,25 @@ test("extractPanelResults treats failed statuses as failed panel summaries", () 
   assert.deepEqual(result.failures, [
     {
       index: 0,
-      id: "architect",
-      label: "Architect",
-      agent: "pi-fusion.fusion-panelist",
-      summary: "Panel failed after tool error",
-      artifactPath: "/tmp/failure.md",
+      id: 'architect',
+      label: 'Architect',
+      agent: 'pi-fusion.fusion-panelist',
+      summary: 'Panel failed after tool error',
+      artifactPath: '/tmp/failure.md',
     },
   ]);
 });
 
-test("extractPanelResults labels only stopped panel indices as agreement stops", () => {
+test('extractPanelResults labels only stopped panel indices as agreement stops', () => {
   const result = extractPanelResults(
     {
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
+          agent: 'pi-fusion.fusion-panelist',
           success: false,
           timedOut: true,
-          error: "Subagent timed out after 180000ms.",
-          model: "deepseek/model",
+          error: 'Subagent timed out after 180000ms.',
+          model: 'deepseek/model',
         },
       ],
     },
@@ -284,31 +285,31 @@ test("extractPanelResults labels only stopped panel indices as agreement stops",
   if (!result.ok) return;
   assert.deepEqual(result.failures[0], {
     index: 0,
-    id: "architect",
-    label: "Architect",
-    agent: "pi-fusion.fusion-panelist",
-    model: "deepseek/model",
-    summary: "Stopped after strong panel agreement.",
-    reason: "stopped-after-agreement",
-    observation: { model: "deepseek/model" },
+    id: 'architect',
+    label: 'Architect',
+    agent: 'pi-fusion.fusion-panelist',
+    model: 'deepseek/model',
+    summary: 'Stopped after strong panel agreement.',
+    reason: 'stopped-after-agreement',
+    observation: { model: 'deepseek/model' },
   });
 });
 
-test("extractPanelResults synthesizes workflow panelists skipped after agreement", () => {
+test('extractPanelResults synthesizes workflow panelists skipped after agreement', () => {
   const panel = [
     ...PANEL,
     {
-      id: "skeptic",
-      label: "Skeptic",
-      agent: "pi-fusion.fusion-panelist",
+      id: 'skeptic',
+      label: 'Skeptic',
+      agent: 'pi-fusion.fusion-panelist',
     },
   ];
   const result = extractPanelResults(
     {
-      mode: "workflow",
+      mode: 'workflow',
       results: [
-        { agent: "panel-1", success: true, output: "Choose A." },
-        { agent: "panel-2", success: true, output: "choose A." },
+        { agent: 'panel-1', success: true, output: 'Choose A.' },
+        { agent: 'panel-2', success: true, output: 'choose A.' },
       ],
     },
     { panel, limit: panel.length, stoppedPanelIndices: [2] },
@@ -319,33 +320,33 @@ test("extractPanelResults synthesizes workflow panelists skipped after agreement
   assert.deepEqual(result.failures, [
     {
       index: 2,
-      id: "skeptic",
-      label: "Skeptic",
-      agent: "pi-fusion.fusion-panelist",
-      summary: "Stopped after strong panel agreement.",
-      reason: "stopped-after-agreement",
+      id: 'skeptic',
+      label: 'Skeptic',
+      agent: 'pi-fusion.fusion-panelist',
+      summary: 'Stopped after strong panel agreement.',
+      reason: 'stopped-after-agreement',
     },
   ]);
 });
 
-test("extractPanelResults returns typed errors for missing and unknown shapes", () => {
-  const missing = extractPanelResults({ state: "complete" });
+test('extractPanelResults returns typed errors for missing and unknown shapes', () => {
+  const missing = extractPanelResults({ state: 'complete' });
   assert.equal(missing.ok, false);
-  if (!missing.ok) assert.equal(missing.error.code, "missing-results");
+  if (!missing.ok) assert.equal(missing.error.code, 'missing-results');
 
   const unknown = extractPanelResults({ results: [null] });
   assert.equal(unknown.ok, false);
-  if (!unknown.ok) assert.equal(unknown.error.code, "unknown-result-shape");
+  if (!unknown.ok) assert.equal(unknown.error.code, 'unknown-result-shape');
 });
 
-test("extractPanelResults falls back to artifact paths when inline output is absent", () => {
+test('extractPanelResults falls back to artifact paths when inline output is absent', () => {
   const result = extractPanelResults({
-    runId: "panel-run",
+    runId: 'panel-run',
     results: [
       {
-        agent: "pi-fusion.fusion-panelist",
+        agent: 'pi-fusion.fusion-panelist',
         success: true,
-        artifactPath: "/tmp/only-artifact.md",
+        artifactPath: '/tmp/only-artifact.md',
       },
     ],
   });
@@ -355,55 +356,73 @@ test("extractPanelResults falls back to artifact paths when inline output is abs
   assert.deepEqual(result.outputs, [
     {
       index: 0,
-      agent: "pi-fusion.fusion-panelist",
-      output: "Output artifact: /tmp/only-artifact.md",
-      artifactPath: "/tmp/only-artifact.md",
+      agent: 'pi-fusion.fusion-panelist',
+      output: 'Output artifact: /tmp/only-artifact.md',
+      artifactPath: '/tmp/only-artifact.md',
     },
   ]);
 });
 
-test("extractPanelResults requires and uses stable slots for compact workflow events", () => {
+test('extractPanelResults requires and uses stable slots for compact workflow events', () => {
   const rejected = extractPanelResults(
-    { results: [{ agent: "pi-fusion.fusion-panelist", success: true, output: "late slot" }] },
+    {
+      results: [
+        {
+          agent: 'pi-fusion.fusion-panelist',
+          success: true,
+          output: 'late slot',
+        },
+      ],
+    },
     { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
   );
   assert.equal(rejected.ok, false);
-  if (!rejected.ok) assert.match(rejected.error.message, /stable workflow slot identity/);
+  if (!rejected.ok)
+    assert.match(rejected.error.message, /stable workflow slot identity/);
 
   const identified = extractPanelResults(
-    { results: [{ key: "panel-2", agent: "pi-fusion.fusion-panelist", success: true, output: "late slot" }] },
+    {
+      results: [
+        {
+          key: 'panel-2',
+          agent: 'pi-fusion.fusion-panelist',
+          success: true,
+          output: 'late slot',
+        },
+      ],
+    },
     { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
   );
   assert.equal(identified.ok, true);
   if (identified.ok) assert.equal(identified.outputs[0]?.index, 1);
 
   const workflowNamed = extractPanelResults(
-    { results: [{ agent: "panel-2", success: true, output: "late slot" }] },
+    { results: [{ agent: 'panel-2', success: true, output: 'late slot' }] },
     { panel: PANEL, limit: 2, requireStableSlotIdentity: true },
   );
   assert.equal(workflowNamed.ok, true);
   if (workflowNamed.ok) assert.equal(workflowNamed.outputs[0]?.index, 1);
 });
 
-test("extractPanelResults can limit extraction to the panel prefix of a chain result", () => {
+test('extractPanelResults can limit extraction to the panel prefix of a chain result', () => {
   const result = extractPanelResults(
     {
-      runId: "chain-run",
+      runId: 'chain-run',
       results: [
         {
-          agent: "pi-fusion.fusion-panelist",
+          agent: 'pi-fusion.fusion-panelist',
           success: true,
-          output: "Architect says A.",
+          output: 'Architect says A.',
         },
         {
-          agent: "pi-fusion.fusion-panelist",
+          agent: 'pi-fusion.fusion-panelist',
           success: true,
-          output: "Tester says A.",
+          output: 'Tester says A.',
         },
         {
-          agent: "pi-fusion.fusion-judge",
+          agent: 'pi-fusion.fusion-judge',
           success: true,
-          output: "# Fusion Report\n\n## Summary\nUse A.",
+          output: '# Fusion Report\n\n## Summary\nUse A.',
         },
       ],
     },
@@ -414,5 +433,5 @@ test("extractPanelResults can limit extraction to the panel prefix of a chain re
   if (!result.ok) return;
   assert.equal(result.outputs.length, 2);
   assert.equal(result.failures.length, 0);
-  assert.equal(result.outputs[1]?.label, "Tester");
+  assert.equal(result.outputs[1]?.label, 'Tester');
 });

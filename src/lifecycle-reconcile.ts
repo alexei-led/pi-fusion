@@ -1,25 +1,28 @@
-import type { FailedPanelSummary, PanelOutput } from "./types.js";
-import { mergeRunObservations } from "./run-observations.js";
 import {
-  extractPanelResults,
   type ExtractPanelResultsResult,
   type ExtractPanelResultsSuccess,
-} from "./result-extract.js";
-import type { FusionProfile } from "./types.js";
-import { isRecord } from "./utils.js";
+  extractPanelResults,
+} from './result-extract.js';
+import { mergeRunObservations } from './run-observations.js';
+import type {
+  FailedPanelSummary,
+  FusionProfile,
+  PanelOutput,
+} from './types.js';
+import { isRecord } from './utils.js';
 
 export function reconcileIndexedLifecycleResult(
   eventPayload: unknown,
   statusPayload: unknown,
   index: number,
-  label: "judge" | "panel",
+  label: 'judge' | 'panel',
 ): string | undefined {
-  const eventResults = findLifecycleArray(eventPayload, "results");
+  const eventResults = findLifecycleArray(eventPayload, 'results');
   const eventResult = eventResults?.[index];
   if (!isRecord(eventResult)) return undefined;
 
-  const statusSteps = findLifecycleArray(statusPayload, "steps");
-  const rawStatusResults = findLifecycleArray(statusPayload, "results");
+  const statusSteps = findLifecycleArray(statusPayload, 'steps');
+  const rawStatusResults = findLifecycleArray(statusPayload, 'results');
   const statusResults = authoritativeStatusLifecycleArray(
     statusPayload,
     statusSteps,
@@ -30,7 +33,10 @@ export function reconcileIndexedLifecycleResult(
     return `Subagents event includes ${label} result ${index + 1}, but status does not.`;
   }
   if (!isRecord(statusResult)) return undefined;
-  if (isFailedLifecycleResult(eventResult) === isFailedLifecycleResult(statusResult)) {
+  if (
+    isFailedLifecycleResult(eventResult) ===
+    isFailedLifecycleResult(statusResult)
+  ) {
     return undefined;
   }
   return `Subagents event and status disagree about ${label} result ${index + 1}.`;
@@ -61,16 +67,16 @@ export function reconcilePanelResults(
 ): ExtractPanelResultsResult {
   const expectedCount = profile.panel.length;
   const allowedTrailing = options.allowedTrailingResults ?? 0;
-  const rawEvent = findLifecycleArray(resultPayload, "results");
+  const rawEvent = findLifecycleArray(resultPayload, 'results');
   if (rawEvent && rawEvent.length > expectedCount + allowedTrailing) {
     return error(
       `Terminal subagents data contained ${rawEvent.length} results for ${expectedCount + allowedTrailing} expected workflow steps.`,
-      "$.results",
+      '$.results',
     );
   }
 
-  const rawStatusSteps = findLifecycleArray(statusPayload, "steps");
-  const rawStatusResults = findLifecycleArray(statusPayload, "results");
+  const rawStatusSteps = findLifecycleArray(statusPayload, 'steps');
+  const rawStatusResults = findLifecycleArray(statusPayload, 'results');
   // Preserve an explicit terminal `results: []`: it is authoritative even
   // when it contains no child results. A running empty poll, however, is not
   // a terminal lifecycle assertion and can race a completion event.
@@ -80,11 +86,14 @@ export function reconcilePanelResults(
     rawStatusResults,
   );
   if (!rawStatus) {
-    if (eventResults.outputs.length + eventResults.failures.length !== expectedCount) {
+    if (
+      eventResults.outputs.length + eventResults.failures.length !==
+      expectedCount
+    ) {
       return error(
         `Terminal subagents data described ${eventResults.outputs.length + eventResults.failures.length} of ${expectedCount} configured panel members.`,
-        "$.results",
-        "incomplete-lifecycle",
+        '$.results',
+        'incomplete-lifecycle',
       );
     }
     return eventResults;
@@ -93,7 +102,7 @@ export function reconcilePanelResults(
   if (rawStatus.length > expectedCount + allowedTrailing) {
     return error(
       `Terminal subagents status contained ${rawStatus.length} steps for ${expectedCount + allowedTrailing} expected workflow steps.`,
-      "$.steps",
+      '$.steps',
     );
   }
 
@@ -103,7 +112,9 @@ export function reconcilePanelResults(
       ? { terminalizeRunning: true }
       : { completedOnly: true }),
     limit: expectedCount,
-    ...(options.allowMissingAtDeadline ? { requireStableSlotIdentity: true } : {}),
+    ...(options.allowMissingAtDeadline
+      ? { requireStableSlotIdentity: true }
+      : {}),
     ...(options.stoppedPanelIndices
       ? { stoppedPanelIndices: options.stoppedPanelIndices }
       : {}),
@@ -121,14 +132,24 @@ export function reconcilePanelResults(
     !options.terminalizeRunning &&
     eventResults.outputs.length + eventResults.failures.length === expectedCount
   ) {
-    const eventSucceeded = new Set(eventResults.outputs.map((item) => item.index));
-    const statusSucceeded = new Set(statusResults.outputs.map((item) => item.index));
+    const eventSucceeded = new Set(
+      eventResults.outputs.map((item) => item.index),
+    );
+    const statusSucceeded = new Set(
+      statusResults.outputs.map((item) => item.index),
+    );
     for (let index = 0; index < expectedCount; index++) {
       const eventKnown =
-        eventSucceeded.has(index) || eventResults.failures.some((item) => item.index === index);
+        eventSucceeded.has(index) ||
+        eventResults.failures.some((item) => item.index === index);
       const statusKnown =
-        statusSucceeded.has(index) || statusResults.failures.some((item) => item.index === index);
-      if (eventKnown && statusKnown && eventSucceeded.has(index) !== statusSucceeded.has(index)) {
+        statusSucceeded.has(index) ||
+        statusResults.failures.some((item) => item.index === index);
+      if (
+        eventKnown &&
+        statusKnown &&
+        eventSucceeded.has(index) !== statusSucceeded.has(index)
+      ) {
         return error(
           `Subagents event and status disagree about panel result ${index + 1}.`,
           `$.steps[${index}]`,
@@ -136,8 +157,7 @@ export function reconcilePanelResults(
       }
     }
   }
-  const eventCount =
-    eventResults.outputs.length + eventResults.failures.length;
+  const eventCount = eventResults.outputs.length + eventResults.failures.length;
   const statusIndices = new Set([
     ...statusResults.outputs.map(({ index }) => index),
     ...statusResults.failures.map(({ index }) => index),
@@ -166,21 +186,32 @@ export function reconcilePanelResults(
   if (!missingWereStopped) {
     if (options.terminalizeRunning && options.allowMissingAtDeadline) {
       const reconciled = mergeTerminalDeadlineResults(
-        eventResults, statusResults, statusPayload, resultPayload,
+        eventResults,
+        statusResults,
+        statusPayload,
+        resultPayload,
       );
       for (const index of missingStatusIndices) {
-        const output = eventResults.outputs.find((item) => item.index === index);
-        const failure = eventResults.failures.find((item) => item.index === index);
+        const output = eventResults.outputs.find(
+          (item) => item.index === index,
+        );
+        const failure = eventResults.failures.find(
+          (item) => item.index === index,
+        );
         if (output) reconciled.outputs.push(output);
         else if (failure) reconciled.failures.push(failure);
         else {
-          const member = profile.panel[index]!;
+          const member = profile.panel[index];
+          if (!member) continue;
           reconciled.failures.push({
-            index, agent: member.agent, id: member.id,
+            index,
+            agent: member.agent,
+            id: member.id,
             ...(member.label ? { label: member.label } : {}),
             ...(member.model ? { configuredModel: member.model } : {}),
-            summary: "No terminal result was reported before the workflow deadline.",
-            reason: "timeout",
+            summary:
+              'No terminal result was reported before the workflow deadline.',
+            reason: 'timeout',
           });
         }
       }
@@ -190,15 +221,17 @@ export function reconcilePanelResults(
     }
     return error(
       `Terminal subagents status described ${statusCount} of ${expectedCount} configured panel members.`,
-      "$.steps",
-      statusCount === 0 && !options.terminalizeRunning ? "unknown-result-shape" : "incomplete-lifecycle",
+      '$.steps',
+      statusCount === 0 && !options.terminalizeRunning
+        ? 'unknown-result-shape'
+        : 'incomplete-lifecycle',
     );
   }
 
   if (eventCount !== expectedCount) {
     return error(
       `Terminal subagents data described ${eventCount} of ${expectedCount} configured panel members.`,
-      "$.results",
+      '$.results',
     );
   }
 
@@ -218,9 +251,15 @@ function mergeTerminalDeadlineResults(
   eventPayload: unknown,
 ): ExtractPanelResultsSuccess {
   const eventOutputs = new Map(event.outputs.map((item) => [item.index, item]));
-  const eventFailures = new Map(event.failures.map((item) => [item.index, item]));
-  const statusOutputs = new Map(status.outputs.map((item) => [item.index, item]));
-  const statusFailures = new Map(status.failures.map((item) => [item.index, item]));
+  const eventFailures = new Map(
+    event.failures.map((item) => [item.index, item]),
+  );
+  const statusOutputs = new Map(
+    status.outputs.map((item) => [item.index, item]),
+  );
+  const statusFailures = new Map(
+    status.failures.map((item) => [item.index, item]),
+  );
   const replaceableSlots = deadlineEventReplacementSlots(
     statusPayload,
     eventPayload,
@@ -228,7 +267,12 @@ function mergeTerminalDeadlineResults(
   const outputs: PanelOutput[] = [];
   const failures: FailedPanelSummary[] = [];
   const maxIndex = Math.max(
-    ...[...eventOutputs.keys(), ...eventFailures.keys(), ...statusOutputs.keys(), ...statusFailures.keys()],
+    ...[
+      ...eventOutputs.keys(),
+      ...eventFailures.keys(),
+      ...statusOutputs.keys(),
+      ...statusFailures.keys(),
+    ],
     -1,
   );
   for (let index = 0; index <= maxIndex; index++) {
@@ -255,7 +299,12 @@ function mergeTerminalDeadlineResults(
       failures.push(statusFailure);
     }
   }
-  return { ok: true, outputs, failures, ...(event.runId ? { runId: event.runId } : {}) };
+  return {
+    ok: true,
+    outputs,
+    failures,
+    ...(event.runId ? { runId: event.runId } : {}),
+  };
 }
 
 /**
@@ -269,9 +318,9 @@ function deadlineEventReplacementSlots(
   eventPayload: unknown,
 ): ReadonlySet<number> {
   const statusResults =
-    findLifecycleArray(statusPayload, "steps") ??
-    findLifecycleArray(statusPayload, "results");
-  const eventResults = findLifecycleArray(eventPayload, "results");
+    findLifecycleArray(statusPayload, 'steps') ??
+    findLifecycleArray(statusPayload, 'results');
+  const eventResults = findLifecycleArray(eventPayload, 'results');
   if (!statusResults || !eventResults) return new Set<number>();
 
   const nonterminalStatusSlots = new Set<number>();
@@ -298,7 +347,11 @@ function stablePanelSlot(result: unknown): number | undefined {
   // public slots. Keep deadline matching exactly aligned; a numeric 1 must
   // mean panel slot 1, never a guessed one-based panel-1.
   for (const candidate of [result.index, result.taskIndex, result.stepIndex]) {
-    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 0) {
+    if (
+      typeof candidate === 'number' &&
+      Number.isInteger(candidate) &&
+      candidate >= 0
+    ) {
       return candidate;
     }
   }
@@ -316,10 +369,10 @@ function isNonterminalLifecycleResult(result: unknown): boolean {
   if (!isRecord(result)) return false;
   const status = firstString(result.status, result.state);
   return (
-    status === "running" ||
-    status === "active" ||
-    status === "pending" ||
-    status === "queued"
+    status === 'running' ||
+    status === 'active' ||
+    status === 'pending' ||
+    status === 'queued'
   );
 }
 
@@ -334,7 +387,7 @@ function preserveAgreementReasons(
     ...status,
     failures: status.failures.map((failure) => {
       const eventFailure = eventFailures.get(failure.index);
-      return eventFailure?.reason === "stopped-after-agreement"
+      return eventFailure?.reason === 'stopped-after-agreement'
         ? { ...failure, reason: eventFailure.reason }
         : failure;
     }),
@@ -345,7 +398,7 @@ function mergeObservations(
   event: ExtractPanelResultsSuccess,
   status: ExtractPanelResultsSuccess,
 ): ExtractPanelResultsSuccess {
-  const observations = new Map<number, PanelOutput["observation"]>();
+  const observations = new Map<number, PanelOutput['observation']>();
   for (const output of status.outputs) {
     observations.set(output.index, output.observation);
   }
@@ -366,14 +419,14 @@ function mergeObservations(
 
 function withObservation<T extends PanelOutput | FailedPanelSummary>(
   item: T,
-  statusObservation: PanelOutput["observation"] | undefined,
+  statusObservation: PanelOutput['observation'] | undefined,
 ): T {
   const observation = mergeRunObservations(statusObservation, item.observation);
   return hasObservationData(observation) ? { ...item, observation } : item;
 }
 
 function hasObservationData(
-  observation: PanelOutput["observation"] | undefined,
+  observation: PanelOutput['observation'] | undefined,
 ): boolean {
   return Boolean(
     observation &&
@@ -387,7 +440,7 @@ function hasObservationData(
 
 function findLifecycleArray(
   payload: unknown,
-  key: "results" | "steps",
+  key: 'results' | 'steps',
 ): readonly unknown[] | undefined {
   if (!isRecord(payload)) return undefined;
   const direct = unknownArray(payload[key]);
@@ -406,7 +459,11 @@ function authoritativeStatusLifecycleArray(
   results: readonly unknown[] | undefined,
 ): readonly unknown[] | undefined {
   const lifecycle = steps ?? results;
-  if (!lifecycle || lifecycle.length > 0 || isTerminalLifecyclePayload(payload)) {
+  if (
+    !lifecycle ||
+    lifecycle.length > 0 ||
+    isTerminalLifecyclePayload(payload)
+  ) {
     return lifecycle;
   }
   return undefined;
@@ -415,26 +472,29 @@ function authoritativeStatusLifecycleArray(
 function isTerminalLifecyclePayload(payload: unknown): boolean {
   if (!isRecord(payload)) return false;
   const state = firstString(payload.state, payload.status);
-  const textState = firstString(payload.text)?.match(
-    /(?:^|\n)(?:State|Status):\s*([^\n\r]+)/i,
-  )?.[1]?.trim();
+  const textState = firstString(payload.text)
+    ?.match(/(?:^|\n)(?:State|Status):\s*([^\n\r]+)/i)?.[1]
+    ?.trim();
   if (
-    state === "complete" ||
-    textState === "complete" ||
-    textState === "completed" ||
-    textState === "done" ||
-    textState === "failed" ||
-    textState === "paused" ||
-    textState === "detached" ||
-    state === "completed" ||
-    state === "done" ||
-    state === "failed" ||
-    state === "paused" ||
-    state === "detached"
+    state === 'complete' ||
+    textState === 'complete' ||
+    textState === 'completed' ||
+    textState === 'done' ||
+    textState === 'failed' ||
+    textState === 'paused' ||
+    textState === 'detached' ||
+    state === 'completed' ||
+    state === 'done' ||
+    state === 'failed' ||
+    state === 'paused' ||
+    state === 'detached'
   ) {
     return true;
   }
-  if (isRecord(payload.details) && isTerminalLifecyclePayload(payload.details)) {
+  if (
+    isRecord(payload.details) &&
+    isTerminalLifecyclePayload(payload.details)
+  ) {
     return true;
   }
   return isRecord(payload.data) && isTerminalLifecyclePayload(payload.data);
@@ -443,14 +503,14 @@ function isTerminalLifecyclePayload(payload: unknown): boolean {
 function isFailedLifecycleResult(result: Record<string, unknown>): boolean {
   if (result.success === false) return true;
   if (result.timedOut === true || result.interrupted === true) return true;
-  if (typeof result.error === "string" && result.error.trim()) return true;
+  if (typeof result.error === 'string' && result.error.trim()) return true;
   const status = firstString(result.status, result.state);
-  return status === "failed" || status === "paused" || status === "detached";
+  return status === 'failed' || status === 'paused' || status === 'detached';
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {
   for (const value of values) {
-    if (typeof value === "string") return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -462,7 +522,9 @@ function unknownArray(value: unknown): readonly unknown[] | undefined {
 function error(
   message: string,
   path: string,
-  code: "unknown-result-shape" | "incomplete-lifecycle" = "unknown-result-shape",
+  code:
+    | 'unknown-result-shape'
+    | 'incomplete-lifecycle' = 'unknown-result-shape',
 ): ExtractPanelResultsResult {
   return {
     ok: false,
