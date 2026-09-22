@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2 - 2026-09-22
+
+- Modernize tooling: TypeScript 7, Biome (replacing ESLint), Vitest (replacing node:test), and npm 12.
+- Keep `noImplicitOverride`, NodeNext resolution, and the ES2023 lib in `tsconfig.json`.
+- Simplify the CI and release workflows to `npm run check`, `npm test`, and `npm run pack:dry`; the pre-commit hook now runs Biome.
+- Document that Biome is not type-aware, so the type-checked ESLint rules are an accepted loss kept out by review.
+
 ## 0.9.1
 
 - Fence concurrent durable snapshot writes with a revision chain, so a delayed recovery lookup can no longer overwrite a newer judge admission.
