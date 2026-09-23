@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3 - 2026-09-23
+
+- Document support for ordinary Fusion panels and judges with released `pi-subagents@0.71.0` and the limits of strict execution lifetime.
+- Test the released RPC capability subset: strict lifetime fails before spawn; an ordinary panel and judge complete. Production behavior is unchanged.
+
 ## 0.9.2 - 2026-09-22
 
 - Modernize tooling: TypeScript 7, Biome (replacing ESLint), Vitest (replacing node:test), and npm 12.
