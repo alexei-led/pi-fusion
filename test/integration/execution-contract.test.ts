@@ -1012,6 +1012,7 @@ for (const cancellation of ['terminal', 'durable-marker'] as const) {
   });
 }
 
+// The relevant subset of 0.71.0 pingData; `version` below is the RPC protocol, not the npm version.
 const released071Capabilities = {
   asyncSpawn: true,
   stop: true,
@@ -1049,17 +1050,15 @@ class Released071Runtime implements FusionRpcClientLike {
   }
 }
 
-test('released pi-subagents 0.71.0 rejects explicit lifetime before spawn', async (_t) => {
-  const rpc = new Released071Runtime();
-  const ping = (await rpc.ping()) as {
-    version: number;
-    capabilities: Record<string, unknown>;
-  };
-  assert.equal(ping.version, 1);
-  assert.equal(ping.capabilities.durableOperations, undefined);
-  assert.equal(ping.capabilities.executionLifetime, undefined);
-  assert.equal(ping.capabilities.processTreeOwnership, undefined);
-  assert.deepEqual(ping.capabilities, released071Capabilities);
+test('released pi-subagents 0.71.0 capabilities reject explicit lifetime before spawn', async (_t) => {
+  const rpc = Object.assign(new Released071Runtime(), {
+    lookup: async () => {
+      throw new Error('unexpected lookup');
+    },
+    cancel: async () => {
+      throw new Error('unexpected cancel');
+    },
+  });
   const orchestrator = new FusionOrchestrator({
     rpc,
     loadConfig: async () => config,
