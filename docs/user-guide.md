@@ -171,6 +171,12 @@ Profile:
 
 Timeouts are hard workflow deadlines. A child terminated at the deadline can report exit 143. Fusion durably keeps verified completed slots, turns terminal running/interrupted slots into typed failures, and fails closed when lifecycle sources genuinely disagree. A timed-out judge never becomes a panel-only success. When at least one valid panel result exists, Fusion produces either synthesis at quorum or an explicitly unsynthesized partial report below quorum; failures and timeouts are disclosed as missing coverage. Only zero successful outputs fail outright. Fusion never automatically retries a failed panelist, restarts a panel, or extends a deadline.
 
+### pi-subagents 0.71.0 compatibility
+
+Ordinary Fusion is supported with released `pi-subagents@0.71.0`. Start it as usual, for example `/fusion Compare these designs`; leave `executionLifetime` out of `start_fusion_review` and `fusion:rpc:v1` `start` requests. The normal `workflowScript` panel and separate judge use the profile's ordinary timeout rules above.
+
+Explicit `executionLifetime` is not available with 0.71.0. Its RPC `ping` reports protocol `version: 1` and capabilities for async spawn, stop, non-recovering steer, and process terminal proof (lifecycle artifact version 3), but it does not advertise durable operations, explicit execution lifetimes, or process-tree ownership. The separate `pi-subagents` bridge 0.5.0 may expose best-effort POSIX process-group ownership; that bridge capability is not advertised by native 0.71.0 and does not prove escaped-descendant containment or kernel-owned Fusion routes. Fusion rejects an explicit lifetime during preflight, before spawning anything. If you need more time for ordinary runs, tune `panelTimeoutMs` and `judgeTimeoutMs`; these remain workflow deadlines, not the strict execution-lifetime guarantee. Use explicit mode only after the connected runtime advertises all required capabilities and Pi has been reloaded.
+
 ### Explicit execution lifetime
 
 The `start_fusion_review` tool and `fusion:rpc:v1` `start` method accept

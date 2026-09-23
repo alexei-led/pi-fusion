@@ -1012,11 +1012,54 @@ for (const cancellation of ['terminal', 'durable-marker'] as const) {
   });
 }
 
-test('unbounded preflight refuses a runtime that only advertises lifetime', async (_t) => {
-  const rpc = new NativeRuntime();
-  rpc.ping = async () => ({
-    capabilities: { executionLifetime: capabilities.executionLifetime },
-  });
+const released071Capabilities = {
+  asyncSpawn: true,
+  stop: true,
+  nonRecoveringSteer: true,
+  processTerminalProof: { version: 1, lifecycleArtifactVersion: 3 },
+};
+
+class Released071Runtime implements FusionRpcClientLike {
+  readonly spawns: object[] = [];
+  readonly statuses = new Map<string, unknown>();
+
+  async ping(): Promise<unknown> {
+    return { version: 1, capabilities: released071Capabilities };
+  }
+
+  async spawn(params: object): Promise<unknown> {
+    this.spawns.push(params);
+    const runId =
+      this.spawns.length === 1 ? 'released-panel' : 'released-judge';
+    return { details: { runId } };
+  }
+
+  async status(params?: object): Promise<unknown> {
+    const runId =
+      isRecord(params) && typeof params.id === 'string' ? params.id : '';
+    return this.statuses.get(runId) ?? { runId, state: 'running', results: [] };
+  }
+
+  async stop(): Promise<unknown> {
+    return { ok: true };
+  }
+
+  async interrupt(): Promise<unknown> {
+    return { ok: true };
+  }
+}
+
+test('released pi-subagents 0.71.0 rejects explicit lifetime before spawn', async (_t) => {
+  const rpc = new Released071Runtime();
+  const ping = (await rpc.ping()) as {
+    version: number;
+    capabilities: Record<string, unknown>;
+  };
+  assert.equal(ping.version, 1);
+  assert.equal(ping.capabilities.durableOperations, undefined);
+  assert.equal(ping.capabilities.executionLifetime, undefined);
+  assert.equal(ping.capabilities.processTreeOwnership, undefined);
+  assert.deepEqual(ping.capabilities, released071Capabilities);
   const orchestrator = new FusionOrchestrator({
     rpc,
     loadConfig: async () => config,
@@ -1027,7 +1070,73 @@ test('unbounded preflight refuses a runtime that only advertises lifetime', asyn
     new FakePi().createContext(),
   );
   assert.equal(result.status, 'failed');
+  if (result.status === 'failed')
+    assert.match(result.error, /verified executionLifetime/);
   assert.equal(rpc.spawns.length, 0);
+});
+
+test('released pi-subagents 0.71.0 completes an ordinary panel and judge run', async (_t) => {
+  const rpc = new Released071Runtime();
+  const panelConfig: FusionConfig = {
+    defaultProfile: 'quality',
+    profiles: {
+      quality: {
+        panel: [
+          { id: 'one', agent: 'panelist' },
+          { id: 'two', agent: 'panelist' },
+        ],
+        judge: { agent: 'judge' },
+      },
+    },
+  };
+  const orchestrator = new FusionOrchestrator({
+    rpc,
+    loadConfig: async () => panelConfig,
+  });
+  onTestFinished(() => orchestrator.dispose());
+  const started = await orchestrator.startRun(
+    { prompt: 'Review' },
+    new FakePi().createContext(),
+  );
+  assert.equal(started.status, 'started');
+  assert.equal(rpc.spawns.length, 1);
+  assert.ok(isRecord(rpc.spawns[0]) && 'workflowScript' in rpc.spawns[0]);
+  assert.equal('executionLifetime' in required(rpc.spawns[0]), false);
+  assert.equal('ownedWorkflow' in required(rpc.spawns[0]), false);
+
+  rpc.statuses.set('released-panel', {
+    runId: 'released-panel',
+    state: 'complete',
+    results: [
+      { agent: 'panelist', success: true, output: 'Panel recommendation 1.' },
+      { agent: 'panelist', success: true, output: 'Panel recommendation 2.' },
+    ],
+  });
+  const panel = await orchestrator.handleSubagentComplete({
+    runId: 'released-panel',
+  });
+  assert.equal(panel.status, 'started');
+  assert.equal(orchestrator.getActiveRun()?.phase, 'judge');
+  assert.equal(rpc.spawns.length, 2);
+  assert.ok(isRecord(rpc.spawns[1]) && 'workflowScript' in rpc.spawns[1]);
+  assert.equal('executionLifetime' in required(rpc.spawns[1]), false);
+
+  rpc.statuses.set('released-judge', {
+    runId: 'released-judge',
+    state: 'complete',
+    results: [
+      {
+        agent: 'judge',
+        success: true,
+        output: '# Fusion Report\\n\\n## Recommendation\\nUse the proposal.',
+      },
+    ],
+  });
+  const judged = await orchestrator.handleSubagentComplete({
+    runId: 'released-judge',
+  });
+  assert.equal(judged.status, 'done');
+  assert.equal(orchestrator.getActiveRun(), undefined);
 });
 
 test('stop during an ambiguous launch remains fenced after restart until native exit', async (_t) => {
