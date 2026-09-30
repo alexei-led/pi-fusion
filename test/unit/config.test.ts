@@ -634,6 +634,49 @@ test('a thinking-only override drops a level embedded in the profile model', () 
   });
 });
 
+test('a model-only override keeps a level embedded in the profile model', () => {
+  const embedded: FusionProfile = {
+    panel: [],
+    judge: { agent: 'judge', model: 'openai/gpt-5.5:high' },
+  };
+
+  assert.deepEqual(composeJudgeOverride(embedded, 'judge:other-model').judge, {
+    agent: 'judge',
+    model: 'other-model',
+    thinking: 'high',
+  });
+  // Every other spec shape reads the same effective level out of the model.
+  assert.deepEqual(composeJudgeOverride(embedded, 'judge').judge, {
+    agent: 'judge',
+    model: 'openai/gpt-5.5',
+    thinking: 'high',
+  });
+  assert.deepEqual(composeJudgeOverride(embedded, 'judge:max').judge, {
+    agent: 'judge',
+    model: 'openai/gpt-5.5',
+    thinking: 'max',
+  });
+  assert.deepEqual(
+    composeJudgeOverride(embedded, 'judge:other-model:low').judge,
+    { agent: 'judge', model: 'other-model', thinking: 'low' },
+  );
+});
+
+test('an embedded level wins over a contradicting thinking field', () => {
+  const contradicting: FusionProfile = {
+    panel: [],
+    judge: { agent: 'judge', model: 'gpt-5.5:high', thinking: 'low' },
+  };
+
+  // This is the level the profile already ran at, because the suffixed model
+  // wins at spawn time, so the override has to carry the same one forward.
+  assert.deepEqual(composeJudgeOverride(contradicting, 'judge:other').judge, {
+    agent: 'judge',
+    model: 'other',
+    thinking: 'high',
+  });
+});
+
 test('composeJudgeOverride leaves the rest of the profile alone', () => {
   const profile: FusionProfile = {
     panel: [{ id: 'one', label: 'One', agent: 'panel-agent' }],
