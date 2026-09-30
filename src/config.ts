@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { CONFIG_DIR_NAME, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { applyClaudeAliasShorthand } from './claude-aliases.js';
 import { FusionConfigError } from './errors.js';
+import { parseJudgeSpec } from './fusion-args.js';
 import { isTimerMs } from './runtime-values.js';
 import {
   type FusionConfig,
@@ -244,6 +245,77 @@ export function buildInlinePanelProfile(
   // composer to merge facets that do not exist.
   const { synthesis: _dropped, ...rest } = base;
   return { ...rest, panel };
+}
+
+/**
+ * Applies a `--judge` override to a resolved profile. The spec carries one to
+ * three segments: `<agent>`, `<agent>:<model>`, `<agent>:<level>`, or
+ * `<agent>:<model>:<level>`.
+ *
+ * A tail segment naming a thinking level is always read as one — that is what
+ * separates `--judge review-judge:high` from a model id — so a model id whose
+ * last segment happens to be a level name cannot be given in the tail. Fields
+ * the spec omits keep the profile judge's values.
+ */
+export function composeJudgeOverride(
+  profile: FusionProfile,
+  spec: string,
+): FusionProfile {
+  const [agent, second, third] = parseJudgeSpec(spec);
+  if (!isAgentReference(agent)) {
+    throw new FusionConfigError(
+      `--judge "${spec}" has a malformed agent reference.`,
+    );
+  }
+  const judge: JudgeConfig = { ...profile.judge, agent };
+  if (second === undefined) {
+    return { ...profile, judge };
+  }
+
+  if (third === undefined && isThinkingLevel(second)) {
+    // A thinking-only override. A level already embedded in the profile model
+    // would otherwise win, silently dropping the level just asked for, and a
+    // profile judge with no model has nothing to carry the level at all.
+    const model = profile.judge.model;
+    if (model === undefined) {
+      throw new FusionConfigError(
+        `--judge "${spec}" sets a thinking level, but the profile judge has no model to apply it to. Name one instead: --judge <agent>:<model>:${second}.`,
+      );
+    }
+    return {
+      ...profile,
+      judge: {
+        ...judge,
+        model: stripThinkingSuffix(model),
+        thinking: second,
+      },
+    };
+  }
+
+  const level =
+    third !== undefined && isThinkingLevel(third) ? third : undefined;
+  return {
+    ...profile,
+    judge: {
+      ...judge,
+      // An unrecognized tail stays part of the model id, so variants such as
+      // `ollama/qwen3.6:35b-a3b-coding-nvfp4` survive.
+      model:
+        level === undefined && third !== undefined
+          ? `${second}:${third}`
+          : second,
+      ...(level === undefined ? {} : { thinking: level }),
+    },
+  };
+}
+
+/** Drops a trailing `:<level>` suffix that Fusion recognizes as a level. */
+function stripThinkingSuffix(model: string): string {
+  const separator = model.lastIndexOf(':');
+  if (separator === -1) return model;
+  return isThinkingLevel(model.slice(separator + 1))
+    ? model.slice(0, separator)
+    : model;
 }
 
 function uniqueInlineId(

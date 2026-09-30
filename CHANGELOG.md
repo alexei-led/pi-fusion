@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `/fusion --judge <agent>[:<model>[:<level>]]` overrides the judge of the resolved profile for one run, one field at a time: whatever the spec omits keeps the profile's value. A tail segment that names a thinking level is read as one; any other tail stays part of the model id, so variant ids survive. A thinking-only override needs a judge model to attach to and fails at start instead of silently running at the profile's level. The composed judge is recorded in the run snapshot, so restore keeps it.
+
 ## 0.10.0 - 2026-09-30
 
 ### Changes

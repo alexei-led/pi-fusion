@@ -143,3 +143,87 @@ test('parseFusionArgs treats --panel after the prompt as prompt text', () => {
 test('parseFusionArgs omits panel when --panel is absent', () => {
   assert.equal(parseFusionArgs('/fusion Compare designs').panel, undefined);
 });
+
+test('parseFusionArgs reads --judge in both syntaxes', () => {
+  assert.equal(
+    parseFusionArgs('/fusion --judge review-judge Compare').judgeOverride,
+    'review-judge',
+  );
+  assert.equal(
+    parseFusionArgs('/fusion --judge=review-judge Compare').judgeOverride,
+    'review-judge',
+  );
+});
+
+test('parseFusionArgs keeps a --judge spec of up to three segments', () => {
+  assert.equal(
+    parseFusionArgs('/fusion --judge judge:gpt-5.5 Compare').judgeOverride,
+    'judge:gpt-5.5',
+  );
+  assert.equal(
+    parseFusionArgs('/fusion --judge judge:gpt-5.5:high Compare').judgeOverride,
+    'judge:gpt-5.5:high',
+  );
+  // A colon-bearing model id is three segments too, and stays intact.
+  assert.equal(
+    parseFusionArgs('/fusion --judge judge:qwen3.6:35b Compare').judgeOverride,
+    'judge:qwen3.6:35b',
+  );
+});
+
+test('parseFusionArgs trims whitespace around judge segments', () => {
+  assert.equal(
+    parseFusionArgs('/fusion --judge " judge : gpt-5.5 : high " Compare')
+      .judgeOverride,
+    'judge:gpt-5.5:high',
+  );
+});
+
+test('parseFusionArgs rejects a malformed --judge spec', () => {
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge'),
+    /Missing value for --judge/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge --profile fast Compare'),
+    /Missing value for --judge/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge= Compare'),
+    /Missing value for --judge/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge judge::high Compare'),
+    /segments must be non-empty/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge judge:::high Compare'),
+    /at most 3 segments/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge a:b:c:d Compare'),
+    /at most 3 segments/,
+  );
+  assert.throws(
+    () => parseFusionArgs('/fusion --judge one --judge two Compare'),
+    /Judge can only be provided once/,
+  );
+});
+
+test('parseFusionArgs combines --judge with --profile and --panel', () => {
+  const args = parseFusionArgs(
+    '/fusion --profile fast --panel opus,gpt --judge judge:high Compare',
+  );
+
+  assert.equal(args.profile, 'fast');
+  assert.deepEqual(args.panel, ['opus', 'gpt']);
+  assert.equal(args.judgeOverride, 'judge:high');
+  assert.equal(args.prompt, 'Compare');
+});
+
+test('parseFusionArgs treats --judge after the prompt as prompt text', () => {
+  const args = parseFusionArgs('/fusion Compare --judge judge');
+
+  assert.equal(args.judgeOverride, undefined);
+  assert.equal(args.prompt, 'Compare --judge judge');
+});

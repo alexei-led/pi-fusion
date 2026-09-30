@@ -6,6 +6,7 @@ import { onTestFinished, test } from 'vitest';
 import { runFusionInit } from '../../src/commands.js';
 import {
   buildInlinePanelProfile,
+  composeJudgeOverride,
   createDefaultFusionConfig,
   getFusionConfigTemplate,
   getGlobalFusionConfigPath,
@@ -17,7 +18,7 @@ import {
   resolveProfile,
   splitInlinePanelEntry,
 } from '../../src/config.js';
-import type { FusionConfig } from '../../src/types.js';
+import type { FusionConfig, FusionProfile } from '../../src/types.js';
 
 const PANEL_MEMBER = {
   id: 'one',
@@ -566,6 +567,103 @@ test('splitInlinePanelEntry reads an agent-qualified entry', () => {
   assert.deepEqual(
     splitInlinePanelEntry('pi-fusion.fusion-panelist-full:opus:high'),
     { agent: 'pi-fusion.fusion-panelist-full', model: 'opus:high' },
+  );
+});
+
+test('composeJudgeOverride replaces only the judge fields the spec names', () => {
+  const profile: FusionProfile = {
+    panel: [],
+    judge: { agent: 'judge', model: 'profile-model', thinking: 'low' },
+  };
+
+  assert.deepEqual(composeJudgeOverride(profile, 'replacement').judge, {
+    agent: 'replacement',
+    model: 'profile-model',
+    thinking: 'low',
+  });
+  assert.deepEqual(
+    composeJudgeOverride(profile, 'replacement:new-model').judge,
+    { agent: 'replacement', model: 'new-model', thinking: 'low' },
+  );
+  assert.deepEqual(composeJudgeOverride(profile, 'replacement:high').judge, {
+    agent: 'replacement',
+    model: 'profile-model',
+    thinking: 'high',
+  });
+  assert.deepEqual(
+    composeJudgeOverride(profile, 'replacement:new-model:max').judge,
+    { agent: 'replacement', model: 'new-model', thinking: 'max' },
+  );
+});
+
+test('composeJudgeOverride keeps a colon-bearing model id in the tail', () => {
+  const profile: FusionProfile = { panel: [], judge: { agent: 'judge' } };
+
+  assert.deepEqual(
+    composeJudgeOverride(profile, 'judge:qwen3.6:35b-a3b-coding-nvfp4').judge,
+    { agent: 'judge', model: 'qwen3.6:35b-a3b-coding-nvfp4' },
+  );
+  // A tail that names a level is the level, never the model id.
+  assert.deepEqual(composeJudgeOverride(profile, 'judge:gpt-5.5:high').judge, {
+    agent: 'judge',
+    model: 'gpt-5.5',
+    thinking: 'high',
+  });
+});
+
+test('a thinking-only override drops a level embedded in the profile model', () => {
+  const embedded: FusionProfile = {
+    panel: [],
+    judge: { agent: 'judge', model: 'gpt-5.5:low' },
+  };
+  assert.deepEqual(composeJudgeOverride(embedded, 'judge:max').judge, {
+    agent: 'judge',
+    model: 'gpt-5.5',
+    thinking: 'max',
+  });
+
+  // An unrecognized suffix belongs to the model id and survives untouched.
+  const variant: FusionProfile = {
+    panel: [],
+    judge: { agent: 'judge', model: 'gpt-5.5:batch' },
+  };
+  assert.deepEqual(composeJudgeOverride(variant, 'judge:max').judge, {
+    agent: 'judge',
+    model: 'gpt-5.5:batch',
+    thinking: 'max',
+  });
+});
+
+test('composeJudgeOverride leaves the rest of the profile alone', () => {
+  const profile: FusionProfile = {
+    panel: [{ id: 'one', label: 'One', agent: 'panel-agent' }],
+    judge: { agent: 'judge' },
+    concurrency: 3,
+    context: 'fork',
+    synthesis: 'merge',
+  };
+
+  const composed = composeJudgeOverride(profile, 'replacement');
+
+  assert.deepEqual(composed, { ...profile, judge: { agent: 'replacement' } });
+  assert.deepEqual(profile.judge, { agent: 'judge' });
+});
+
+test('composeJudgeOverride rejects a malformed spec', () => {
+  const profile: FusionProfile = { panel: [], judge: { agent: 'judge' } };
+
+  assert.throws(
+    () => composeJudgeOverride(profile, 'not an agent'),
+    /malformed agent reference/,
+  );
+  assert.throws(
+    () => composeJudgeOverride(profile, 'agent:model:level:extra'),
+    /at most 3 segments/,
+  );
+  // A level with no model to carry it would be dropped at spawn time.
+  assert.throws(
+    () => composeJudgeOverride(profile, 'agent:high'),
+    /has no model to apply it to/,
   );
 });
 

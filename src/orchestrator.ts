@@ -7,6 +7,7 @@ import {
 import { applyClaudeAliasShorthand } from './claude-aliases.js';
 import {
   buildInlinePanelProfile,
+  composeJudgeOverride,
   loadFusionConfig,
   type ResolvedFusionProfile,
   resolveProfile as resolveFusionProfile,
@@ -271,24 +272,30 @@ export class FusionOrchestrator {
         throw new FusionArgsError(
           'stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.',
         );
-      if (args.panel?.length) {
-        // The named profile still supplies the judge and every other setting;
-        // only the panel is replaced. Inline models skip the alias pass that
-        // runs at config load, so re-run it over the assembled profile.
-        const inlineName = `${resolved.name} (inline panel)`;
+      if (args.panel?.length || args.judgeOverride) {
+        // The named profile still supplies every setting the overrides do not
+        // name: `--panel` replaces the panel, `--judge` replaces only the
+        // judge fields its spec carries. Inline panels and judge overrides
+        // skip the alias pass that runs at config load, so re-run it over the
+        // assembled profile.
+        const composed = args.judgeOverride
+          ? composeJudgeOverride(resolved.profile, args.judgeOverride)
+          : resolved.profile;
+        const profileName = args.panel?.length
+          ? `${resolved.name} (inline panel)`
+          : resolved.name;
         const aliased = await applyClaudeAliasShorthand(
           {
-            defaultProfile: inlineName,
+            defaultProfile: profileName,
             profiles: {
-              [inlineName]: buildInlinePanelProfile(
-                resolved.profile,
-                args.panel,
-              ),
+              [profileName]: args.panel?.length
+                ? buildInlinePanelProfile(composed, args.panel)
+                : composed,
             },
           },
           ctx,
         );
-        resolved = this.resolveProfile(aliased, inlineName);
+        resolved = this.resolveProfile(aliased, profileName);
       }
       if (
         !args.executionLifetime &&

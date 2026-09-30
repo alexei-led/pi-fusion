@@ -3,7 +3,29 @@ import { isTimerMs } from './runtime-values.js';
 import type { FusionTimeoutOverrides, ParsedFusionArgs } from './types.js';
 
 const FUSION_USAGE =
-  'Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.';
+  'Usage: /fusion <prompt> | /fusion --profile <name> <prompt> | /fusion --panel <models> <prompt> [--judge <agent>[:<model>[:<level>]]] [--panelist-timeout-ms n --panel-timeout-ms n --panel-grace-ms n --judge-timeout-ms n] | /fusion status | /fusion stop | /fusion init.';
+
+/**
+ * Splits a `--judge` spec into 1-3 non-empty colon segments:
+ * `<agent>[:<model>[:<level>]]`. Segment shape is settled here so a malformed
+ * spec fails at parse time; whether the tail segment is a thinking level or
+ * part of the model id is decided by `composeJudgeOverride`, which runs once
+ * the profile it overrides is known.
+ */
+export function parseJudgeSpec(spec: string): string[] {
+  const segments = spec.split(':').map((segment) => segment.trim());
+  if (segments.length > 3) {
+    throw new FusionArgsError(
+      `--judge accepts at most 3 segments: <agent>[:<model>[:<level>]]. ${FUSION_USAGE}`,
+    );
+  }
+  if (segments.some((segment) => segment === '')) {
+    throw new FusionArgsError(
+      `--judge segments must be non-empty: <agent>[:<model>[:<level>]]. ${FUSION_USAGE}`,
+    );
+  }
+  return segments;
+}
 
 export type FusionInlineCommand = 'init' | 'status' | 'stop';
 
@@ -29,6 +51,7 @@ export function parseFusionArgs(
 
   let profile: string | undefined;
   let panel: string[] | undefined;
+  let judgeOverride: string | undefined;
   const timeoutOverrides: FusionTimeoutOverrides = {};
   const timeoutOptions: Record<string, keyof FusionTimeoutOverrides> = {
     '--panelist-timeout-ms': 'panelistTimeoutMs',
@@ -89,6 +112,31 @@ export function parseFusionArgs(
       continue;
     }
 
+    if (promptTokens.length === 0 && token === '--judge') {
+      const value = tokens[index + 1];
+      if (!value || value.startsWith('-')) {
+        throw new FusionArgsError(`Missing value for --judge. ${FUSION_USAGE}`);
+      }
+      if (judgeOverride) {
+        throw new FusionArgsError('Judge can only be provided once.');
+      }
+      judgeOverride = parseJudgeSpec(value).join(':');
+      index++;
+      continue;
+    }
+
+    if (promptTokens.length === 0 && token.startsWith('--judge=')) {
+      const value = token.slice('--judge='.length).trim();
+      if (!value) {
+        throw new FusionArgsError(`Missing value for --judge. ${FUSION_USAGE}`);
+      }
+      if (judgeOverride) {
+        throw new FusionArgsError('Judge can only be provided once.');
+      }
+      judgeOverride = parseJudgeSpec(value).join(':');
+      continue;
+    }
+
     const timeoutKey = timeoutOptions[token];
     const timeoutEquals = Object.entries(timeoutOptions).find(([option]) =>
       token.startsWith(`${option}=`),
@@ -128,6 +176,7 @@ export function parseFusionArgs(
     prompt,
     ...(profile ? { profile } : {}),
     ...(panel ? { panel } : {}),
+    ...(judgeOverride ? { judgeOverride } : {}),
     ...(Object.keys(timeoutOverrides).length ? { timeoutOverrides } : {}),
   };
 }

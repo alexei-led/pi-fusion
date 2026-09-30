@@ -87,6 +87,52 @@ the agent `gpt-4.1`, and the run fails with an unknown-agent error. Use a real
 level, or write the agent in full.
 Claude alias shorthand works inline: `--panel claude-work/opus-4.8`.
 
+### `--judge`
+
+Overrides the judge of the resolved profile for one run, without editing config
+or keeping a near-duplicate profile. It is per-field: everything the spec does
+not name stays as the profile declares it.
+
+```text
+/fusion --judge review-judge What did the panel miss?
+/fusion --judge review-judge:openai/gpt-5.5 What did the panel miss?
+/fusion --judge review-judge:max What did the panel miss?
+/fusion --judge review-judge:openai/gpt-5.5:max What did the panel miss?
+```
+
+The spec has one to three `:`-separated segments, `<agent>[:<model>[:<level>]]`,
+so the shape decides the meaning:
+
+| Spec | Agent | Model | Thinking |
+| --- | --- | --- | --- |
+| `judge` | replaced | profile | profile |
+| `judge:gpt-5.5` | replaced | replaced | profile |
+| `judge:max` | replaced | profile | replaced |
+| `judge:gpt-5.5:max` | replaced | replaced | replaced |
+
+A tail segment that is a thinking level is always read as one, which is what
+distinguishes `--judge judge:max` from a model id. A tail that is not a level
+stays part of the model, so variant ids survive:
+
+```text
+--judge judge:qwen3.6:35b-a3b-coding-nvfp4    # model id, not a level
+```
+
+Two consequences are worth knowing. A model id whose last segment is a level
+name cannot be given in the tail — `--judge judge:gpt-5.5:high` drops the model
+and asks for `high` on the profile's model. And a thinking-only override needs a
+model to attach to, so it fails at start rather than silently running at the
+profile's level when the profile judge declares no `model`.
+
+`--judge` composes with `--profile` and `--panel`, and the composed judge is
+recorded in the run snapshot, so `restore` keeps it. Claude alias shorthand
+resolves for an overridden judge model exactly as it does for a configured one.
+
+```text
+/fusion --profile audit --judge review-judge:gpt-5.5:high What did we miss?
+/fusion --panel opus,gpt-5.5 --judge review-judge:high What did we miss?
+```
+
 ## Config files
 
 Config lookup order:

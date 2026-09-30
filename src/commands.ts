@@ -17,6 +17,7 @@ const FUSION_HELP = [
   '/fusion <prompt>',
   '/fusion --profile <name> <prompt>',
   '/fusion --panel <models> <prompt>',
+  '/fusion --judge <agent>[:<model>[:<level>]] <prompt>',
   '/fusion status',
   '/fusion stop',
   '/fusion continue <fusion-run-id> <panelist-number>',
