@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0 - 2026-09-30
+
+### Changes
+
+- Support canonical `max` thinking in profiles, inline model suffixes, and restored runs.
+- Return structured tool receipts and error signals. Keep launch and deadline controls model-only; controllers use the existing Fusion RPC.
+- Preserve known upstream workflow failure categories in run state and failure reports. Reject deadlines above Node's timer ceiling instead of risking a 1ms timeout.
+- Reconcile on advertised lifecycle hints, coalescing duplicates while keeping fallback polling. Hints never substitute for authoritative results.
+- Finish upstream-stopped workflows with their stop reason, including after `/reload`, instead of leaving Fusion active. Do not wait for a missing result artifact or launch a replacement judge. A panel stopped by Fusion itself for early agreement still proceeds to synthesis with the retained answers.
+- Add opt-in `wakeOnCompletion` for the originating interactive session. RPC controllers are not woken; terminal notifications are not replayed on reload. A crash before sending can lose the wake.
+- Remove obsolete bundled-agent completion guards and refresh the locked Pi dependency tree.
+
+### Upgrade
+
+1. Upgrade Pi to 0.99.0 or later before installing this version; older Pi tool APIs are no longer supported.
+2. Reload Pi after upgrading. Use pi-subagents 0.73.1 for the checked current RPC contracts. Strict execution lifetime remains unavailable unless the backend advertises every required capability.
+
+
 ## 0.9.3 - 2026-09-23
 
 - Document support for ordinary Fusion panels and judges with released `pi-subagents@0.71.0` and the limits of strict execution lifetime.
