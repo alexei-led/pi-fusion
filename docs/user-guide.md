@@ -118,11 +118,12 @@ stays part of the model, so variant ids survive:
 --judge judge:qwen3.6:35b-a3b-coding-nvfp4    # model id, not a level
 ```
 
-Two consequences are worth knowing. A model id whose last segment is a level
-name cannot be given in the tail — `--judge judge:gpt-5.5:high` drops the model
-and asks for `high` on the profile's model. And a thinking-only override needs a
-model to attach to, so it fails at start rather than silently running at the
-profile's level when the profile judge declares no `model`.
+Two consequences are worth knowing. A tail segment that names a level is never read
+as part of the model, so a model whose own id ends in a level name cannot be given
+in the tail: `--judge judge:gpt-5.5:high` means model `gpt-5.5` at level `high`,
+never a model called `gpt-5.5:high`. And a thinking-only override needs a model to
+attach to, so it fails at start rather than silently running at the profile's level
+when the profile judge declares no `model`.
 
 `--judge` composes with `--profile` and `--panel`, and the composed judge is
 recorded in the run snapshot, so `restore` keeps it. Claude alias shorthand

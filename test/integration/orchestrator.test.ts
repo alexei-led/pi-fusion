@@ -2487,6 +2487,27 @@ test('a thinking-only --judge override keeps the profile judge model', async () 
   assert.equal(judge.model, 'original-judge:xhigh');
 });
 
+test('a model-only --judge override keeps a level embedded in the profile model', async () => {
+  const startConfig = structuredClone(CONFIG);
+  required(startConfig.profiles.quality).judge = {
+    agent: 'judge-agent',
+    model: 'original-judge:low',
+  };
+  const fixture = makeFixture({ config: startConfig });
+  await fixture.orchestrator.startRun(
+    { prompt: 'compare', judgeOverride: 'replacement-judge:new-model' },
+    fixture.ctx,
+  );
+
+  fixture.rpc.statusResults.set('chain-1', successfulPanelStatus('chain-1'));
+  fixture.rpc.spawnResults.push({ details: { runId: 'judge-1' } });
+  await fixture.orchestrator.handleSubagentComplete({ runId: 'chain-1' });
+
+  const judge = judgeWorkflowTask(fixture.rpc.spawns.at(-1));
+  assert.equal(judge.agent, 'replacement-judge');
+  assert.equal(judge.model, 'new-model:low');
+});
+
 test('a --judge override that cannot apply its level fails before spawning', async () => {
   const fixture = makeFixture();
   const result = await fixture.orchestrator.startRun(

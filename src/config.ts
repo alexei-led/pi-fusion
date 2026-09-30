@@ -267,29 +267,24 @@ export function composeJudgeOverride(
       `--judge "${spec}" has a malformed agent reference.`,
     );
   }
-  const judge: JudgeConfig = { ...profile.judge, agent };
+  // `appendThinkingSuffix` leaves a model that already carries a level alone, so
+  // a `:<level>` on the profile model is the level that actually runs. Fold it
+  // into `thinking` first, or a spec that replaces only the model drops the
+  // level along with it.
+  const judge: JudgeConfig = { ...carryEmbeddedThinking(profile.judge), agent };
   if (second === undefined) {
     return { ...profile, judge };
   }
 
   if (third === undefined && isThinkingLevel(second)) {
-    // A thinking-only override. A level already embedded in the profile model
-    // would otherwise win, silently dropping the level just asked for, and a
-    // profile judge with no model has nothing to carry the level at all.
-    const model = profile.judge.model;
-    if (model === undefined) {
+    // A thinking-only override. A profile judge with no model has nothing to
+    // carry the level at all.
+    if (judge.model === undefined) {
       throw new FusionConfigError(
         `--judge "${spec}" sets a thinking level, but the profile judge has no model to apply it to. Name one instead: --judge <agent>:<model>:${second}.`,
       );
     }
-    return {
-      ...profile,
-      judge: {
-        ...judge,
-        model: stripThinkingSuffix(model),
-        thinking: second,
-      },
-    };
+    return { ...profile, judge: { ...judge, thinking: second } };
   }
 
   const level =
@@ -309,13 +304,28 @@ export function composeJudgeOverride(
   };
 }
 
-/** Drops a trailing `:<level>` suffix that Fusion recognizes as a level. */
-function stripThinkingSuffix(model: string): string {
+/**
+ * Folds a trailing `:<level>` on a judge model into `thinking`, where the
+ * runtime would otherwise read it from the model id alone. Keeping the level in
+ * one place means an override that replaces the model cannot lose it.
+ */
+function carryEmbeddedThinking(judge: JudgeConfig): JudgeConfig {
+  if (judge.model === undefined) return judge;
+  const split = splitThinkingSuffix(judge.model);
+  if (!split) return judge;
+  return { ...judge, model: split.model, thinking: split.level };
+}
+
+/** Splits a trailing `:<level>` that Fusion recognizes off a model id. */
+function splitThinkingSuffix(
+  model: string,
+): { model: string; level: ThinkingLevel } | undefined {
   const separator = model.lastIndexOf(':');
-  if (separator === -1) return model;
-  return isThinkingLevel(model.slice(separator + 1))
-    ? model.slice(0, separator)
-    : model;
+  if (separator === -1) return undefined;
+  const level = model.slice(separator + 1);
+  return isThinkingLevel(level)
+    ? { model: model.slice(0, separator), level }
+    : undefined;
 }
 
 function uniqueInlineId(
