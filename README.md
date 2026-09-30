@@ -179,9 +179,9 @@ Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 
 Requirements:
 
-- Pi
+- Pi 0.99.0 or later
 - Node.js 22.19+
-- `pi-subagents` 0.43.0 or later
+- `pi-subagents` 0.73.1 or later. See the [compatibility notes](./docs/user-guide.md#runtime-compatibility).
 
 ```bash
 pi install npm:pi-subagents
