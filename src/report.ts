@@ -31,6 +31,7 @@ type ReportRun = Pick<
   | 'completionQuality'
   | 'minimumSuccessfulPanelists'
   | 'effectiveTimeouts'
+  | 'failureKind'
 > &
   Partial<Pick<FusionRun, 'phase' | 'createdAt' | 'updatedAt'>>;
 
@@ -233,9 +234,14 @@ export function renderPanelFailureReport(
     { title: 'Recommendation', content: 'No recommendation is available.' },
     {
       title: 'Risks',
-      content: input.error
-        ? `All panelists failed. Root error: ${firstLine(input.error)}`
-        : 'All panelists failed before producing usable output.',
+      content: [
+        input.error
+          ? `All panelists failed. Root error: ${firstLine(input.error)}`
+          : 'All panelists failed before producing usable output.',
+        ...(input.run.failureKind
+          ? [`Workflow failure category: ${input.run.failureKind}.`]
+          : []),
+      ].join('\n'),
     },
     {
       title: 'Next Step',
@@ -573,7 +579,12 @@ export function renderFailureReport(input: RenderFailureReportInput): string {
         ...(input.failures !== undefined ? { failures: input.failures } : {}),
         judgeStatus: `failed - ${firstLine(input.error)}`,
         ...(input.judgeModel ? { judgeModel: input.judgeModel } : {}),
-        extra: [`- Phase: ${phase}`],
+        extra: [
+          `- Phase: ${phase}`,
+          ...(input.run.failureKind
+            ? [`- Workflow failure category: ${input.run.failureKind}`]
+            : []),
+        ],
       }),
     },
     ...emptySynthesisSections({

@@ -7,7 +7,6 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultContext: fresh
-completionGuard: false
 ---
 
 You are a pi-fusion panelist with full tool access.

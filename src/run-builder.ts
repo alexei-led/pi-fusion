@@ -9,6 +9,7 @@ import {
   PANEL_DECISION_CLOSE,
   PANEL_DECISION_OPEN,
 } from './run-observations.js';
+import { isTimerMs } from './runtime-values.js';
 import {
   type CallerOutputContract,
   COMPOSER_AGENT,
@@ -426,7 +427,12 @@ function resolveStageTimeout(
   legacyTimeoutMs: number | undefined,
   defaultTimeoutMs = DEFAULT_STAGE_TIMEOUT_MS,
 ): number {
-  return stageTimeoutMs ?? legacyTimeoutMs ?? defaultTimeoutMs;
+  const timeoutMs = stageTimeoutMs ?? legacyTimeoutMs ?? defaultTimeoutMs;
+  if (!isTimerMs(timeoutMs))
+    throw new FusionArgsError(
+      'Timeout must be an integer between 1 and 2147483647 milliseconds.',
+    );
+  return timeoutMs;
 }
 
 /** Resolves and records the deadline precedence used for one start attempt. */
@@ -463,10 +469,7 @@ export function resolveEffectiveTimeouts(
     panelTimeoutMs - panelGraceMs,
   );
   const softTimeoutMs = profile.panelistSoftTimeoutMs;
-  if (
-    softTimeoutMs !== undefined &&
-    (!Number.isInteger(softTimeoutMs) || softTimeoutMs <= 0)
-  ) {
+  if (softTimeoutMs !== undefined && !isTimerMs(softTimeoutMs)) {
     throw new FusionArgsError(
       'panelistSoftTimeoutMs must be a positive integer.',
     );

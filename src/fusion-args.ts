@@ -1,4 +1,5 @@
 import { FusionArgsError } from './errors.js';
+import { isTimerMs } from './runtime-values.js';
 import type { FusionTimeoutOverrides, ParsedFusionArgs } from './types.js';
 
 const FUSION_USAGE =
@@ -98,9 +99,9 @@ export function parseFusionArgs(
         ? tokens[index + 1]
         : token.slice((timeoutEquals?.[0].length ?? 0) + 1);
       const value = raw ? Number(raw) : NaN;
-      if (!key || !Number.isInteger(value) || value <= 0) {
+      if (!key || !isTimerMs(value)) {
         throw new FusionArgsError(
-          `Timeout options require a positive integer milliseconds value. ${FUSION_USAGE}`,
+          `Timeout options require a positive integer milliseconds value no greater than 2147483647. ${FUSION_USAGE}`,
         );
       }
       if (timeoutOverrides[key] !== undefined) {

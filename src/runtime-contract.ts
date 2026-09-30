@@ -3,6 +3,7 @@ import {
   isRetiredKernelProof,
   type NativeOperationIdentity,
 } from './kernel-proof.js';
+import { isTimerMs } from './runtime-values.js';
 import type { ExecutionLifetime, FusionRun } from './types.js';
 import { isRecord } from './utils.js';
 
@@ -13,10 +14,7 @@ export function isExecutionLifetime(
     isRecord(value) &&
     (value.mode === 'unbounded'
       ? value.timeoutMs === undefined
-      : value.mode === 'bounded' &&
-        typeof value.timeoutMs === 'number' &&
-        Number.isSafeInteger(value.timeoutMs) &&
-        value.timeoutMs > 0)
+      : value.mode === 'bounded' && isTimerMs(value.timeoutMs))
   );
 }
 
