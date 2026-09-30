@@ -137,6 +137,7 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion <prompt>
 /fusion --profile <name> <prompt>
 /fusion --panel <models> <prompt>
+/fusion --judge <agent>[:<model>[:<level>]] <prompt>
 /fusion -p <name> <prompt>
 /fusion status
 /fusion stop

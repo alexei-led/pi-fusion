@@ -216,6 +216,12 @@ export interface ParsedFusionArgs {
   outputContract?: CallerOutputContract;
   /** Inline panel entries from `--panel`: `<model>` or `<agent>:<model>`. */
   panel?: string[];
+  /**
+   * Normalized `--judge` spec: `<agent>[:<model>[:<level>]]`. Kept as a string
+   * because whether the tail segment is a thinking level or part of the model
+   * id is only decided when the override is composed onto a profile.
+   */
+  judgeOverride?: string;
   timeoutOverrides?: FusionTimeoutOverrides;
 }
 
