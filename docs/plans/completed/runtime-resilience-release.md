@@ -1,6 +1,6 @@
 # Runtime resilience release
 
-Status: implemented in `feat/runtime-resilience-release`; pending merge and release.
+Status: completed. Released as `0.10.0` via PR #15 (three review rounds; final round clean).
 
 Approved scope: next stable Fusion release, one worktree and PR; merge and public release require separate approval.
 
@@ -15,7 +15,7 @@ Approved scope: next stable Fusion release, one worktree and PR; merge and publi
 - [x] Remove dead agent frontmatter; keep one state transition path and strict execution capability checks.
 - [x] Docs/changelog/version and package inspection complete.
 - [x] Isolated agterm live smoke: panel/judge, max, partial failure, timeout/cancel, reload limits, terminal wake; no leaked processes. Reload stop left Fusion active and was fixed as task #16.
-- [ ] Independent review, fixes, final checks, separate PR and CI. Comprehensive round found 1 major + 7 minor; all fixed and under final re-review.
+- [x] Independent review, fixes, final checks, separate PR and CI. Comprehensive round found 1 major + 7 minor; round 2 found 1 major agreement-stop regression; all fixed with regression tests, final round clean. Shipped as `0.10.0` (PR #15).
 
 ## Constraints
 
