@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 - 2026-09-30
 
 ### Added
 
-- `/fusion --judge <agent>[:<model>[:<level>]]` overrides the judge of the resolved profile for one run, one field at a time: whatever the spec omits keeps the profile's value. A tail segment that names a thinking level is read as one; any other tail stays part of the model id, so variant ids survive. A thinking-only override needs a judge model to attach to and fails at start instead of silently running at the profile's level. The composed judge is recorded in the run snapshot, so restore keeps it.
+- `/fusion --judge <agent>[:<model>[:<level>]]` overrides the judge of the resolved profile for one run, one field at a time: whatever the spec omits keeps the profile's value, whether that level sits in the profile's `thinking` field or on the end of its `model` id. A tail segment that names a thinking level is read as one; any other tail stays part of the model id, so variant ids survive. A thinking-only override needs a judge model to attach to and fails at start instead of silently running at the profile's level. The composed judge is recorded in the run snapshot, so restore keeps it.
+
+### Thanks
+
+- [@raphaelbahat](https://github.com/raphaelbahat) for [#9](https://github.com/alexei-led/pi-fusion/issues/9), which asked for a per-run judge override, and for the model-and-thinking analysis in [#8](https://github.com/alexei-led/pi-fusion/issues/8), [#10](https://github.com/alexei-led/pi-fusion/pull/10) and [#11](https://github.com/alexei-led/pi-fusion/pull/11) that shaped the thinking-level rules this release follows.
+- [@raphaelbahat](https://github.com/raphaelbahat) for the RPC-boundary investigation in [#6](https://github.com/alexei-led/pi-fusion/pull/6), which established how a spawn model carrying a `:level` suffix is resolved and why that suffix cannot cross into a strict registry lookup.
+- [@webbrain-one](https://github.com/webbrain-one) for offering a Spanish README in [#3](https://github.com/alexei-led/pi-fusion/pull/3).
 
 ## 0.10.0 - 2026-09-30
 

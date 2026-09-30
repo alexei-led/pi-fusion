@@ -223,7 +223,7 @@ Timeouts are hard workflow deadlines. A child terminated at the deadline can rep
 
 ### Runtime compatibility
 
-Fusion 0.10 requires Pi 0.99.0 or later for structured tool results and tool exposure controls. Upgrade Pi before installing Fusion; older Pi versions are not supported by this release.
+Fusion 0.11 requires Pi 0.99.0 or later for structured tool results and tool exposure controls. Upgrade Pi before installing Fusion; older Pi versions are not supported by this release.
 
 | Runtime | Contract checked |
 | --- | --- |
