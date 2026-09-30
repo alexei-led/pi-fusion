@@ -1,6 +1,6 @@
 # Judge override release
 
-Status: in progress. Target `0.11.0`, one branch and PR (#16). Approved scope: ship `/fusion --judge` as the next minor release; merge and public release authorized for this release.
+Status: completed. Released as `0.11.0` at tag [`v0.11.0`](https://github.com/alexei-led/pi-fusion/releases/tag/v0.11.0) via PR #16 (two review rounds; final round clean). Approved scope: ship `/fusion --judge` as the next minor release.
 
 ## Acceptance checklist
 
@@ -13,7 +13,7 @@ Status: in progress. Target `0.11.0`, one branch and PR (#16). Approved scope: s
 - [x] `--judge` composes with `--profile` and `--panel`; the status key and bundled-agent read-only posture are untouched.
 - [x] Docs, changelog, version and package inspection complete.
 - [x] Independent review, fixes, final checks, separate PR and CI. Comprehensive round found 1 major (a model-only override dropped a level embedded in the profile model) and 1 minor (user-guide prose contradicted its own table); both fixed with regression tests. Final round clean.
-- [ ] CI green on the PR and on `master`; tag `v0.11.0` and publish.
+- [x] CI green on the PR and on `master`; tag `v0.11.0` and publish. Published `@alexeiled/pi-fusion@0.11.0` with SLSA provenance; registry `dist-tags.latest` advanced and the shasum matches the workflow's publish log.
 
 ## Constraints
 
