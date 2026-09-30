@@ -102,7 +102,13 @@ export class DurableRunSnapshotStore {
 
   finish(key: string, data: unknown, expected?: unknown): unknown {
     const existing = this.readTerminal(key);
-    if (existing) return existing;
+    if (existing) {
+      if (expected !== undefined)
+        throw new DurableRunConflictError(
+          `Fusion run ${key} already finished.`,
+        );
+      return existing;
+    }
     const accepted = this.commitRevision(key, data, expected);
     try {
       publishExclusive(

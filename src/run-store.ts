@@ -5,6 +5,7 @@ import {
   DurableRunSnapshotStore,
 } from './durable-run-store.js';
 import { isReviewContext } from './review-context.js';
+import { isWorkflowFailureKind } from './runtime-values.js';
 import type {
   ExecutionLifetime,
   FusionPhase,
@@ -52,11 +53,13 @@ export type FusionRunSummary = Omit<
     | 'judgeRunId'
     | 'report'
     | 'error'
+    | 'failureKind'
   >,
   'phase'
 > & { phase: FusionTerminalPhase };
 
 export interface FusionRunStartInput {
+  completionWakeSessionId?: string;
   id?: string;
   spawnIntent?: FusionRun['spawnIntent'];
   reviewContext?: FusionRun['reviewContext'];
@@ -81,6 +84,7 @@ export interface FusionRunStartInput {
 }
 
 export interface FusionRunPatch {
+  failureKind?: FusionRun['failureKind'];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
   requestDigest?: string;
@@ -110,6 +114,7 @@ export interface FusionRunPatch {
 }
 
 export interface FusionRunTransitionPatch {
+  failureKind?: FusionRun['failureKind'];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
   requestDigest?: string;
@@ -315,6 +320,9 @@ export class FusionRunStore {
     const createdAt = input.createdAt ?? this.now();
     const run: FusionRun = {
       id: input.id ?? this.idFactory(),
+      ...(input.completionWakeSessionId
+        ? { completionWakeSessionId: input.completionWakeSessionId }
+        : {}),
       ...(input.spawnIntent
         ? { spawnIntent: cloneSpawnIntent(input.spawnIntent) }
         : {}),
@@ -715,6 +723,7 @@ function applyPatch(
   }
   if (patch.report !== undefined) updated.report = patch.report;
   if (patch.error !== undefined) updated.error = patch.error;
+  if (patch.failureKind !== undefined) updated.failureKind = patch.failureKind;
   return updated;
 }
 
@@ -758,6 +767,7 @@ function applyTransitionPatch(
   }
   if (patch.report !== undefined) updated.report = patch.report;
   if (patch.error !== undefined) updated.error = patch.error;
+  if (patch.failureKind !== undefined) updated.failureKind = patch.failureKind;
   return updated;
 }
 
@@ -765,6 +775,7 @@ function toRunSummary(
   run: FusionRun & { phase: FusionTerminalPhase },
 ): FusionRunSummary {
   return {
+    ...(run.failureKind !== undefined ? { failureKind: run.failureKind } : {}),
     id: run.id,
     ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
     ...(run.executionLifetime !== undefined
@@ -817,6 +828,10 @@ function toRunSummary(
 
 function cloneRun(run: FusionRun): FusionRun {
   return {
+    ...(run.completionWakeSessionId !== undefined
+      ? { completionWakeSessionId: run.completionWakeSessionId }
+      : {}),
+    ...(run.failureKind !== undefined ? { failureKind: run.failureKind } : {}),
     id: run.id,
     ...(run.reviewContext ? { reviewContext: { ...run.reviewContext } } : {}),
     ...(run.executionLifetime !== undefined
@@ -1009,6 +1024,16 @@ function isFusionRunEntry(
 
 function isFusionRunState(value: unknown): value is FusionRun {
   if (!isRecord(value)) return false;
+  if (
+    value.failureKind !== undefined &&
+    !isWorkflowFailureKind(value.failureKind)
+  )
+    return false;
+  if (
+    value.completionWakeSessionId !== undefined &&
+    !isNonEmptyString(value.completionWakeSessionId)
+  )
+    return false;
   if (!isNonEmptyString(value.id)) return false;
   if (typeof value.prompt !== 'string') return false;
   if (!isNonEmptyString(value.profileName)) return false;
@@ -1239,7 +1264,7 @@ function isTimeoutOverrides(value: unknown): boolean {
   ].every(
     (timeout) =>
       timeout === undefined ||
-      (isFiniteNumber(timeout) && Number.isInteger(timeout) && timeout > 0),
+      (Number.isInteger(timeout) && Number(timeout) > 0),
   );
 }
 
@@ -1271,9 +1296,8 @@ function isExecutionLifetime(value: unknown): value is ExecutionLifetime {
   if (value.mode === 'unbounded') return value.timeoutMs === undefined;
   return (
     value.mode === 'bounded' &&
-    isFiniteNumber(value.timeoutMs) &&
     Number.isSafeInteger(value.timeoutMs) &&
-    value.timeoutMs > 0
+    Number(value.timeoutMs) > 0
   );
 }
 
@@ -1472,7 +1496,8 @@ function isThinkingLevel(value: unknown): boolean {
     value === 'low' ||
     value === 'medium' ||
     value === 'high' ||
-    value === 'xhigh'
+    value === 'xhigh' ||
+    value === 'max'
   );
 }
 

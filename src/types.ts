@@ -1,3 +1,5 @@
+import type { WorkflowFailureKind } from './runtime-values.js';
+
 export const THINKING_LEVELS = [
   'off',
   'minimal',
@@ -5,6 +7,7 @@ export const THINKING_LEVELS = [
   'medium',
   'high',
   'xhigh',
+  'max',
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -74,6 +77,8 @@ export interface EffectiveFusionTimeouts {
 }
 
 export interface FusionProfile {
+  /** Wake the same interactive owner once when the terminal report is published. */
+  wakeOnCompletion?: boolean;
   panel: PanelMemberConfig[];
   judge: JudgeConfig;
   concurrency?: number;
@@ -309,6 +314,8 @@ export interface PanelDeadlineState {
 }
 
 export interface FusionRun {
+  completionWakeSessionId?: string;
+  failureKind?: WorkflowFailureKind;
   reviewContext?: FusionReviewContext;
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;

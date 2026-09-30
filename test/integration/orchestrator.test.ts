@@ -166,6 +166,44 @@ test('startRun preserves a synchronous subagent model error', async () => {
   assert.match(fixture.messages.at(-1)?.content ?? '', /Model not found/);
 });
 
+for (const phase of ['chain', 'panel', 'judge'] as const) {
+  test(`restore terminalizes stopped ${phase} without spawning`, async (t) => {
+    const fixture = makeFixture();
+    t.onTestFinished(() => fixture.orchestrator.dispose());
+    fixture.runStore.startRun({
+      id: 'fusion-1',
+      prompt: 'compare',
+      profileName: 'quality',
+      phase,
+    });
+    const runId = `stopped-${phase}`;
+    fixture.runStore.updateRun(
+      'fusion-1',
+      phase === 'chain'
+        ? { chainRunId: runId }
+        : phase === 'panel'
+          ? { panelRunId: runId }
+          : { judgeRunId: runId },
+    );
+    fixture.rpc.statusResults.set(runId, {
+      runId,
+      mode: 'workflow',
+      state: 'stopped',
+      endedAt: Date.now(),
+      error:
+        'Workflow stopped because the extension session was replaced or reloaded.',
+    });
+    await fixture.orchestrator.restore(fixture.ctx);
+    assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+    assert.equal(fixture.runStore.getRunById('fusion-1')?.phase, 'failed');
+    assert.match(
+      fixture.messages.at(-1)?.content ?? '',
+      /stopped because.*reloaded/,
+    );
+    assert.equal(fixture.rpc.spawns.length, 0);
+  });
+}
+
 test('restore keeps legacy chain runs on the fallback judge path', async () => {
   const fixture = makeFixture();
   fixture.runStore.startRun({
@@ -1053,7 +1091,7 @@ test('panel agreement stops unfinished work and still runs the judge', async () 
 
   fixture.rpc.statusResults.set('chain-1', {
     runId: 'chain-1',
-    state: 'paused',
+    state: 'stopped',
     results: [
       {
         agent: 'panel-agent',

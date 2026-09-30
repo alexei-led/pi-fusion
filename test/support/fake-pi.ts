@@ -36,7 +36,7 @@ export interface FakeCommandContext {
   cwd: string;
   hasUI: boolean;
   isProjectTrusted(): boolean;
-  sessionManager: { getEntries(): readonly unknown[] };
+  sessionManager: { getEntries(): readonly unknown[]; getSessionId(): string };
   ui: FakeUi;
 }
 
@@ -54,6 +54,10 @@ export interface FakeMessage {
 }
 
 export class FakePi {
+  sessionId = 'test-session';
+  readonly messageOptions: Array<
+    { triggerTurn?: boolean; deliverAs?: string } | undefined
+  > = [];
   readonly commands = new Map<string, RegisteredCommand>();
   readonly events = new FakeEventBus();
   readonly messages: FakeMessage[] = [];
@@ -91,8 +95,12 @@ export class FakePi {
     this.lifecycleHandlers.set(event, handlers);
   }
 
-  sendMessage(message: FakeMessage): void {
+  sendMessage(
+    message: FakeMessage,
+    options?: { triggerTurn?: boolean; deliverAs?: string },
+  ): void {
     this.messages.push(message);
+    this.messageOptions.push(options);
   }
 
   appendEntry(customType: string, data?: unknown): void {
@@ -104,7 +112,10 @@ export class FakePi {
       cwd,
       hasUI: true,
       isProjectTrusted: () => true,
-      sessionManager: { getEntries: () => this.entries },
+      sessionManager: {
+        getEntries: () => this.entries,
+        getSessionId: () => this.sessionId,
+      },
       ui: new FakeUi(),
     };
   }
@@ -130,8 +141,16 @@ export class FakePi {
 }
 
 export class FakeEventBus {
+  pingResult: unknown = {
+    ok: true,
+    events: {
+      childStatus: 'subagent:child-status',
+      processTerminal: 'subagent:process-terminal',
+    },
+  };
   readonly emitted: Array<{ event: string; payload: unknown }> = [];
   readonly statusResults = new Map<string, unknown>();
+  readonly spawnAsyncDirs = new Map<string, string>();
   private readonly handlers = new Map<
     string,
     Set<(payload: unknown) => void>
@@ -187,7 +206,7 @@ export class FakeEventBus {
   readonly spawns: Record<string, unknown>[] = [];
 
   private rpcData(method: string, params: unknown): unknown {
-    if (method === 'ping') return { ok: true };
+    if (method === 'ping') return this.pingResult;
     if (method === 'spawn') return this.spawnData(params);
     if (method === 'status') return this.statusData(params);
     if (method === 'stop' || method === 'interrupt') return { ok: true };
@@ -202,11 +221,15 @@ export class FakeEventBus {
     assert.equal('agent' in params, false);
     assert.equal('task' in params, false);
     this.spawns.push(params);
+    const runId = params.workflowScript.includes('runs.run("judge",')
+      ? 'judge-1'
+      : 'panel-1';
     return {
       details: {
-        runId: params.workflowScript.includes('runs.run("judge",')
-          ? 'judge-1'
-          : 'panel-1',
+        runId,
+        ...(this.spawnAsyncDirs.has(runId)
+          ? { asyncDir: this.spawnAsyncDirs.get(runId) }
+          : {}),
       },
     };
   }

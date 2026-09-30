@@ -47,6 +47,82 @@ test('FusionRunStore starts one active run at a time', () => {
   );
 });
 
+for (const phase of ['done', 'panel'] as const) {
+  test(`legacy ${phase} snapshots with oversized timers remain restorable`, () => {
+    const seed = new FusionRunStore();
+    const run = seed.startRun({
+      id: 'legacy',
+      prompt: 'review',
+      profileName: 'quality',
+    });
+    const store = new FusionRunStore();
+    store.restoreFromEntries([
+      {
+        type: 'custom',
+        customType: FUSION_RUN_ENTRY_TYPE,
+        data: {
+          ...run,
+          phase,
+          timeoutOverrides: { panelTimeoutMs: 2 ** 31 },
+          effectiveTimeouts: {
+            panelistTimeoutMs: 900_000,
+            panelTimeoutMs: 2 ** 31,
+            panelGraceMs: 60_000,
+            judgeTimeoutMs: 900_000,
+            usesLegacyTimeout: false,
+          },
+          executionLifetime: { mode: 'bounded', timeoutMs: 2 ** 31 },
+        },
+      },
+    ]);
+    assert.equal(store.getRestoreError(), undefined);
+    assert.equal(store.getRunById('legacy')?.phase, phase);
+    if (phase === 'panel') store.cancelRun('legacy');
+    assert.equal(
+      store.startRun({ id: 'next', prompt: 'next', profileName: 'quality' }).id,
+      'next',
+    );
+  });
+}
+
+test('only one durable terminal transition wins a race', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fusion-terminal-race-'));
+  onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+  const first = new FusionRunStore({ directory });
+  const run = first.startRun({
+    id: 'race',
+    prompt: 'review',
+    profileName: 'quality',
+  });
+  const stale = new FusionRunStore({ directory });
+  const finish = DurableRunSnapshotStore.prototype.finish;
+  let raced = false;
+  const spy = vi
+    .spyOn(DurableRunSnapshotStore.prototype, 'finish')
+    .mockImplementation(function (
+      this: DurableRunSnapshotStore,
+      ...args: Parameters<typeof finish>
+    ) {
+      if (!raced) {
+        raced = true;
+        first.completeRun(run.id, { report: 'winner' });
+      }
+      return finish.apply(this, args);
+    });
+  try {
+    assert.throws(
+      () => stale.failRun(run.id, { error: 'loser' }),
+      FusionRunConflictError,
+    );
+    assert.equal(
+      new FusionRunStore({ directory }).getRunById(run.id)?.report,
+      'winner',
+    );
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test('stale constructors cannot overwrite an atomically published run identity', (_t) => {
   const directory = mkdtempSync(join(tmpdir(), 'fusion-atomic-construction-'));
   onTestFinished(() => rmSync(directory, { recursive: true, force: true }));

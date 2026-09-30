@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { CONFIG_DIR_NAME, getAgentDir } from '@earendil-works/pi-coding-agent';
 import { applyClaudeAliasShorthand } from './claude-aliases.js';
 import { FusionConfigError } from './errors.js';
+import { isTimerMs } from './runtime-values.js';
 import {
   type FusionConfig,
   type FusionContextMode,
@@ -318,34 +319,33 @@ export function isFusionConfig(value: unknown): value is FusionConfig {
 
 function isFusionProfile(value: unknown): value is FusionProfile {
   if (!isRecord(value)) return false;
+  if (
+    value.wakeOnCompletion !== undefined &&
+    typeof value.wakeOnCompletion !== 'boolean'
+  )
+    return false;
   if (!Array.isArray(value.panel) || !value.panel.every(isPanelMemberConfig))
     return false;
   if (!isJudgeConfig(value.judge)) return false;
   if (value.concurrency !== undefined && !isPositiveInteger(value.concurrency))
     return false;
-  if (value.timeoutMs !== undefined && !isPositiveInteger(value.timeoutMs))
+  if (value.timeoutMs !== undefined && !isTimerMs(value.timeoutMs))
     return false;
   if (
     value.panelistSoftTimeoutMs !== undefined &&
-    !isPositiveInteger(value.panelistSoftTimeoutMs)
+    !isTimerMs(value.panelistSoftTimeoutMs)
   )
     return false;
   if (
     value.panelistTimeoutMs !== undefined &&
-    !isPositiveInteger(value.panelistTimeoutMs)
+    !isTimerMs(value.panelistTimeoutMs)
   ) {
     return false;
   }
-  if (
-    value.panelTimeoutMs !== undefined &&
-    !isPositiveInteger(value.panelTimeoutMs)
-  ) {
+  if (value.panelTimeoutMs !== undefined && !isTimerMs(value.panelTimeoutMs)) {
     return false;
   }
-  if (
-    value.panelGraceMs !== undefined &&
-    !isPositiveInteger(value.panelGraceMs)
-  ) {
+  if (value.panelGraceMs !== undefined && !isTimerMs(value.panelGraceMs)) {
     return false;
   }
   const panelTimeoutMs = value.panelTimeoutMs ?? value.timeoutMs ?? 900_000;
@@ -354,10 +354,7 @@ function isFusionProfile(value: unknown): value is FusionProfile {
   // timeout after deadline capping. Overrides receive the same validation when
   // their effective values are resolved at run start.
   if (panelGraceMs >= panelTimeoutMs) return false;
-  if (
-    value.judgeTimeoutMs !== undefined &&
-    !isPositiveInteger(value.judgeTimeoutMs)
-  ) {
+  if (value.judgeTimeoutMs !== undefined && !isTimerMs(value.judgeTimeoutMs)) {
     return false;
   }
   if (

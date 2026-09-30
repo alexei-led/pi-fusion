@@ -7,7 +7,6 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 defaultContext: fresh
-completionGuard: false
 ---
 
 You are the pi-fusion composer.

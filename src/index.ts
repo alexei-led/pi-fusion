@@ -9,7 +9,9 @@ import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
 } from './orchestrator.js';
 import { FusionRunStore } from './run-store.js';
+import { MAX_TIMER_MS } from './runtime-values.js';
 import { SubagentsRpcClient } from './subagents-rpc.js';
+import { isRecord } from './utils.js';
 
 function registerFusionTool(
   pi: ExtensionAPI,
@@ -17,6 +19,13 @@ function registerFusionTool(
 ): void {
   pi.registerTool({
     name: 'start_fusion_review',
+    exposure: 'model-only',
+    outputSchema: Type.Object({
+      status: Type.String(),
+      runId: Type.Optional(Type.String()),
+      activeRunId: Type.Optional(Type.String()),
+      error: Type.Optional(Type.String()),
+    }),
     label: 'Fusion Review',
     description:
       "Start a pi-fusion review. Several models answer in parallel, then one synthesis step returns a single report. Use it for a hard decision, a design tradeoff, a risk or release review, tricky debugging, a research-heavy question, or a breadth sweep such as an audit or 'what did we miss'. Do not use it for routine edits, formatting, or obvious one-step fixes.",
@@ -37,7 +46,7 @@ function registerFusionTool(
           Type.Object({ mode: Type.Literal('unbounded') }),
           Type.Object({
             mode: Type.Literal('bounded'),
-            timeoutMs: Type.Integer({ minimum: 1 }),
+            timeoutMs: Type.Integer({ minimum: 1, maximum: MAX_TIMER_MS }),
           }),
         ]),
       ),
@@ -57,18 +66,21 @@ function registerFusionTool(
       panelistTimeoutMs: Type.Optional(
         Type.Integer({
           minimum: 1,
+          maximum: MAX_TIMER_MS,
           description: 'Per-panelist deadline in milliseconds',
         }),
       ),
       panelTimeoutMs: Type.Optional(
         Type.Integer({
           minimum: 1,
+          maximum: MAX_TIMER_MS,
           description: 'Panel workflow deadline in milliseconds',
         }),
       ),
       panelGraceMs: Type.Optional(
         Type.Integer({
           minimum: 1,
+          maximum: MAX_TIMER_MS,
           description:
             'Reserved grace between child and panel deadlines in milliseconds',
         }),
@@ -76,6 +88,7 @@ function registerFusionTool(
       judgeTimeoutMs: Type.Optional(
         Type.Integer({
           minimum: 1,
+          maximum: MAX_TIMER_MS,
           description: 'Judge/composer deadline in milliseconds',
         }),
       ),
@@ -122,6 +135,15 @@ function registerFusionTool(
             ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
             : `Fusion review failed to start: ${result.status === 'failed' ? result.error : result.status}`;
       return {
+        isError: result.status !== 'started',
+        structuredContent: {
+          status: result.status,
+          ...(result.status === 'started' ? { runId: result.run.id } : {}),
+          ...(result.status === 'conflict'
+            ? { activeRunId: result.activeRunId }
+            : {}),
+          ...(result.status === 'failed' ? { error: result.error } : {}),
+        },
         content: [{ type: 'text', text }],
         details: {
           prompt: params.prompt,
@@ -143,7 +165,26 @@ function registerFusionTool(
 export default function fusionExtension(pi: ExtensionAPI): void {
   const store = new FusionRunStore({ persistence: pi });
   let sessionContext: FusionCommandContext | undefined;
+  let shuttingDown = false;
+  let unsubscribeHints: Array<() => void> = [];
   const orchestrator = new FusionOrchestrator({
+    onSubagentsInfo(info) {
+      for (const unsubscribe of unsubscribeHints) unsubscribe();
+      unsubscribeHints = [];
+      if (shuttingDown || !isRecord(info) || !isRecord(info.events)) return;
+      const channels = new Set([
+        info.events.childStatus,
+        info.events.processTerminal,
+      ]);
+      for (const channel of channels) {
+        if (typeof channel !== 'string' || !channel.startsWith('subagent:'))
+          continue;
+        const unsubscribe = pi.events.on(channel, (payload) =>
+          orchestrator.handleLifecycleHint(payload),
+        );
+        if (unsubscribe) unsubscribeHints.push(unsubscribe);
+      }
+    },
     rpc: new SubagentsRpcClient({ events: pi.events }),
     runStore: store,
     sendMessage: (message, options) => pi.sendMessage(message, options),
@@ -153,6 +194,13 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   registerFusionTool(pi, orchestrator);
   pi.registerTool({
     name: 'resolve_fusion_deadline',
+    exposure: 'model-only',
+    outputSchema: Type.Object({
+      runId: Type.String(),
+      panelist: Type.Integer(),
+      decision: Type.String(),
+      status: Type.Literal('recorded'),
+    }),
     label: 'Fusion Deadline Decision',
     description:
       'Answer a pending Fusion soft-deadline request. Continue once within the existing hard budget, or ask the panelist to finish with current findings. Does not restart runs or extend hard deadlines. Delivery receipt is not proof the model complied.',
@@ -180,6 +228,12 @@ export default function fusionExtension(pi: ExtensionAPI): void {
           },
         ],
         details,
+        structuredContent: {
+          runId: params.runId,
+          panelist: params.panelist,
+          decision: params.decision,
+          status: 'recorded',
+        },
       };
     },
   });
@@ -204,6 +258,9 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   });
 
   pi.on('session_shutdown', () => {
+    shuttingDown = true;
+    for (const unsubscribe of unsubscribeHints) unsubscribe();
+    unsubscribeHints = [];
     sessionContext = undefined;
     orchestrator.clearUi();
     orchestrator.dispose();

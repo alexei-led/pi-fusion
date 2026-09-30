@@ -19,6 +19,7 @@ import {
   isExecutionLifetime,
   requestDigest,
 } from './runtime-contract.js';
+import { isTimerMs } from './runtime-values.js';
 import type {
   CallerOutputContract,
   ExecutionLifetime,
@@ -70,6 +71,7 @@ export interface FusionRpcError {
 }
 
 export interface FusionRunState {
+  failureKind?: FusionRun['failureKind'];
   runId: string;
   operationId?: string;
   phase: FusionPhase;
@@ -170,6 +172,7 @@ export interface FusionRpcOrchestrator {
   startRun(
     input: ParsedFusionArgs,
     ctx: FusionCommandContext,
+    owner?: 'interactive' | 'controller',
   ): Promise<FusionCommandResult>;
   cancelActiveRun(ctx: FusionCommandContext): Promise<FusionCommandResult>;
 }
@@ -219,6 +222,7 @@ type ObservableRun = Pick<
   | 'outputContract'
   | 'report'
   | 'error'
+  | 'failureKind'
   | 'executionLifetime'
   | 'effectiveExecutionLifetime'
   | 'requestDigest'
@@ -365,7 +369,7 @@ export function registerFusionRpc({
       ? journal().preflight(input.operationId)
       : undefined;
     const pending = orchestrator
-      .startRun(preflight?.args ?? args, context)
+      .startRun(preflight?.args ?? args, context, 'controller')
       .then((result) => {
         store.refreshDurable?.();
         if (
@@ -676,9 +680,9 @@ function parseTimeoutOverrides(
   for (const [wireName, key] of fields) {
     const value = input[wireName];
     if (value === undefined) continue;
-    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    if (!isTimerMs(value)) {
       throw invalidParams(
-        `${wireName} must be a positive integer when provided.`,
+        `${wireName} must be a positive integer no greater than 2147483647 when provided.`,
       );
     }
     overrides[key] = value;
@@ -870,6 +874,7 @@ function stateFor(run: ObservableRun): FusionRunState {
   };
   if (run.report !== undefined) state.report = run.report;
   if (run.error !== undefined) state.error = run.error;
+  if (run.failureKind !== undefined) state.failureKind = run.failureKind;
   return state;
 }
 
