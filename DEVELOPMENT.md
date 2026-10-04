@@ -17,6 +17,10 @@ Then reload Pi:
 
 ## Runtime behavior
 
+The development dependency and peer contract target Pi `^1.0.2`.
+The SDK smoke test uses a temporary agent directory and disables model network
+refresh; it does not read personal credentials or make model calls.
+
 - Uses `pi-subagents` over its event-bus RPC channel.
 - New runs use one async parallel panel run followed by a standalone judge run; restored legacy chain runs remain supported.
 - Completion recovery reads `pi-subagents` lifecycle artifacts. A matching completion event treats its result payload as terminal; status polling alone requires a terminal lifecycle state.

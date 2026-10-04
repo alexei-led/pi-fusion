@@ -180,7 +180,7 @@ Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 
 Requirements:
 
-- Pi 0.99.0 or later
+- Pi 1.0.2 or later in the 1.x series
 - Node.js 22.19+
 - `pi-subagents` 0.73.1 or later. See the [compatibility notes](./docs/user-guide.md#runtime-compatibility).
 

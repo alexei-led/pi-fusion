@@ -223,11 +223,11 @@ Timeouts are hard workflow deadlines. A child terminated at the deadline can rep
 
 ### Runtime compatibility
 
-Fusion 0.11 requires Pi 0.99.0 or later for structured tool results and tool exposure controls. Upgrade Pi before installing Fusion; older Pi versions are not supported by this release.
+Fusion 0.11.1 requires Pi 1.0.2 or later in the 1.x series. Upgrade Pi before installing Fusion; older Pi versions are not supported by this release.
 
 | Runtime | Contract checked |
 | --- | --- |
-| Pi 0.99.1 | Installed API/types and package validation |
+| Pi 1.0.2 | API/types, isolated SDK loading, model-only tool registration, session startup, and command dispatch (no model calls) |
 | pi-subagents 0.71.0 | Existing released-capability regression fixture; ordinary workflows only |
 | pi-subagents 0.73.1 | Current public RPC and lifecycle event contracts; recommended version |
 

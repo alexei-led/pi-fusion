@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.1 - 2026-10-04
+
+### Changes
+
+- Validate against Pi 1.0.2 and bound the supported host range to the 1.x series. Add an isolated SDK smoke test for extension loading, session startup, model-only tools, and command dispatch. Panel/judge execution remains on pi-subagents RPC.
+
+### Upgrade
+
+1. Upgrade Pi to 1.0.2 or later in the 1.x series before installing this version; older hosts are no longer supported.
+2. Reload Pi after upgrading Fusion.
+
 ## 0.11.0 - 2026-09-30
 
 ### Added

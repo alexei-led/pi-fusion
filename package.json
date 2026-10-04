@@ -55,12 +55,13 @@
     "image": "https://raw.githubusercontent.com/alexei-led/pi-fusion/master/docs/assets/fusion-icon.png"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.99.0",
+    "@earendil-works/pi-coding-agent": "^1.0.2",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@earendil-works/pi-coding-agent": "^1.0.2",
     "@types/node": "^24.10.0",
     "jiti": "^2.7.0",
     "typescript": "^7.0.2",
