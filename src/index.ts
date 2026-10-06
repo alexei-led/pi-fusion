@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { registerFusionCommands } from './commands.js';
+import { createFusionMessageSink } from './completion-wake.js';
 import { registerFusionRpc } from './fusion-rpc.js';
 import {
   type FusionCommandContext,
@@ -24,6 +25,7 @@ function registerFusionTool(
       status: Type.String(),
       runId: Type.Optional(Type.String()),
       activeRunId: Type.Optional(Type.String()),
+      recoveryRequired: Type.Optional(Type.String()),
       error: Type.Optional(Type.String()),
     }),
     label: 'Fusion Review',
@@ -128,9 +130,12 @@ function registerFusionTool(
       );
       const text =
         result.status === 'started'
-          ? params.executionLifetime && !result.run.effectiveExecutionLifetime
-            ? 'Fusion launch is unresolved. Native admission is still being reconciled under the original operation identity.'
-            : 'Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum.'
+          ? result.run.recoveryRequired
+            ? (result.run.error ??
+              'Fusion recovery required. No replacement run will be started.')
+            : params.executionLifetime && !result.run.effectiveExecutionLifetime
+              ? 'Fusion launch is unresolved. Native admission is still being reconciled under the original operation identity.'
+              : 'Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum.'
           : result.status === 'conflict'
             ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
             : `Fusion review failed to start: ${result.status === 'failed' ? result.error : result.status}`;
@@ -138,7 +143,14 @@ function registerFusionTool(
         isError: result.status !== 'started',
         structuredContent: {
           status: result.status,
-          ...(result.status === 'started' ? { runId: result.run.id } : {}),
+          ...(result.status === 'started'
+            ? {
+                runId: result.run.id,
+                ...(result.run.recoveryRequired
+                  ? { recoveryRequired: result.run.recoveryRequired }
+                  : {}),
+              }
+            : {}),
           ...(result.status === 'conflict'
             ? { activeRunId: result.activeRunId }
             : {}),
@@ -187,7 +199,7 @@ export default function fusionExtension(pi: ExtensionAPI): void {
     },
     rpc: new SubagentsRpcClient({ events: pi.events }),
     runStore: store,
-    sendMessage: (message, options) => pi.sendMessage(message, options),
+    sendMessage: createFusionMessageSink(pi, () => sessionContext),
   });
 
   registerFusionCommands(pi, orchestrator);

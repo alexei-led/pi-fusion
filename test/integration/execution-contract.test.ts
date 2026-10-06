@@ -1012,20 +1012,20 @@ for (const cancellation of ['terminal', 'durable-marker'] as const) {
   });
 }
 
-// The relevant subset of 0.71.0 pingData; `version` below is the RPC protocol, not the npm version.
-const released071Capabilities = {
+// Synthetic capability-only fixture, not evidence that an old release accepts current spawn params.
+const ordinaryCapabilities = {
   asyncSpawn: true,
   stop: true,
   nonRecoveringSteer: true,
   processTerminalProof: { version: 1, lifecycleArtifactVersion: 3 },
 };
 
-class Released071Runtime implements FusionRpcClientLike {
+class OrdinaryCapabilityRuntime implements FusionRpcClientLike {
   readonly spawns: object[] = [];
   readonly statuses = new Map<string, unknown>();
 
   async ping(): Promise<unknown> {
-    return { version: 1, capabilities: released071Capabilities };
+    return { version: 1, capabilities: ordinaryCapabilities };
   }
 
   async spawn(params: object): Promise<unknown> {
@@ -1050,8 +1050,8 @@ class Released071Runtime implements FusionRpcClientLike {
   }
 }
 
-test('released pi-subagents 0.71.0 capabilities reject explicit lifetime before spawn', async (_t) => {
-  const rpc = Object.assign(new Released071Runtime(), {
+test('ordinary-only capabilities reject explicit lifetime before spawn', async (_t) => {
+  const rpc = Object.assign(new OrdinaryCapabilityRuntime(), {
     lookup: async () => {
       throw new Error('unexpected lookup');
     },
@@ -1074,8 +1074,8 @@ test('released pi-subagents 0.71.0 capabilities reject explicit lifetime before 
   assert.equal(rpc.spawns.length, 0);
 });
 
-test('released pi-subagents 0.71.0 completes an ordinary panel and judge run', async (_t) => {
-  const rpc = new Released071Runtime();
+test('a synthetic ordinary-only runtime completes the panel and judge lifecycle', async (_t) => {
+  const rpc = new OrdinaryCapabilityRuntime();
   const panelConfig: FusionConfig = {
     defaultProfile: 'quality',
     profiles: {
@@ -1099,7 +1099,7 @@ test('released pi-subagents 0.71.0 completes an ordinary panel and judge run', a
   );
   assert.equal(started.status, 'started');
   assert.equal(rpc.spawns.length, 1);
-  assert.ok(isRecord(rpc.spawns[0]) && 'workflowScript' in rpc.spawns[0]);
+  assert.ok(isRecord(rpc.spawns[0]) && 'script' in rpc.spawns[0]);
   assert.equal('executionLifetime' in required(rpc.spawns[0]), false);
   assert.equal('ownedWorkflow' in required(rpc.spawns[0]), false);
 
@@ -1117,7 +1117,7 @@ test('released pi-subagents 0.71.0 completes an ordinary panel and judge run', a
   assert.equal(panel.status, 'started');
   assert.equal(orchestrator.getActiveRun()?.phase, 'judge');
   assert.equal(rpc.spawns.length, 2);
-  assert.ok(isRecord(rpc.spawns[1]) && 'workflowScript' in rpc.spawns[1]);
+  assert.ok(isRecord(rpc.spawns[1]) && 'script' in rpc.spawns[1]);
   assert.equal('executionLifetime' in required(rpc.spawns[1]), false);
 
   rpc.statuses.set('released-judge', {
@@ -2090,7 +2090,7 @@ test('native ownership route downgrade remains an unresolved launch', async (_t)
   assert.equal(store.getActiveRun()?.panelRunId, undefined);
   assert.equal(rpc.spawns.length, 1);
   assert.ok(rpc.spawns[0] && 'ownedWorkflow' in rpc.spawns[0]);
-  assert.equal('workflowScript' in rpc.spawns[0], false);
+  assert.equal('script' in rpc.spawns[0], false);
 });
 
 test('owned panel and direct judge close under separate native identities bound to one caller', async (t) => {
@@ -2160,8 +2160,8 @@ test('owned panel and direct judge close under separate native identities bound 
   assert.equal(rpc.spawns.length, 2);
   assert.ok(rpc.spawns[0] && 'ownedWorkflow' in rpc.spawns[0]);
   assert.ok(rpc.spawns[1] && 'agent' in rpc.spawns[1]);
-  assert.equal('workflowScript' in rpc.spawns[0], false);
-  assert.equal('workflowScript' in rpc.spawns[1], false);
+  assert.equal('script' in rpc.spawns[0], false);
+  assert.equal('script' in rpc.spawns[1], false);
   rpc.statusValue = 'completed';
   const retired = proof(rpc);
   rpc.proof = {

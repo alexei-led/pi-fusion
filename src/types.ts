@@ -297,9 +297,9 @@ export interface FusionRecoveryState {
 }
 
 /**
- * Durable record written before a public RPC spawn. Explicit lifetime runs
- * persist the native operation identity and frozen parameters for lookup and
- * safe replay; legacy records may contain only the stage and timestamp.
+ * Written before every public RPC spawn with correlation ID, digest and exact
+ * parameters. Only explicit-lifetime runs use native lookup/replay. Pre-0.12
+ * records may contain only the stage and timestamp.
  */
 export interface FusionSpawnIntent {
   requestId?: string;
@@ -319,7 +319,15 @@ export interface PanelDeadlineState {
   deliveryError?: string;
 }
 
+export type FusionCancellationDelivery =
+  | { runId: string; state: 'delivered' }
+  | { runId: string; state: 'pending' | 'undeliverable'; error: string };
+
 export interface FusionRun {
+  /** Native stop acceptance, never proof of process exit. */
+  cancellationDelivery?: FusionCancellationDelivery;
+  /** Nonterminal quarantine: native work may survive; never replay automatically. */
+  recoveryRequired?: 'runtime-replaced' | 'launch-unknown';
   completionWakeSessionId?: string;
   failureKind?: WorkflowFailureKind;
   reviewContext?: FusionReviewContext;

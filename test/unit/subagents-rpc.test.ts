@@ -177,6 +177,29 @@ test('SubagentsRpcClient helper methods emit typed method envelopes', async () =
   }
 });
 
+test('spawn uses the caller-persisted correlation ID without generating another', async () => {
+  const bus = new FakeEventBus();
+  const client = new SubagentsRpcClient({
+    events: bus,
+    requestId: () => {
+      throw new Error('Must use persisted identity');
+    },
+  });
+  const pending = client.spawn(
+    { script: 'return 1' },
+    { requestId: 'fusion-1:panel' },
+  );
+  assert.equal(bus.lastRequest().requestId, 'fusion-1:panel');
+  bus.emit(subagentsRpcReplyChannel('fusion-1:panel'), {
+    version: 1,
+    requestId: 'fusion-1:panel',
+    method: 'spawn',
+    success: true,
+    data: { runId: 'native-1' },
+  });
+  assert.deepEqual(await pending, { runId: 'native-1' });
+});
+
 class FakeEventBus implements SubagentsEventBus {
   readonly emitted: Array<{ event: string; payload: unknown }> = [];
   private readonly handlers = new Map<

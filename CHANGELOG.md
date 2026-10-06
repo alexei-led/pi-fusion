@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.0 - 2026-10-06
+
+### Changes
+
+- Restore panel, judge, and composer launches on current pi-subagents through the public RPC `script` field. Validate against Pi 1.0.4 and pi-subagents 0.76.1.
+- Give each Fusion run and stage a separate workflow identity. A new same-prompt review cannot reuse another review's children. Persist exact launch parameters and RPC correlation before dispatch.
+- Keep uncertain launches and runtime-replaced workflows in nonterminal recovery quarantine. Surviving children no longer cause Fusion to free admission or start replacement work. Preserve late native IDs without letting a disposed runtime resume control.
+- Deliver pending cancellation through the live owner to the exact native ID, including a late judge binding. Persist accepted stop delivery, retry transient failures, stop automatic retries for inaccessible coordinators, and retain quarantine: acknowledgement is not process-exit proof.
+- Run normal prompt preparation for idle Fusion wakes. Size agreement deadlines for quorum-capped execution waves and reject agreement stopping with exact caller output contracts.
+- Keep rolling panels running after a child rejection and require both answers before a two-member panel can agree. Add real Pi/subagents coverage for failure/refill, select, merge, single-member execution, replay, and clean shutdown.
+
+### Upgrade
+
+1. Install pi-subagents 0.76.1 and Pi 1.0.2 or later in the 1.x series before upgrading Fusion. Older pi-subagents versions using `workflowScript` are not supported by this release.
+2. Finish or inspect active reviews first. Restart every Pi session owning the project after updating upstream packages; `/reload` cannot replace already-imported upstream modules. Do not downgrade active or quarantined runs.
+3. Disable `stopWhenPanelAgrees` for exact output contracts such as `plan-review-v1`; the combination now fails before launch.
+
+### Limits
+
+Native pi-subagents completion notices can still wake the parent independently of Fusion's `wakeOnCompletion`. Native `execution_failed` also covers definite capacity/configuration rejections, which can therefore quarantine a project even when nothing started. This fail-closed limitation is accepted for 0.12.0. Quarantine has no supported reset or automatic release; preserve its evidence rather than deleting snapshots.
+
+[Changes since v0.11.1](https://github.com/alexei-led/pi-fusion/compare/v0.11.1...v0.12.0)
+
 ## 0.11.1 - 2026-10-04
 
 ### Changes

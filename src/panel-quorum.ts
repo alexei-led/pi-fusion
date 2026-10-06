@@ -17,6 +17,6 @@ export function resolveMinimumSuccessfulPanelists(
   }
   // Fusion uses a quorum (half rounded up), not an absolute strict-majority
   // vote: two independent completed answers are enough to synthesize a
-  // four-member panel while still requiring two of three.
-  return Math.ceil(panelSize / 2);
+  // four-member panel while still requiring two of two or three.
+  return panelSize > 1 ? Math.max(2, Math.ceil(panelSize / 2)) : panelSize;
 }

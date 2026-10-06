@@ -44,7 +44,12 @@ jobs:
             core.setOutput("name", pkg.name);
             core.setOutput("version", pkg.version);
             core.setOutput("tag", tag);
-            core.setOutput("release_name", `${pkg.name} ${pkg.version}`);
+            const { pathToFileURL } = require("node:url");
+            const notesModule = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/release-notes.ts`);
+            const { extractReleaseNotes } = await import(notesModule.href);
+            const notes = extractReleaseNotes(fs.readFileSync("CHANGELOG.md", "utf8"), pkg.version);
+            core.setOutput("release_name", tag);
+            core.setOutput("release_notes", notes);
             core.setOutput("prerelease", String(pkg.version.includes("-")));
       - name: Ensure tag is on master
         run: |
@@ -98,19 +103,15 @@ jobs:
           PACKAGE_NAME: ${{ steps.metadata.outputs.name }}
           PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
           RELEASE_NAME: ${{ steps.metadata.outputs.release_name }}
+          RELEASE_NOTES: ${{ steps.metadata.outputs.release_notes }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
           PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
         with:
           script: |
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
             const tag = process.env.RELEASE_TAG;
-            const body = [
-              "## Package",
-              `- Name: \`${process.env.PACKAGE_NAME}\``,
-              `- Version: \`${process.env.PACKAGE_VERSION}\``,
-              `- Tag: \`${tag}\``,
-              `- Commit: \`${process.env.GITHUB_SHA}\``,
-            ].join("\n");
+            const body = process.env.RELEASE_NOTES;
+            if (!body?.trim()) throw new Error("Reviewed release notes are required.");
 
             try {
               const { data: existing } = await github.rest.repos.getReleaseByTag({
@@ -135,7 +136,6 @@ jobs:
               target_commitish: process.env.GITHUB_SHA,
               name: process.env.RELEASE_NAME,
               body,
-              generate_release_notes: true,
               prerelease: process.env.PRERELEASE === "true",
               make_latest: process.env.PRERELEASE === "true" ? "false" : "true",
             });

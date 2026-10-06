@@ -48,13 +48,11 @@ function makeFailure(index: number, summary: string): FailedPanelSummary {
   return { index, agent: 'panel-agent', summary };
 }
 
-function judgeWorkflowTask(workflowScript: string): {
+function judgeWorkflowTask(script: string): {
   agent: string;
   task: string;
 } {
-  const serialized = workflowScript.match(
-    /^return runs\.run\("judge", (.*)\);$/,
-  )?.[1];
+  const serialized = script.match(/^return runs\.run\("judge", (.*)\);$/)?.[1];
   assert.ok(serialized);
   return JSON.parse(serialized) as { agent: string; task: string };
 }
@@ -199,8 +197,8 @@ test('decidePanelCompletion prepares a standard judge spawn when multiple paneli
 
   assert.equal(decision.kind, 'judge');
   if (decision.kind !== 'judge') return;
-  assert.ok('workflowScript' in decision.params);
-  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.ok('script' in decision.params);
+  const params = judgeWorkflowTask(decision.params.script);
   assert.equal(params.agent, 'judge-agent');
   assert.match(params.task, /Architect says A/);
   assert.equal(decision.notification, 'Fusion judge started');
@@ -220,8 +218,8 @@ test('decidePanelCompletion restores caller-contract instructions for legacy jud
 
   assert.equal(decision.kind, 'judge');
   if (decision.kind !== 'judge') return;
-  assert.ok('workflowScript' in decision.params);
-  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.ok('script' in decision.params);
+  const params = judgeWorkflowTask(decision.params.script);
   assert.match(params.task, /exact output contract in the original task/);
 });
 
@@ -294,8 +292,8 @@ test('merge synthesis spawns the composer for a full panel', () => {
 
   assert.equal(decision.kind, 'judge');
   if (decision.kind !== 'judge') return;
-  assert.ok('workflowScript' in decision.params);
-  const params = judgeWorkflowTask(decision.params.workflowScript);
+  assert.ok('script' in decision.params);
+  const params = judgeWorkflowTask(decision.params.script);
   assert.match(params.task, /You are the fusion composer\./);
   assert.match(params.task, /## Coverage Map/);
 });

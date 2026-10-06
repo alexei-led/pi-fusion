@@ -82,9 +82,11 @@ import {
   readSubagentResultArtifact,
   readSubagentStatusArtifact,
 } from './subagent-artifacts.js';
-import type {
-  SubagentsSteerParams,
-  SubagentsTargetParams,
+import {
+  SubagentsRpcRemoteError,
+  type SubagentsRpcRequestOptions,
+  type SubagentsSteerParams,
+  type SubagentsTargetParams,
 } from './subagents-rpc.js';
 import {
   type FailedPanelSummary,
@@ -110,6 +112,7 @@ export interface FusionCommandUi extends FusionUi {
 }
 
 export interface FusionCommandContext {
+  isIdle?(): boolean;
   cwd: string;
   hasUI: boolean;
   isProjectTrusted(): boolean;
@@ -122,7 +125,7 @@ export interface FusionCommandContext {
 
 export interface FusionRpcClientLike {
   ping(): Promise<unknown>;
-  spawn(params: object): Promise<unknown>;
+  spawn(params: object, options?: SubagentsRpcRequestOptions): Promise<unknown>;
   status(params?: SubagentsTargetParams): Promise<unknown>;
   stop(params: SubagentsTargetParams): Promise<unknown>;
   interrupt(params: SubagentsTargetParams): Promise<unknown>;
@@ -209,6 +212,7 @@ export class FusionOrchestrator {
     ctx: FusionCommandContext,
     owner: 'interactive' | 'controller' = 'interactive',
   ): Promise<FusionCommandResult> {
+    if (this.disposed) return { status: 'ignored' };
     this.context = ctx;
 
     let args = typeof input === 'string' ? parseFusionArgs(input) : input;
@@ -318,8 +322,15 @@ export class FusionOrchestrator {
       return { status: 'failed', error: message };
     }
 
+    if (this.disposed) return { status: 'ignored' };
     const outputContract =
       args.outputContract ?? detectCallerOutputContract(args.prompt);
+    if (outputContract && resolved.profile.stopWhenPanelAgrees) {
+      const error =
+        'Agreement stopping cannot be combined with an exact output contract.';
+      this.notify(ctx, error, 'error');
+      return { status: 'failed', error };
+    }
     const profileSnapshot = snapshotProfile(resolved.profile);
     this.runStore.refreshDurable();
     if (preflight) {
@@ -449,10 +460,10 @@ export class FusionOrchestrator {
       // The native correlation identity is persisted before the launch.
       const spawnResult = await this.spawnStage(run, 'panel', spawnParams);
       const spawnError = extractSubagentFailure(spawnResult);
-      if (spawnError) throw new FusionArgsError(spawnError);
+      if (spawnError) throw new UnresolvedLaunchError(spawnError);
       const panelRunId = extractSubagentRunId(spawnResult);
       if (!panelRunId) {
-        throw new FusionArgsError(
+        throw new UnresolvedLaunchError(
           'pi-subagents spawn did not return a fusion panel run ID.',
         );
       }
@@ -471,7 +482,7 @@ export class FusionOrchestrator {
       let updated: FusionRun;
       try {
         updated = this.runStore.updateRun(run.id, {
-          ...(!args.executionLifetime ? { spawnIntent: null } : {}),
+          recoveryRequired: null,
           panelRunId,
           ...(args.executionLifetime
             ? { effectiveExecutionLifetime: args.executionLifetime }
@@ -482,8 +493,12 @@ export class FusionOrchestrator {
         // The remote run is now known but its ID is not durable. It cannot be
         // safely recovered through the public RPC, so stop it before failing.
         await this.stopOrphanedRun(panelRunId);
-        throw persistenceError;
+        throw new UnresolvedLaunchError(
+          `Native run ${panelRunId} was started but its binding could not be saved: ${errorMessage(persistenceError)}`,
+        );
       }
+      if (updated.cancellationRequested && !updated.executionLifetime)
+        return this.cancelActiveRun(ctx);
       publishFusionStatus(ctx, updated);
       this.ensureReconcileLoop();
       this.notify(
@@ -510,9 +525,7 @@ export class FusionOrchestrator {
       }
       if (this.runStore.getActiveRun()?.id !== run.id)
         return { status: 'ignored' };
-      if (run.executionLifetime)
-        return this.retainUnresolvedRun(run.id, errorMessage(error));
-      return this.failActiveRun(errorMessage(error));
+      return this.handleLaunchFailure(run, error);
     }
   }
 
@@ -596,6 +609,9 @@ export class FusionOrchestrator {
     verifyReviewContext(run.reviewContext);
     params = {
       ...params,
+      ...(!run.executionLifetime
+        ? { args: { fusionRunId: run.id, stage } }
+        : {}),
       ...(run.reviewContext
         ? { cwd: run.reviewContext.cwd, worktree: false }
         : {}),
@@ -615,9 +631,9 @@ export class FusionOrchestrator {
       spawnIntent: {
         stage,
         requestedAt: Date.now(),
-        ...(run.executionLifetime
-          ? { requestId, requestDigest: digest, params }
-          : {}),
+        requestId,
+        requestDigest: digest,
+        params,
       },
     });
     if (run.operationId && this.operationCancelled(run.operationId)) {
@@ -631,10 +647,59 @@ export class FusionOrchestrator {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError('Cancellation won native dispatch admission.');
     }
-    const reply = await this.rpc.spawn({
-      ...params,
-      ...(run.executionLifetime ? { operationId: requestId, digest } : {}),
-    });
+    let reply: unknown;
+    try {
+      reply = await this.rpc.spawn(
+        {
+          ...params,
+          ...(run.executionLifetime ? { operationId: requestId, digest } : {}),
+        },
+        { requestId },
+      );
+    } catch (error: unknown) {
+      if (this.disposed)
+        throw new FusionRunConflictError(
+          'The launch owner was disposed while awaiting RPC.',
+        );
+      if (isPrelaunchRejection(error)) throw error;
+      throw new UnresolvedLaunchError(errorMessage(error));
+    }
+    if (this.disposed) {
+      // A stale runtime may record correlation evidence, never resume control.
+      // Strict launches have durable native lookup; the live owner uses that.
+      if (!run.executionLifetime) {
+        this.runStore.refreshDurable();
+        const current = this.runStore.getActiveRun();
+        if (
+          current?.id === run.id &&
+          current.spawnIntent?.requestId === requestId &&
+          current.spawnIntent?.requestDigest === digest
+        ) {
+          const nativeId = extractSubagentRunId(reply);
+          const existingId =
+            stage === 'panel' ? current.panelRunId : current.judgeRunId;
+          const asyncDir = extractSubagentAsyncDir(reply);
+          this.runStore.updateRun(run.id, {
+            ...(nativeId && (!existingId || existingId === nativeId)
+              ? stage === 'panel'
+                ? {
+                    panelRunId: nativeId,
+                    ...(asyncDir ? { panelAsyncDir: asyncDir } : {}),
+                  }
+                : {
+                    judgeRunId: nativeId,
+                    ...(asyncDir ? { judgeAsyncDir: asyncDir } : {}),
+                  }
+              : {}),
+            recoveryRequired: current.recoveryRequired ?? 'launch-unknown',
+            error: `Fusion recovery required: disposed ${stage} owner received a late spawn reply${nativeId ? ` for ${nativeId}` : ''}. Native work and pending cancellation require live-owner reconciliation; admission remains blocked.`,
+          });
+        }
+      }
+      throw new FusionRunConflictError(
+        'A disposed launch owner cannot resume execution.',
+      );
+    }
     if (
       run.executionLifetime &&
       (!isRecord(reply) ||
@@ -772,6 +837,85 @@ export class FusionOrchestrator {
         ? { cancellationRequested: true }
         : {}),
     });
+  }
+
+  private reconcileQuarantinedCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
+    const pending = this.pendingCancellations.get(run.id);
+    if (pending) return pending;
+    const cancellation = this.deliverQuarantinedCancellation(run).finally(
+      () => {
+        this.pendingCancellations.delete(run.id);
+      },
+    );
+    this.pendingCancellations.set(run.id, cancellation);
+    return cancellation;
+  }
+
+  private async deliverQuarantinedCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
+    if (this.disposed || !run.recoveryRequired || !run.cancellationRequested)
+      return { status: 'ignored' };
+    const target =
+      run.spawnIntent?.stage === 'judge'
+        ? run.judgeRunId
+        : run.spawnIntent?.stage === 'panel'
+          ? (run.panelRunId ?? run.chainRunId)
+          : activeRunId(run);
+    if (!target) return { status: 'started', run };
+    if (
+      run.cancellationDelivery?.runId === target &&
+      run.cancellationDelivery.state !== 'pending'
+    ) {
+      this.stopReconcileLoop();
+      return { status: 'started', run };
+    }
+    let delivery: NonNullable<FusionRun['cancellationDelivery']>;
+    try {
+      const receipt = await this.rpc.stop({ id: target });
+      if (
+        !isRecord(receipt) ||
+        receipt.runId !== target ||
+        receipt.state !== 'stopping'
+      )
+        throw new Error('Native stop did not acknowledge the exact run.');
+      delivery = { runId: target, state: 'delivered' };
+    } catch (error: unknown) {
+      delivery = {
+        runId: target,
+        state:
+          error instanceof SubagentsRpcRemoteError &&
+          error.method === 'stop' &&
+          (error.code === 'not_found' || error.code === 'invalid_state')
+            ? 'undeliverable'
+            : 'pending',
+        error: errorMessage(error),
+      };
+    }
+    this.runStore.refreshDurable();
+    const current = this.runStore.getActiveRun();
+    if (!sameStage(run, current) || !current?.cancellationRequested)
+      return { status: 'ignored' };
+    // A late failure cannot restart retries another owner already settled.
+    if (
+      current.cancellationDelivery?.runId === target &&
+      (current.cancellationDelivery.state === 'delivered' ||
+        (current.cancellationDelivery.state === 'undeliverable' &&
+          delivery.state !== 'delivered'))
+    ) {
+      this.stopReconcileLoop();
+      return { status: 'started', run: current };
+    }
+    const updated = sameSnapshot(
+      current.cancellationDelivery ? [current.cancellationDelivery] : undefined,
+      [delivery],
+    )
+      ? current
+      : this.runStore.updateRun(run.id, { cancellationDelivery: delivery });
+    if (delivery.state !== 'pending') this.stopReconcileLoop();
+    return { status: 'started', run: updated };
   }
 
   private reconcileContractCancellation(
@@ -1064,6 +1208,24 @@ export class FusionOrchestrator {
       }
     }
 
+    if (active.recoveryRequired || hasUnresolvedSpawnIntent(active)) {
+      const pending = this.runStore.updateRun(active.id, {
+        cancellationRequested: true,
+        ...(active.cancellationDelivery?.state === 'undeliverable'
+          ? { cancellationDelivery: null }
+          : {}),
+      });
+      this.notify(
+        ctx,
+        'Cancellation pending: native ownership is unresolved. No replacement run will be launched.',
+        'warning',
+      );
+      this.ensureReconcileLoop();
+      return pending.recoveryRequired
+        ? this.reconcileQuarantinedCancellation(pending)
+        : { status: 'started', run: pending };
+    }
+
     const targetRunId = activeRunId(active);
     let method: 'stop' | 'interrupt' | 'local' = 'local';
     if (targetRunId) {
@@ -1143,16 +1305,25 @@ export class FusionOrchestrator {
 
     const active = this.runStore.getActiveRun();
     const spawnIntent = active?.spawnIntent;
+    if (active?.recoveryRequired) {
+      this.stopReconcileLoop();
+      publishFusionStatus(ctx, active);
+      this.notify(ctx, active.error ?? 'Fusion recovery required.', 'warning');
+      if (active.cancellationRequested) {
+        this.ensureReconcileLoop();
+        await this.reconcileQuarantinedCancellation(active);
+      }
+      return summary;
+    }
     if (
       active &&
       spawnIntent &&
       hasUnresolvedSpawnIntent(active) &&
       !active.executionLifetime
     ) {
-      const message = `Fusion recovery stopped: ${spawnIntent.stage} spawn may have reached pi-subagents, but its run ID was not persisted. It will not be replayed because public RPC cannot safely adopt it.`;
-      this.failActiveRun(message);
-      this.notify(ctx, message, 'warning');
-      return this.runStore.getLastRunSummary();
+      const message = `${spawnIntent.stage} spawn may have reached pi-subagents, but its run ID was not persisted. It will not be replayed because public RPC cannot safely adopt it.`;
+      this.holdForRecovery(active, 'launch-unknown', message);
+      return summary;
     }
     if (!active) {
       this.stopReconcileLoop();
@@ -1165,9 +1336,8 @@ export class FusionOrchestrator {
       ? undefined
       : validateRestoredRunLifecycle(active);
     if (lifecycleError) {
-      this.failActiveRun(lifecycleError);
-      this.notify(ctx, lifecycleError, 'warning');
-      return this.runStore.getLastRunSummary();
+      this.holdForRecovery(active, 'launch-unknown', lifecycleError);
+      return summary;
     }
 
     if (active.profileSnapshot) {
@@ -1436,7 +1606,7 @@ export class FusionOrchestrator {
         ].join('\n');
         this.sendMessage?.(
           { customType: 'fusion-deadline', content, display: true },
-          { triggerTurn: true, deliverAs: 'steer' },
+          { triggerTurn: active.operationId === undefined, deliverAs: 'steer' },
         );
       }
       try {
@@ -1503,6 +1673,12 @@ export class FusionOrchestrator {
         await this.resumePreflights(this.context);
       return { status: 'ignored' };
     }
+    if (active.recoveryRequired)
+      return active.cancellationRequested
+        ? this.reconcileQuarantinedCancellation(active)
+        : { status: 'ignored' };
+    if (!active.executionLifetime && hasUnresolvedSpawnIntent(active))
+      return { status: 'ignored' };
     if (
       eventPayload !== undefined &&
       extractSubagentRunId(eventPayload) !== activeRunId(active)
@@ -1593,6 +1769,8 @@ export class FusionOrchestrator {
     const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: 'ignored' };
+    const replacement = this.runtimeReplacement(active, snapshot);
+    if (replacement) return replacement;
     this.persistVerifiedPanelResults(active, profile, snapshot.statusPayload);
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
@@ -1759,6 +1937,8 @@ export class FusionOrchestrator {
     const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: 'ignored' };
+    const replacement = this.runtimeReplacement(active, snapshot);
+    if (replacement) return replacement;
 
     const partial = this.persistVerifiedPanelResults(
       active,
@@ -1971,10 +2151,10 @@ export class FusionOrchestrator {
     try {
       const spawnResult = await this.spawnStage(run, 'judge', decision.params);
       const spawnError = extractSubagentFailure(spawnResult);
-      if (spawnError) throw new FusionArgsError(spawnError);
+      if (spawnError) throw new UnresolvedLaunchError(spawnError);
       const judgeRunId = extractSubagentRunId(spawnResult);
       if (!judgeRunId) {
-        throw new FusionArgsError(decision.missingRunIdError);
+        throw new UnresolvedLaunchError(decision.missingRunIdError);
       }
       const judgeAsyncDir = extractSubagentAsyncDir(spawnResult);
       this.runStore.refreshDurable();
@@ -1985,7 +2165,7 @@ export class FusionOrchestrator {
       let nextRun: FusionRun;
       try {
         nextRun = this.runStore.updateRun(run.id, {
-          ...(!run.executionLifetime ? { spawnIntent: null } : {}),
+          recoveryRequired: null,
           phase: 'judge',
           completionQuality: completionQuality(
             profile,
@@ -2001,8 +2181,16 @@ export class FusionOrchestrator {
         // As for the panel, never leave a remotely started synthesis run
         // alive when recording its public ID failed.
         await this.stopOrphanedRun(judgeRunId, 'judge');
-        throw persistenceError;
+        throw new UnresolvedLaunchError(
+          `Native run ${judgeRunId} was started but its binding could not be saved: ${errorMessage(persistenceError)}`,
+        );
       }
+      if (
+        nextRun.cancellationRequested &&
+        !nextRun.executionLifetime &&
+        this.context
+      )
+        return this.cancelActiveRun(this.context);
       publishFusionStatus(this.context, nextRun);
       this.notify(
         this.context,
@@ -2015,9 +2203,7 @@ export class FusionOrchestrator {
       this.runStore.refreshDurable();
       if (this.runStore.getActiveRun()?.id !== run.id)
         return { status: 'ignored' };
-      if (run.executionLifetime)
-        return this.retainUnresolvedRun(run.id, errorMessage(error));
-      return this.failActiveRun(errorMessage(error));
+      return this.handleLaunchFailure(run, error);
     }
   }
 
@@ -2034,6 +2220,8 @@ export class FusionOrchestrator {
     const interruption = await this.completionInterruption(active);
     if (interruption) return interruption;
     if (snapshot.resultArtifactPending) return { status: 'ignored' };
+    const replacement = this.runtimeReplacement(active, snapshot);
+    if (replacement) return replacement;
     const terminalPayload =
       snapshot.resultPayload ?? snapshot.statusPayload ?? payload;
     if (
@@ -2137,6 +2325,15 @@ export class FusionOrchestrator {
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
     });
+    // Artifact-first output selection must not erase lifecycle stop metadata.
+    const replaced = [
+      statusPayload,
+      artifactResult,
+      ...(eventPayloadMatches ? [input.eventPayload] : []),
+    ].find(isRuntimeReplaced);
+    if (replaced !== undefined)
+      return { statusPayload: replaced, resultIsTerminal: true };
+
     const failureKind =
       (hasExplicitResultsArray(artifactResult)
         ? extractWorkflowFailureKind(artifactResult)
@@ -2302,6 +2499,7 @@ export class FusionOrchestrator {
         ? { status: 'cancelled', run: saved, report: saved.report }
         : { status: 'ignored' };
     }
+    if (active.recoveryRequired) return { status: 'ignored' };
     if (
       run.executionLifetime &&
       (active.cancellationRequested ||
@@ -2363,6 +2561,51 @@ export class FusionOrchestrator {
     this.clearActiveRuntime();
     this.clearUi();
     return terminalResult(done, report);
+  }
+
+  private handleLaunchFailure(
+    run: FusionRun,
+    error: unknown,
+  ): FusionCommandResult {
+    if (this.disposed) return this.reconcileConflict(run.id);
+    if (run.executionLifetime)
+      return this.retainUnresolvedRun(run.id, errorMessage(error));
+    if (error instanceof UnresolvedLaunchError)
+      return this.holdForRecovery(run, 'launch-unknown', error.message);
+    return this.failActiveRun(errorMessage(error));
+  }
+
+  private holdForRecovery(
+    run: FusionRun,
+    reason: NonNullable<FusionRun['recoveryRequired']>,
+    message: string,
+  ): FusionCommandResult {
+    const updated = this.runStore.updateRun(run.id, {
+      recoveryRequired: reason,
+      error: `Fusion recovery required (${reason}): ${message} Native work may still be running. Automatic replay and new Fusion runs are blocked.`,
+    });
+    this.stopReconcileLoop();
+    if (updated.cancellationRequested) this.ensureReconcileLoop();
+    publishFusionStatus(this.context, updated);
+    this.notify(this.context, updated.error ?? message, 'warning');
+    return { status: 'started', run: updated };
+  }
+
+  private runtimeReplacement(
+    run: FusionRun,
+    snapshot: RunLifecycleSnapshot,
+  ): FusionCommandResult | undefined {
+    if (
+      run.executionLifetime ||
+      (!isRuntimeReplaced(snapshot.statusPayload) &&
+        !isRuntimeReplaced(snapshot.resultPayload))
+    )
+      return undefined;
+    return this.holdForRecovery(
+      run,
+      'runtime-replaced',
+      `Workflow ${activeRunId(run) ?? 'unknown'} lost its runtime; surviving children must be reconciled before admission can be released.`,
+    );
   }
 
   private failActiveRun(
@@ -2454,7 +2697,7 @@ export class FusionOrchestrator {
   }
 
   private ensureReconcileLoop(): void {
-    if (this.reconcileTimer) return;
+    if (this.disposed || this.reconcileTimer) return;
     this.reconcileTimer = setInterval(() => {
       void this.reconcileActiveRun().catch((error: unknown) => {
         const message = `Could not reconcile fusion run: ${errorMessage(error)}`;
@@ -2478,6 +2721,7 @@ export class FusionOrchestrator {
   }
 
   private postTerminalReport(run: FusionRun, report: string): void {
+    if (this.disposed) return;
     // Only the terminal-commit winner publishes. A crash after committing may lose
     // a wake, but reload must not replay terminal notifications.
     const triggerTurn =
@@ -2500,6 +2744,7 @@ export class FusionOrchestrator {
     content: string,
     details?: unknown,
   ): void {
+    if (this.disposed) return;
     this.sendMessage?.({
       customType,
       content,
@@ -2513,7 +2758,7 @@ export class FusionOrchestrator {
     message: string,
     type: FusionNotifyType,
   ): void {
-    ctx?.ui.notify(message, type);
+    if (!this.disposed) ctx?.ui.notify(message, type);
   }
 }
 
@@ -2631,19 +2876,18 @@ function hasUnresolvedSpawnIntent(run: FusionRun): boolean {
 
 /**
  * A restored nonterminal phase without the remote ID cannot be reconciled.
- * Spawn intents are handled first so their more specific no-replay failure is
- * preserved; all other incomplete records are terminalized rather than left
- * active forever.
+ * Spawn intents are handled first for their more specific diagnostic. Older
+ * snapshots without an intent are also unknown, never proof of no dispatch.
  */
 function validateRestoredRunLifecycle(run: FusionRun): string | undefined {
   if (run.phase === 'judge' && !run.judgeRunId) {
-    return 'Fusion recovery stopped: judge phase has no persisted judge run ID.';
+    return 'Judge phase has no persisted judge run ID.';
   }
   if (run.phase === 'chain' && !run.chainRunId) {
-    return 'Fusion recovery stopped: chain phase has no persisted chain run ID.';
+    return 'Chain phase has no persisted chain run ID.';
   }
   if (run.phase === 'panel' && !run.panelRunId && !run.chainRunId) {
-    return 'Fusion recovery stopped: panel phase has no persisted panel run ID.';
+    return 'Panel phase has no persisted panel run ID.';
   }
   return undefined;
 }
@@ -2752,6 +2996,18 @@ function formatFusionStatusReport(input: {
     );
     lines.push(`Profile: ${input.active.profileName}`);
     lines.push(`Phase: ${input.details?.phaseLabel ?? input.active.phase}`);
+    if (input.active.recoveryRequired)
+      lines.push(
+        `Recovery required: ${input.active.recoveryRequired}`,
+        input.active.error ?? 'Native ownership remains unresolved.',
+      );
+    if (input.active.cancellationRequested)
+      lines.push('Cancellation: requested; native exit not proven');
+    const delivery = input.active.cancellationDelivery;
+    if (delivery)
+      lines.push(
+        `Stop delivery: ${delivery.state} to ${delivery.runId}${delivery.state !== 'delivered' ? ` (${delivery.error})` : ''}`,
+      );
     appendEffectiveTimeouts(lines, input.active);
     for (const deadline of input.active.panelDeadlines ?? []) {
       lines.push(
@@ -3447,6 +3703,7 @@ function sameStage(
     current !== undefined &&
     expected.id === current.id &&
     expected.phase === current.phase &&
+    expected.recoveryRequired === current.recoveryRequired &&
     expected.panelRunId === current.panelRunId &&
     expected.judgeRunId === current.judgeRunId &&
     expected.chainRunId === current.chainRunId &&
@@ -3454,6 +3711,34 @@ function sameStage(
     expected.spawnIntent?.requestId === current.spawnIntent?.requestId &&
     expected.spawnIntent?.requestDigest === current.spawnIntent?.requestDigest
   );
+}
+
+class UnresolvedLaunchError extends Error {}
+
+// Upstream also uses execution_failed for arbitrary executor exceptions. A
+// synchronous reply or a familiar error message is not evidence of no dispatch.
+function isPrelaunchRejection(error: unknown): boolean {
+  return (
+    error instanceof SubagentsRpcRemoteError &&
+    error.method === 'spawn' &&
+    [
+      'invalid_request',
+      'unsupported_version',
+      'unsupported_method',
+      'invalid_params',
+      'no_active_session',
+    ].includes(error.code)
+  );
+}
+
+function isRuntimeReplaced(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  if (
+    isRecord(payload.workflow) &&
+    payload.workflow.stopCause === 'runtime-replaced'
+  )
+    return true;
+  return isRuntimeReplaced(payload.details) || isRuntimeReplaced(payload.data);
 }
 
 function errorMessage(error: unknown): string {

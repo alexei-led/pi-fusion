@@ -33,6 +33,7 @@ export interface RegisteredCommand {
 }
 
 export interface FakeCommandContext {
+  isIdle(): boolean;
   cwd: string;
   hasUI: boolean;
   isProjectTrusted(): boolean;
@@ -54,6 +55,8 @@ export interface FakeMessage {
 }
 
 export class FakePi {
+  idle = true;
+  readonly userMessages: Array<{ content: string; deliverAs?: string }> = [];
   sessionId = 'test-session';
   readonly messageOptions: Array<
     { triggerTurn?: boolean; deliverAs?: string } | undefined
@@ -103,12 +106,20 @@ export class FakePi {
     this.messageOptions.push(options);
   }
 
+  sendUserMessage(content: string, options?: { deliverAs?: string }): void {
+    this.userMessages.push({
+      content,
+      ...(options?.deliverAs ? { deliverAs: options.deliverAs } : {}),
+    });
+  }
+
   appendEntry(customType: string, data?: unknown): void {
     this.entries.push({ type: 'custom', customType, data });
   }
 
   createContext(cwd = '/project'): FakeCommandContext {
     return {
+      isIdle: () => this.idle,
       cwd,
       hasUI: true,
       isProjectTrusted: () => true,
@@ -214,14 +225,14 @@ export class FakeEventBus {
   }
 
   private spawnData(params: unknown): unknown {
-    if (!isRecord(params) || typeof params.workflowScript !== 'string') {
-      throw new TypeError('Subagent spawn must use workflowScript.');
+    if (!isRecord(params) || typeof params.script !== 'string') {
+      throw new TypeError('Subagent spawn must use script.');
     }
     assert.equal('clarify' in params, false);
     assert.equal('agent' in params, false);
     assert.equal('task' in params, false);
     this.spawns.push(params);
-    const runId = params.workflowScript.includes('runs.run("judge",')
+    const runId = params.script.includes('runs.run("judge",')
       ? 'judge-1'
       : 'panel-1';
     return {

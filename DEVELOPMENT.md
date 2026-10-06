@@ -9,7 +9,7 @@ npm run test:all
 pi install /path/to/pi-fusion
 ```
 
-Then reload Pi:
+Restart Pi after updating upstream packages. For a Fusion-only code reload:
 
 ```text
 /reload
@@ -17,9 +17,17 @@ Then reload Pi:
 
 ## Runtime behavior
 
-The development dependency and peer contract target Pi `^1.0.2`.
-The SDK smoke test uses a temporary agent directory and disables model network
-refresh; it does not read personal credentials or make model calls.
+Development checks pin Pi `1.0.4` and pi-subagents `0.76.1`; the Pi peer range
+remains `^1.0.2`. Neither upstream package is imported through private runtime
+modules. Fusion communicates with pi-subagents only through event-bus RPC.
+
+The SDK smoke test disables model network refresh. The upstream E2E test loads
+both real extensions in a separate Pi process, with an isolated home and agent
+directory and a localhost fake model provider. It checks the public RPC validator,
+select/merge/single-member runs, rolling refill after authentication failure,
+native stop rejection codes, operation replay, and clean host shutdown.
+It does not read personal credentials or call a paid model. Native completion
+wakes are observed as an upstream limitation, not mistaken for Fusion wakes.
 
 - Uses `pi-subagents` over its event-bus RPC channel.
 - New runs use one async parallel panel run followed by a standalone judge run; restored legacy chain runs remain supported.
@@ -69,14 +77,15 @@ Target package:
 @alexeiled/pi-fusion
 ```
 
-Release flow:
+Commit the reviewed implementation and matching changelog section before tagging.
+Choose the version increment explicitly; this example cuts a minor release:
 
 ```bash
 npm run test:all
-npm version patch
+npm version minor -m "release: v%s"
 git push origin master --follow-tags
 ```
 
-The release workflow runs on pushed `v*` tags only. The tag must match `package.json` version and point to a commit on `master`.
+The release workflow runs on pushed `v*` tags only. The tag must match `package.json` version and point to a commit on `master`. It reads that version's committed `CHANGELOG.md` section, publishes npm with provenance, and creates the GitHub release with the tag as its title and the same notes. Missing or empty notes fail before publication. Existing package versions and GitHub releases are not overwritten.
 
 npm publish uses Trusted Publishing. Configure npm for repository `alexei-led/pi-fusion` and workflow `.github/workflows/release.yml` before the first release.

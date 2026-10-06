@@ -6,7 +6,13 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "test/**", "*.json", "!package-lock.json"]
+    "includes": [
+      "src/**",
+      "test/**",
+      "scripts/**/*.ts",
+      "*.json",
+      "!package-lock.json"
+    ]
   },
   "formatter": {
     "indentStyle": "space",

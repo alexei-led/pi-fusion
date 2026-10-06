@@ -38,6 +38,8 @@ export interface SubagentsRpcClientOptions {
 }
 
 export interface SubagentsRpcRequestOptions {
+  /** Persisted by the caller before dispatch; correlation, not idempotency. */
+  requestId?: string;
   timeoutMs?: number;
 }
 
@@ -165,7 +167,7 @@ export class SubagentsRpcClient {
     params?: unknown,
     options: SubagentsRpcRequestOptions = {},
   ): Promise<T> {
-    const requestId = this.createRequestId();
+    const requestId = options.requestId ?? this.createRequestId();
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? this.timeoutMs);
     const replyChannel = subagentsRpcReplyChannel(requestId);
     const envelope = createRequestEnvelope({

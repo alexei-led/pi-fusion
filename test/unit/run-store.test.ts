@@ -85,6 +85,41 @@ for (const phase of ['done', 'panel'] as const) {
   });
 }
 
+for (const minimumSuccessfulPanelists of [1, 2]) {
+  test(`two-member majority snapshots retain stored quorum ${minimumSuccessfulPanelists} across upgrade`, () => {
+    const store = new FusionRunStore();
+    store.restoreFromEntries([
+      {
+        type: 'custom',
+        customType: FUSION_RUN_ENTRY_TYPE,
+        data: {
+          id: 'upgrade',
+          prompt: 'review',
+          profileName: 'quality',
+          phase: 'panel',
+          panelRunId: 'native-panel',
+          createdAt: 1,
+          updatedAt: 1,
+          minimumSuccessfulPanelists: 'majority',
+          profileSnapshot: {
+            panel: [
+              { id: 'one', agent: 'panel' },
+              { id: 'two', agent: 'panel' },
+            ],
+            judge: { agent: 'judge' },
+            minimumSuccessfulPanelists,
+          },
+        },
+      },
+    ]);
+    assert.equal(store.getRestoreError(), undefined);
+    assert.equal(
+      store.getActiveRun()?.profileSnapshot?.minimumSuccessfulPanelists,
+      minimumSuccessfulPanelists,
+    );
+  });
+}
+
 test('only one durable terminal transition wins a race', () => {
   const directory = mkdtempSync(join(tmpdir(), 'fusion-terminal-race-'));
   onTestFinished(() => rmSync(directory, { recursive: true, force: true }));

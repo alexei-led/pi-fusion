@@ -78,7 +78,7 @@ interface SpawnEnvelope {
 }
 
 export interface LegacyPanelSpawnParams extends SpawnEnvelope {
-  workflowScript: string;
+  script: string;
 }
 
 export interface OwnedPanelSpawnParams extends SpawnEnvelope {
@@ -110,7 +110,7 @@ export interface JudgeWorkflowTaskParams {
 }
 
 export interface LegacyJudgeSpawnParams extends SpawnEnvelope {
-  workflowScript: string;
+  script: string;
 }
 
 export interface OwnedJudgeSpawnParams
@@ -232,6 +232,13 @@ export function buildPanelSpawnParams(
   timeoutOverrides?: FusionTimeoutOverrides,
   executionLifetime?: ExecutionLifetime,
 ): PanelSpawnParams {
+  if (
+    profile.stopWhenPanelAgrees &&
+    callerContractForPrompt(prompt, callerContract)
+  )
+    throw new FusionArgsError(
+      'Agreement stopping cannot be combined with an exact output contract.',
+    );
   if (executionLifetime && profile.stopWhenPanelAgrees)
     throw new FusionArgsError(
       'stopWhenPanelAgrees is not supported by the native kernel-owned parallel route; choose a profile without agreement stopping.',
@@ -239,7 +246,7 @@ export function buildPanelSpawnParams(
   const timeouts = executionLifetime
     ? undefined
     : resolveEffectiveTimeouts(profile, timeoutOverrides);
-  const concurrency = profile.concurrency ?? profile.panel.length;
+  const concurrency = effectivePanelConcurrency(profile);
   const tasks: PanelWorkflowTaskParams[] = profile.panel.map(
     (member, index) => ({
       key: `panel-${index + 1}`,
@@ -287,7 +294,7 @@ export function buildPanelSpawnParams(
   }
 
   return {
-    workflowScript: buildPanelWorkflowScript(
+    script: buildPanelWorkflowScript(
       tasks,
       concurrency,
       profile.stopWhenPanelAgrees === true,
@@ -339,7 +346,7 @@ export function buildJudgeSpawnParams(
   }
 
   return {
-    workflowScript: `return runs.run("judge", ${JSON.stringify(task)});`,
+    script: `return runs.run("judge", ${JSON.stringify(task)});`,
     async: true,
     context: input.profile.context ?? 'fresh',
     output: true,
@@ -366,9 +373,8 @@ function buildPanelWorkflowScript(
       'while (next < tasks.length || pending.size > 0) {',
       '  while (next < tasks.length && pending.size < concurrency) {',
       '    const index = next++;',
-      '    const { key, ...task } = tasks[index];',
-      '    const pendingRun = runs.run(key, task);',
-      '    pending.set(index, Promise.all([pendingRun]).then(([result]) => ({ index, result })));',
+      '    const pendingRun = runs.all([tasks[index]]);',
+      '    pending.set(index, Promise.all([pendingRun]).then(([batch]) => ({ index, result: batch[0] })));',
       '  }',
       '  const { index, result } = await Promise.race(pending.values());',
       '  results[index] = result;',
@@ -379,12 +385,6 @@ function buildPanelWorkflowScript(
   }
   // Agreement panels deliberately use quorum-sized rounds: starting speculative
   // replacements would spend more calls before the current votes can agree.
-  // Start no more work than the resolved quorum requires. This preserves the
-  // two-at-a-time majority behavior while allowing a larger configured quorum
-  // to be observed before agreement can stop the remaining panelists.
-  const effectiveConcurrency = stopWhenAgrees
-    ? Math.min(concurrency, requiredSuccessfulPanelists)
-    : concurrency;
   const stopLogic = stopWhenAgrees
     ? [
         `const requiredSuccessfulPanelists = ${requiredSuccessfulPanelists};`,
@@ -410,7 +410,7 @@ function buildPanelWorkflowScript(
 
   return [
     `const tasks = ${serializedTasks};`,
-    `const concurrency = ${effectiveConcurrency};`,
+    `const concurrency = ${concurrency};`,
     'const results = [];',
     'for (let index = 0; index < tasks.length; index += concurrency) {',
     '  results.push(...await runs.all(tasks.slice(index, index + concurrency)));',
@@ -435,12 +435,26 @@ function resolveStageTimeout(
   return timeoutMs;
 }
 
+/** Agreement rounds start no more work than their resolved quorum requires. */
+function effectivePanelConcurrency(profile: FusionProfile): number {
+  const concurrency = profile.concurrency ?? profile.panel.length;
+  return profile.stopWhenPanelAgrees
+    ? Math.min(
+        concurrency,
+        resolveMinimumSuccessfulPanelists(
+          profile.minimumSuccessfulPanelists,
+          profile.panel.length,
+        ),
+      )
+    : concurrency;
+}
+
 /** Resolves and records the deadline precedence used for one start attempt. */
 export function resolveEffectiveTimeouts(
   profile: FusionProfile,
   overrides: FusionTimeoutOverrides | undefined = undefined,
 ): EffectiveFusionTimeouts {
-  const concurrency = profile.concurrency ?? profile.panel.length;
+  const concurrency = effectivePanelConcurrency(profile);
   const waves = Math.ceil(profile.panel.length / concurrency);
   const panelTimeoutMs = resolveStageTimeout(
     overrides?.panelTimeoutMs ?? profile.panelTimeoutMs,

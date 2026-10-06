@@ -68,7 +68,7 @@ function workflowTasks(
   params: ReturnType<typeof buildPanelSpawnParams>,
 ): PanelWorkflowTaskParams[] {
   if ('ownedWorkflow' in params) return params.ownedWorkflow.tasks;
-  const serialized = params.workflowScript.match(/^const tasks = (.*);$/m)?.[1];
+  const serialized = params.script.match(/^const tasks = (.*);$/m)?.[1];
   assert.ok(serialized);
   return JSON.parse(serialized) as PanelWorkflowTaskParams[];
 }
@@ -77,7 +77,7 @@ function judgeWorkflowTask(
   params: ReturnType<typeof buildJudgeWorkflowSpawnParams>,
 ): JudgeWorkflowTaskParams {
   if ('executionOwnership' in params) return params;
-  const serialized = params.workflowScript.match(
+  const serialized = params.script.match(
     /^return runs\.run\("judge", (.*)\);$/,
   )?.[1];
   assert.ok(serialized);
@@ -119,10 +119,7 @@ test('buildPanelSpawnParams creates async parallel panel tasks', () => {
   assert.equal('chain' in params, false);
   assert.equal('concurrency' in params, false);
   assert.equal('worktree' in params, false);
-  assert.match(
-    params.workflowScript,
-    /await Promise\.race\(pending\.values\(\)\)/,
-  );
+  assert.match(params.script, /await Promise\.race\(pending\.values\(\)\)/);
 
   const tasks = workflowTasks(params);
   assert.equal(tasks.length, 3);
@@ -157,12 +154,18 @@ test('rolling panel refills a failed slot before a slower panelist completes', a
   };
   const started: string[] = [];
   const finishes = new Map<string, (value: unknown) => void>();
-  const script = buildPanelSpawnParams(profile, 'review').workflowScript;
+  const script = buildPanelSpawnParams(profile, 'review').script;
   const completion = runInNewContext(`(async () => { ${script} })()`, {
     runs: {
-      run(key: string) {
+      all(tasks: Array<{ key: string }>) {
+        assert.equal(tasks.length, 1);
+        const task = tasks[0];
+        assert.ok(task);
+        const key = task.key;
         started.push(key);
-        return new Promise((resolve) => finishes.set(key, resolve));
+        return new Promise((resolve) => finishes.set(key, resolve)).then(
+          (result) => [result],
+        );
       },
     },
   }) as Promise<unknown[]>;
@@ -210,7 +213,7 @@ test('unbounded panel uses owned task data without scripts or child deadlines', 
   );
   assert.deepEqual(params.executionLifetime, lifetime);
   assert.equal('timeoutMs' in params, false);
-  assert.equal('workflowScript' in params, false);
+  assert.equal('script' in params, false);
   assert.deepEqual(params.executionOwnership, { mode: 'kernel' });
   assert.equal(params.ownedWorkflow.kind, 'parallel');
   assert.equal(params.ownedWorkflow.concurrency, PROFILE.concurrency);
@@ -234,7 +237,7 @@ test('unbounded judge uses a direct owned single-agent launch', () => {
   });
   assert.deepEqual(spawn.executionLifetime, lifetime);
   assert.equal('timeoutMs' in spawn, false);
-  assert.equal('workflowScript' in spawn, false);
+  assert.equal('script' in spawn, false);
   assert.ok('executionOwnership' in spawn);
   assert.deepEqual(spawn.executionOwnership, { mode: 'kernel' });
   assert.equal(spawn.agent, PROFILE.judge.agent);
@@ -285,9 +288,9 @@ test('owned panel rejects early-agreement policy rather than dropping it', () =>
   );
 });
 
-test('exact caller contracts replace panel headings and agreement records', () => {
+test('exact caller contracts replace panel headings without a decision record', () => {
   const params = buildPanelSpawnParams(
-    { ...PROFILE, stopWhenPanelAgrees: true },
+    { ...PROFILE, stopWhenPanelAgrees: false },
     EXACT_REVIEW_PROMPT,
   );
   const task = workflowTasks(params)[0]?.task ?? '';
@@ -307,8 +310,8 @@ test('buildPanelSpawnParams adds a decision record only for agreement stopping',
   assert.equal('outputSchema' in (tasks[0] ?? {}), false);
   assert.match(tasks[0]?.task ?? '', /<fusion-panel-decision>/);
   assert.match(tasks[0]?.task ?? '', /needsMoreEvidence/);
-  assert.match(params.workflowScript, /const concurrency = 2;/);
-  assert.match(params.workflowScript, /pi-fusion-panel-stop/);
+  assert.match(params.script, /const concurrency = 2;/);
+  assert.match(params.script, /pi-fusion-panel-stop/);
 });
 
 test('agreement workflow uses the resolved all quorum for a four-member panel', () => {
@@ -325,13 +328,13 @@ test('agreement workflow uses the resolved all quorum for a four-member panel', 
 
   const params = buildPanelSpawnParams(profile, 'Compare two API designs');
 
-  assert.match(params.workflowScript, /const concurrency = 4;/);
-  assert.match(params.workflowScript, /const requiredSuccessfulPanelists = 4;/);
+  assert.match(params.script, /const concurrency = 4;/);
+  assert.match(params.script, /const requiredSuccessfulPanelists = 4;/);
   assert.match(
-    params.workflowScript,
+    params.script,
     /decisions\.length >= requiredSuccessfulPanelists/,
   );
-  assert.doesNotMatch(params.workflowScript, /decisions\.length >= 2/);
+  assert.doesNotMatch(params.script, /decisions\.length >= 2/);
 });
 
 test('buildPanelSpawnParams includes role, prompt, contract, and read-only instruction', () => {
@@ -596,9 +599,7 @@ test('buildPanelSpawnParams matches the pre-change task baseline apart from reli
   assert.equal(actual.outputMode, expected.outputMode);
   assert.deepEqual(actual.acceptance, expected.acceptance);
   assert.ok(
-    actual.workflowScript.includes(
-      `const concurrency = ${expected.concurrency};`,
-    ),
+    actual.script.includes(`const concurrency = ${expected.concurrency};`),
   );
 });
 

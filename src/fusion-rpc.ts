@@ -71,6 +71,8 @@ export interface FusionRpcError {
 }
 
 export interface FusionRunState {
+  cancellationDelivery?: FusionRun['cancellationDelivery'];
+  recoveryRequired?: FusionRun['recoveryRequired'];
   failureKind?: FusionRun['failureKind'];
   runId: string;
   operationId?: string;
@@ -230,6 +232,8 @@ type ObservableRun = Pick<
   | 'cancellationRequested'
   | 'observation'
   | 'spawnIntent'
+  | 'recoveryRequired'
+  | 'cancellationDelivery'
   | 'panelRunId'
   | 'judgeRunId'
   | 'reviewContext'
@@ -868,6 +872,10 @@ function stateFor(run: ObservableRun): FusionRunState {
     ...(run.operationId !== undefined ? { operationId: run.operationId } : {}),
     phase: run.phase,
     terminal: TERMINAL_PHASES.has(run.phase),
+    ...(run.recoveryRequired ? { recoveryRequired: run.recoveryRequired } : {}),
+    ...(run.cancellationDelivery
+      ? { cancellationDelivery: { ...run.cancellationDelivery } }
+      : {}),
     ...runtimeData(run),
     ...(run.cancellationRequested ? { cancellationRequested: true } : {}),
     ...(run.observation !== undefined ? { observation: run.observation } : {}),

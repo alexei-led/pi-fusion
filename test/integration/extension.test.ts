@@ -7,7 +7,48 @@ import {
 import fusionExtension from '../../src/index.js';
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from '../../src/orchestrator.js';
 import { FUSION_RUN_ENTRY_TYPE } from '../../src/run-store.js';
+import {
+  SUBAGENTS_RPC_REQUEST_CHANNEL,
+  subagentsRpcReplyChannel,
+} from '../../src/subagents-rpc.js';
 import { createProjectDir, FakePi, nextTick } from '../support/fake-pi.js';
+
+test('recovery tool receipt presents its diagnostic once', async (t) => {
+  const pi = new FakePi();
+  const ctx = pi.createContext(await createProjectDir(t));
+  fusionExtension(pi.asExtensionApi());
+  t.onTestFinished(() => pi.emitLifecycle('session_shutdown', {}, ctx));
+  pi.events.on(SUBAGENTS_RPC_REQUEST_CHANNEL, (request) => {
+    if (
+      !isRecord(request) ||
+      request.method !== 'spawn' ||
+      typeof request.requestId !== 'string'
+    )
+      return;
+    pi.events.emit(subagentsRpcReplyChannel(request.requestId), {
+      version: 1,
+      requestId: request.requestId,
+      method: 'spawn',
+      success: false,
+      error: { code: 'execution_failed', message: 'Dispatch outcome unknown' },
+    });
+  });
+  const tool = pi.tools.get('start_fusion_review');
+  assert.ok(tool);
+  const result = await tool.execute(
+    'tool-1',
+    { prompt: 'review' },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.ok(isRecord(result) && Array.isArray(result.content));
+  const text = result.content[0];
+  assert.ok(isRecord(text) && typeof text.text === 'string');
+  assert.equal(text.text.split('Fusion recovery required').length - 1, 1);
+  assert.doesNotMatch(text.text, /blocked\.\./);
+  assert.match(text.text, /Dispatch outcome unknown/);
+});
 
 test('fusionExtension registers documented commands', () => {
   const pi = new FakePi();
@@ -285,9 +326,9 @@ test('start_fusion_review forwards an inline panel and omits it when absent', as
     undefined,
     ctx,
   );
-  const withPanel = pi.events.spawns.at(-1) as { workflowScript: string };
+  const withPanel = pi.events.spawns.at(-1) as { script: string };
   const withPanelTasks = JSON.parse(
-    withPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
+    withPanel.script.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
   ) as { model?: string }[];
   assert.deepEqual(
     withPanelTasks.map((entry) => entry.model),
@@ -317,9 +358,9 @@ test('start_fusion_review forwards an inline panel and omits it when absent', as
     undefined,
     ctx,
   );
-  const withoutPanel = pi.events.spawns.at(-1) as { workflowScript: string };
+  const withoutPanel = pi.events.spawns.at(-1) as { script: string };
   const withoutPanelTasks = JSON.parse(
-    withoutPanel.workflowScript.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
+    withoutPanel.script.match(/^const tasks = (.*);$/m)?.[1] ?? 'null',
   ) as unknown[];
   assert.equal(withoutPanelTasks.length, 3, 'falls back to the profile panel');
 });

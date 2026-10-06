@@ -97,7 +97,9 @@ export function expectedExecutionRoute(
     !isRecord(params) ||
     !isRecord(params.executionOwnership) ||
     params.executionOwnership.mode !== 'kernel' ||
-    params.workflowScript !== undefined
+    params.workflowScript !== undefined ||
+    params.script !== undefined ||
+    params.workflow !== undefined
   )
     return undefined;
   if (

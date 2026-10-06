@@ -1,6 +1,6 @@
 {
   "name": "@alexeiled/pi-fusion",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Stronger answers for hard Pi questions via a parallel model panel + judge, built on pi-subagents",
   "type": "module",
   "main": "./src/index.ts",
@@ -61,9 +61,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@earendil-works/pi-coding-agent": "^1.0.2",
+    "@earendil-works/pi-coding-agent": "1.0.4",
     "@types/node": "^24.10.0",
     "jiti": "^2.7.0",
+    "pi-subagents": "0.76.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   },

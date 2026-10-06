@@ -123,7 +123,7 @@ test('soft deadlines must leave a finalization reserve under effective caps', ()
     () => resolveEffectiveTimeouts(profile, { panelTimeoutMs: 610_000 }),
     /one minute/,
   );
-  const tasks = buildPanelSpawnParams(profile, 'review').workflowScript;
+  const tasks = buildPanelSpawnParams(profile, 'review').script;
   assert.match(tasks, /Parent supervisor coordination is allowed/);
   assert.equal(resolveEffectiveTimeouts(profile).panelistTimeoutMs, 960_000);
 });

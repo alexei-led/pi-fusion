@@ -23,7 +23,13 @@ export function publishFusionStatus(
   ctx: FusionUiContext | undefined,
   run: Pick<
     FusionRun,
-    'id' | 'phase' | 'profileName' | 'chainRunId' | 'panelRunId' | 'judgeRunId'
+    | 'id'
+    | 'phase'
+    | 'profileName'
+    | 'chainRunId'
+    | 'panelRunId'
+    | 'judgeRunId'
+    | 'recoveryRequired'
   >,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
@@ -43,14 +49,21 @@ export function clearFusionUi(ctx: FusionUiContext | undefined): void {
 export function formatFusionStatusText(
   run: Pick<
     FusionRun,
-    'phase' | 'profileName' | 'chainRunId' | 'panelRunId' | 'judgeRunId'
+    | 'phase'
+    | 'profileName'
+    | 'chainRunId'
+    | 'panelRunId'
+    | 'judgeRunId'
+    | 'recoveryRequired'
   >,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
 ): string {
   const activeRunId =
     run.phase === 'judge' ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
-  const phase = phaseLabel ?? run.phase;
+  const phase = run.recoveryRequired
+    ? 'recovery required'
+    : (phaseLabel ?? run.phase);
   if (progress) {
     return `fusion: ${phase} · ${formatProgressCounts(progress)} · ${run.profileName}`;
   }

@@ -29,7 +29,7 @@ prompts, or both. **Mixing models is the main lever.** The config that
 `/fusion init` writes sets no `model`. By default you therefore get one model in
 three roles. Give each member its own `model` to get the real benefit.
 
-Fusion launches panels through `pi-subagents` `workflowScript`; the panel and judge remain separate durable runs. At start, Fusion persists the resolved profile and native spawn intent. Project snapshots in `.pi/fusion/runs` preserve identity across sessions and process restarts. Runs using an explicit execution lifetime also persist the native operation ID, request digest, and exact spawn parameters before dispatch. A lost reply remains unresolved while Fusion looks up the original native operation. It does not become a failed run with an assumed absent child. Legacy runs without this contract retain their recovery warning when their native run ID was never saved. Corrupt durable snapshots block recovery instead of reviving stale state.
+Fusion launches panels through the `pi-subagents` RPC `script` field; the panel and judge remain separate durable runs. Before dispatch, Fusion persists the resolved profile, exact stage parameters, request digest, and RPC correlation ID. Ordinary workflows carry a stable Fusion run/stage identity in `args`, so a new same-prompt review cannot reuse another review's children. Project snapshots in `.pi/fusion/runs` preserve identity across sessions and process restarts. An uncertain launch or runtime replacement keeps admission blocked; see [Recovery required](#recovery-required). Corrupt snapshots block recovery instead of reviving stale state.
 
 The base Pi session stays in control. Fusion is a tool for decisions, not a replacement for normal coding.
 
@@ -201,17 +201,17 @@ Profile:
 
 - `panel`: one or more panel members
 - `judge`: judge agent config
-- `wakeOnCompletion`: optional boolean, default `false`. With the default, reports do not interrupt a running turn or start a new one; mid-turn reports are appended after that turn's tool results. Queue a follow-up turn when the terminal report is published, but only in the same interactive Pi session that started the run. RPC starts never wake the interactive agent; their controller owns continuation. The run captures the session identity at start. Only the successful terminal-state writer publishes the report: duplicate events, competing writers, and reload do not replay it, but a crash between persistence and sending can lose a wake. This is at-most-once attempt, not guaranteed delivery, and does not retry the review.
-- `concurrency`: max parallel panelists. Ordinary panels immediately start the next queued member when a slot finishes or fails, while retaining configured result order. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
+- `wakeOnCompletion`: optional boolean, default `false`. Controls **Fusion's final-report wake**, not pi-subagents' native notifications. With the default, Fusion appends its report without starting or interrupting a turn. When enabled, only the same interactive session that started the run is woken; an idle wake uses a normal user prompt so `before_agent_start` runs, and a busy wake queues a follow-up. Fusion does not wake the interactive agent for RPC starts; their controller owns continuation. However, pi-subagents 0.76.1 independently wakes the parent after native panel/judge completion, including RPC starts. Its public RPC has no per-run suppression option. Only the successful terminal-state writer publishes the Fusion report: duplicate events, competing writers, and reload do not replay it, but a crash between persistence and sending can lose a wake. This is at-most-once attempt, not guaranteed delivery, and does not retry the review.
+- `concurrency`: max parallel panelists. Ordinary panels immediately start the next queued member when a slot finishes or fails, while retaining configured result order. Each slot uses failure-collecting `runs.all` semantics, so a rejected panelist does not discard successful siblings or prevent queued members from running. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
 - `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It is a fallback only; `/fusion status` warns when it supplied an effective deadline.
 - `panelistSoftTimeoutMs`: optional soft deadline, measured from each child's actual start, not its queue time. Requires `pi-subagents` RPC advertising `nonRecoveringSteer`. It must leave more than one minute before the effective hard child deadline, and the panel budget must cover every concurrency wave plus grace.
 - `panelistTimeoutMs`: per-panelist deadline. Fusion caps it below the enclosing panel deadline.
-- `panelTimeoutMs`: panel workflow wall-clock deadline. When neither it nor legacy `timeoutMs` is set, the default is 15 minutes multiplied by `ceil(panel size / concurrency)`. An explicit short deadline can still cut queued work off; soft-deadline profiles reject insufficient wave budgets.
+- `panelTimeoutMs`: panel workflow wall-clock deadline. When neither it nor legacy `timeoutMs` is set, the default is 15 minutes per execution wave. Agreement mode uses its quorum-capped concurrency when counting waves. An explicit short deadline can still cut queued work off; soft-deadline profiles reject insufficient wave budgets.
 - `panelGraceMs`: reserved time between a child deadline and the enclosing panel deadline (default 5 seconds).
 - `judgeTimeoutMs`: synthesis workflow deadline. For every deadline the precedence is per-run CLI/tool/RPC override, stage profile field, legacy `timeoutMs`, then the built-in default.
-- `minimumSuccessfulPanelists`: `"majority"` (default), `"all"`, or a positive number. It is the panel quorum for synthesis. For a multi-member panel, numeric `1` is effectively `2`: synthesis needs two candidate answers. A one-member panel remains a direct single-panel result.
+- `minimumSuccessfulPanelists`: `"majority"` (default, half rounded up), `"all"`, or a positive number. Every multi-member panel requires at least two answers, including two-member majority panels. It is the panel quorum for synthesis. For a multi-member panel, numeric `1` is effectively `2`: synthesis needs two candidate answers. A one-member panel remains a direct single-panel result.
 - `context`: `fresh` or `fork`
-- `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet only after the configured synthesis quorum is already met. The agreement conditions also require two or more finished panelists to give the same normalized recommendation, every one to report `high` confidence, none to ask for more evidence, and work to remain. Thus an `"all"` quorum never skips unfinished panelists. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune.
+- `stopWhenPanelAgrees`: optional boolean, default `false`. When it is on, Fusion can stop the panelists that have not finished yet only after the configured synthesis quorum is already met. The agreement conditions also require two or more finished panelists to give the same normalized recommendation, every one to report `high` confidence, none to ask for more evidence, and work to remain. Thus an `"all"` quorum never skips unfinished panelists. The judge still runs over the answers already collected. This policy is fixed on purpose. There is no threshold to tune. Exact caller contracts such as `plan-review-v1` forbid the required decision record, so combining them with agreement stopping is rejected before launch.
 - `synthesis`: rarely needed. Inferred from the panel — any member with a `question` means `merge`, otherwise `select`. Set it only to override that. See [Synthesis modes](#synthesis-modes).
 - `blindPanelLabels`: optional boolean, default `false`. When it is on, the judge sees `Candidate A`, `Candidate B`, and so on, instead of the configured labels. Fusion also withholds agent names and artifact paths, because they contain the member id. A role label reads as an authority cue before the judge compares any content. Your report always shows the real names.
 - `panelToolBudget`: optional `{ "soft": n, "hard": n, "block": "*" | [tools...] }` applied to each panelist. Fusion uses `{ "soft": 8, "hard": 12, "block": "*" }` when omitted. After `hard`, the selected tools are blocked so the panelist can still finalise.
@@ -223,27 +223,38 @@ Timeouts are hard workflow deadlines. A child terminated at the deadline can rep
 
 ### Runtime compatibility
 
-Fusion 0.11.1 requires Pi 1.0.2 or later in the 1.x series. Upgrade Pi before installing Fusion; older Pi versions are not supported by this release.
+Fusion requires Pi 1.0.2 or later in the 1.x series. The current compatibility checks use Pi 1.0.4 and pi-subagents 0.76.1. Restart Pi after updating either upstream package; `/reload` cannot safely replace already-imported upstream modules. Restart all sessions owning this project's Fusion state before switching versions. Do not downgrade while a run is active or requires recovery.
 
 | Runtime | Contract checked |
 | --- | --- |
-| Pi 1.0.2 | API/types, isolated SDK loading, model-only tool registration, session startup, and command dispatch (no model calls) |
-| pi-subagents 0.71.0 | Existing released-capability regression fixture; ordinary workflows only |
-| pi-subagents 0.73.1 | Current public RPC and lifecycle event contracts; recommended version |
+| Pi 1.0.4 | API/types, isolated SDK loading, model-only tools, commands, and a separate-process integration with a localhost model fixture |
+| pi-subagents 0.76.1 | Real RPC validation and select/merge/single-member execution, operation replay, lifecycle artifacts, and host shutdown |
+| pi-subagents before 0.74.0 | Not supported by the current `script` request format; no automatic fallback/retry |
 
 Fusion subscribes to advertised `childStatus` and `processTerminal` channels. Correlated events only schedule a status/artifact reconciliation, never count as successful results. Bursts are coalesced; events during a pending check request one follow-up check. The two-second fallback poll and restore-time reconciliation remain because events can be missed. Subscriptions and queued hints are cleared on shutdown.
 
-The `start_fusion_review` tool returns a structured receipt (`status`, plus `runId`, `activeRunId`, or `error` when applicable); failures and conflicts set `isError`. `resolve_fusion_deadline` returns a structured decision receipt, not proof that a child complied. Both tools are model-only: they cannot be nested inside codemode or invoked through `ctx.executeTool()`. Extension controllers should use `fusion:rpc:v1`.
+The `start_fusion_review` tool returns a structured receipt (`status`, plus `runId`, `activeRunId`, or `error` when applicable); failures and conflicts set `isError`. An uncertain admission remains nonterminal and includes `recoveryRequired`; `status: "started"` alone is not proof that native execution was admitted. `resolve_fusion_deadline` returns a structured decision receipt, not proof that a child complied. Both tools are model-only: they cannot be nested inside codemode or invoked through `ctx.executeTool()`. Extension controllers should use `fusion:rpc:v1`.
 
 Known upstream workflow `failureKind` categories are persisted and exposed in RPC run state; failure reports include the category. Older snapshots without a category remain readable. Unknown categories are ignored, not guessed. Categories are diagnostic evidence, not an automatic retry policy.
 
-Reload and cancellation remain limited by the connected runtime's public guarantees. Upstream Unreleased fixes for child survival across reload, trust inheritance, and child codemode are not assumed here. A restored Fusion snapshot is not proof that a remote child survived.
+Lifecycle hints are not stop or containment proofs. An ordinary stop acknowledgement means the request was accepted, not that every descendant exited. Explicit lifetime mode requires the stronger contract described below. If pi-subagents imposes a concurrency cap below the profile's effective concurrency, allow extra panel time; Fusion cannot discover that cap through the current RPC.
 
 #### Ordinary workflows and strict lifetime
 
-Ordinary Fusion is supported with released `pi-subagents@0.71.0`. Start it as usual, for example `/fusion Compare these designs`; leave `executionLifetime` out of `start_fusion_review` and `fusion:rpc:v1` `start` requests. The normal `workflowScript` panel and separate judge use the profile's ordinary timeout rules above.
+Use pi-subagents 0.76.1 for the checked ordinary path. Start it as usual, for example `/fusion Compare these designs`; leave `executionLifetime` out of tool and RPC requests. The `script` panel and separate judge use the profile's ordinary timeout rules above. Disabling upstream `workflow-scripts` also disables ordinary Fusion; Fusion does not bypass that policy.
 
-Explicit `executionLifetime` is not available with the checked 0.71.0 or 0.73.1 capability sets. Its RPC `ping` reports protocol `version: 1` and capabilities for async spawn, stop, non-recovering steer, and process terminal proof (lifecycle artifact version 3), but it does not advertise durable operations, explicit execution lifetimes, or process-tree ownership. The separate `pi-subagents` bridge 0.5.0 may expose best-effort POSIX process-group ownership; that bridge capability is not advertised by either checked native version and does not prove escaped-descendant containment or kernel-owned Fusion routes. Fusion rejects an explicit lifetime during preflight, before spawning anything. If you need more time for ordinary runs, tune `panelTimeoutMs` and `judgeTimeoutMs`; these remain workflow deadlines, not the strict execution-lifetime guarantee. Use explicit mode only after the connected runtime advertises all required capabilities and Pi has been reloaded.
+Explicit `executionLifetime` is not available with the checked pi-subagents 0.76.1 capabilities. Native `ping` advertises async spawn, stop, non-recovering steer, and process terminal proof, but not durable operations, explicit lifetimes, or owned-tree containment. Fusion rejects an explicit lifetime before spawning. Tune ordinary stage timeouts when more time is needed; they are not a strict execution-lifetime guarantee. Fusion calls native RPC directly and does not use `@alexeiled/pi-subagents-bridge`; installing or updating Bridge does not enable this mode.
+
+### Recovery required
+
+`recoveryRequired` is a nonterminal quarantine, exposed in the tool receipt, RPC run state, `/fusion status`, and the `fusion` status key:
+
+- `launch-unknown`: dispatch may have succeeded but the native ID was not safely recorded. A transport timeout, malformed reply, or missing ID is not proof of rejection. Older active snapshots missing native IDs are also held. **Accepted limitation in 0.12.0:** native `execution_failed` is ambiguous. It also covers definite capacity/configuration rejections, which therefore can quarantine the project even when no workflow started. A synchronous error, its wording, or an empty status lookup is not no-start proof. There is no supported reset for that quarantine in this release.
+- `runtime-replaced`: pi-subagents stopped the workflow coordinator during reload/session replacement; awaited children may still be running.
+
+Fusion preserves the run and its evidence and blocks new runs, synthesis, and automatic replay. `/fusion stop` records pending cancellation while ownership is unresolved. The live owner polls for a late binding and requests stop only for the recorded exact native ID. Transport failures and mismatched acknowledgements stay pending and are retried for that ID. Native `not_found` or `invalid_state` replies instead persist `state: "undeliverable"` and stop automatic retries, including after restart. A runtime-replaced coordinator has no live controller, so its surviving children cannot be stopped through that coordinator ID. Inspect those children separately in the owning native session. An explicit `/fusion stop` or RPC `cancel` retries delivery to the same recorded ID if ownership or availability has changed. An accepted acknowledgement is persisted as `cancellationDelivery: { runId, state: "delivered" }`, so normal polls and restarts do not repeat it. A lost reply can still require another stop request. This receipt never proves process exit or releases quarantine; `terminal` and `cancelled` remain false. A still-pending spawn that returns its exact ID to the same live runtime can bind that ID and deliver cancellation. A disposed runtime records a late matching ID as evidence only: it keeps quarantine and pending cancellation, and cannot restart polling or issue control commands. The live owner's cancellation polling consumes that binding. RPC run state and `/fusion status` distinguish `pending`, `delivered`, and `undeliverable` delivery. None releases quarantine or proves child exit. A proven RPC rejection before the executor runs can fail normally without holding admission.
+
+There is no automatic release/reset for quarantined runs in this version. Inspect the recorded native IDs and lifecycle artifacts with the owning session; preserve the Fusion snapshots and request identity for recovery. Do not delete snapshots or launch replacement workers to clear the warning. Safe reattachment/release needs verified ownership and terminal evidence; blindly repeating the same upstream workflow can retry failed children or missing journal entries. Updating packages alone does not establish this evidence.
 
 ### Explicit execution lifetime
 
@@ -640,15 +651,20 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 
 `pi-subagents RPC is unavailable`
 
-- install or update `pi-subagents` to 0.73.1 or later
-- reload Pi
+- install or update `pi-subagents` to the checked 0.76.1 release
+- restart Pi
 - retry `/fusion status`
 
-`RPC spawn no longer accepts top-level chain or parallel inputs; use workflowScript.`
+`RPC spawn workflowScript was removed; pass inline script text as script.`
 
-- update `pi-fusion` to 0.6.1 or later
-- reload Pi so it loads the updated extension
-- retry `/fusion`; do not change your Fusion profile
+- update Fusion to a version using the `script` RPC field
+- restart Pi after upstream package changes
+- inspect `/fusion status` before retrying; never repeat an unresolved launch
+
+`Fusion recovery required`
+
+- inspect the reason, native IDs, and pending cancellation with `/fusion status`
+- follow [Recovery required](#recovery-required); a new same-prompt run is not a recovery operation
 
 `Unknown fusion profile`
 

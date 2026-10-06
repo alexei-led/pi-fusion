@@ -4,6 +4,7 @@ import {
   type DurableRunSnapshot,
   DurableRunSnapshotStore,
 } from './durable-run-store.js';
+import { resolveMinimumSuccessfulPanelists } from './panel-quorum.js';
 import { isReviewContext } from './review-context.js';
 import { isWorkflowFailureKind } from './runtime-values.js';
 import type {
@@ -84,6 +85,8 @@ export interface FusionRunStartInput {
 }
 
 export interface FusionRunPatch {
+  cancellationDelivery?: FusionRun['cancellationDelivery'] | null;
+  recoveryRequired?: FusionRun['recoveryRequired'] | null;
   failureKind?: FusionRun['failureKind'];
   executionLifetime?: ExecutionLifetime;
   effectiveExecutionLifetime?: ExecutionLifetime;
@@ -717,6 +720,12 @@ function applyPatch(
   }
   if (patch.recovery !== undefined)
     updated.recovery = cloneRecovery(patch.recovery);
+  if (patch.cancellationDelivery === null) delete updated.cancellationDelivery;
+  else if (patch.cancellationDelivery !== undefined)
+    updated.cancellationDelivery = { ...patch.cancellationDelivery };
+  if (patch.recoveryRequired === null) delete updated.recoveryRequired;
+  else if (patch.recoveryRequired !== undefined)
+    updated.recoveryRequired = patch.recoveryRequired;
   if (patch.spawnIntent === null) delete updated.spawnIntent;
   else if (patch.spawnIntent !== undefined) {
     updated.spawnIntent = cloneSpawnIntent(patch.spawnIntent);
@@ -828,6 +837,12 @@ function toRunSummary(
 
 function cloneRun(run: FusionRun): FusionRun {
   return {
+    ...(run.cancellationDelivery
+      ? { cancellationDelivery: { ...run.cancellationDelivery } }
+      : {}),
+    ...(run.recoveryRequired !== undefined
+      ? { recoveryRequired: run.recoveryRequired }
+      : {}),
     ...(run.completionWakeSessionId !== undefined
       ? { completionWakeSessionId: run.completionWakeSessionId }
       : {}),
@@ -1024,6 +1039,26 @@ function isFusionRunEntry(
 
 function isFusionRunState(value: unknown): value is FusionRun {
   if (!isRecord(value)) return false;
+  if (value.cancellationDelivery !== undefined) {
+    const delivery = value.cancellationDelivery;
+    if (
+      !isRecord(delivery) ||
+      !isNonEmptyString(delivery.runId) ||
+      (delivery.state !== 'delivered' &&
+        !(
+          (delivery.state === 'pending' ||
+            delivery.state === 'undeliverable') &&
+          isNonEmptyString(delivery.error)
+        ))
+    )
+      return false;
+  }
+  if (
+    value.recoveryRequired !== undefined &&
+    value.recoveryRequired !== 'runtime-replaced' &&
+    value.recoveryRequired !== 'launch-unknown'
+  )
+    return false;
   if (
     value.failureKind !== undefined &&
     !isWorkflowFailureKind(value.failureKind)
@@ -1092,14 +1127,20 @@ function isFusionRunState(value: unknown): value is FusionRun {
     return false;
   }
   // Snapshots are the canonical quorum record for new runs. Older records may
-  // also carry the run-level policy, but it must resolve to the same quorum.
+  // also carry the run-level policy. Pre-0.12 two-member majority snapshots
+  // stored one; keep them readable while execution applies the two-answer floor.
   if (
     value.profileSnapshot !== undefined &&
     value.minimumSuccessfulPanelists !== undefined &&
-    resolvePersistedQuorum(
+    resolveMinimumSuccessfulPanelists(
       value.minimumSuccessfulPanelists,
       value.profileSnapshot.panel.length,
-    ) !== value.profileSnapshot.minimumSuccessfulPanelists
+    ) !== value.profileSnapshot.minimumSuccessfulPanelists &&
+    !(
+      value.minimumSuccessfulPanelists === 'majority' &&
+      value.profileSnapshot.panel.length === 2 &&
+      value.profileSnapshot.minimumSuccessfulPanelists === 1
+    )
   ) {
     return false;
   }
@@ -1336,17 +1377,6 @@ export function validateFusionRunPanelSlots(
     }
   }
   return undefined;
-}
-
-function resolvePersistedQuorum(
-  policy: NonNullable<FusionRun['minimumSuccessfulPanelists']>,
-  panelLength: number,
-): number {
-  if (policy === 'all') return panelLength;
-  if (typeof policy === 'number') {
-    return panelLength > 1 ? Math.max(2, Math.min(policy, panelLength)) : 1;
-  }
-  return Math.ceil(panelLength / 2);
 }
 
 function isPanelOutputArray(

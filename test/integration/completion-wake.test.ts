@@ -53,7 +53,10 @@ for (const terminal of ['done', 'cancelled'] as const) {
       await nextTick();
     }
     assert.equal(pi.messages.at(-1)?.customType, 'fusion-report');
-    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, true);
+    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, false);
+    assert.deepEqual(pi.userMessages, [
+      { content: 'Fusion update above.', deliverAs: 'followUp' },
+    ]);
   });
 }
 
@@ -99,12 +102,10 @@ for (const owner of [
     await nextTick();
     const reports = pi.messages.filter((m) => m.customType === 'fusion-report');
     assert.equal(reports.length, 1);
-    assert.equal(
-      pi.messageOptions.at(-1)?.triggerTurn,
-      owner === 'interactive',
-    );
+    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, false);
+    assert.equal(pi.userMessages.length, owner === 'interactive' ? 1 : 0);
     if (owner === 'interactive')
-      assert.equal(pi.messageOptions.at(-1)?.deliverAs, 'followUp');
+      assert.equal(pi.userMessages[0]?.deliverAs, 'followUp');
     pi.events.emit('subagent:async-complete', { runId: 'panel-1' });
     await nextTick();
     assert.equal(
@@ -117,6 +118,7 @@ for (const owner of [
     const restoredCtx = restored.createContext(cwd);
     await restored.emitLifecycle('session_start', {}, restoredCtx);
     assert.equal(restored.messages.length, 0);
+    assert.equal(restored.userMessages.length, 0);
     await restored.emitLifecycle('session_shutdown', {}, restoredCtx);
   });
 }

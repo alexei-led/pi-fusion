@@ -539,6 +539,36 @@ test('Fusion RPC returns typed validation, lookup, availability, and busy errors
   );
 });
 
+test('RPC status exposes stop delivery without claiming cancellation or terminal exit', async () => {
+  const store = new FusionRunStore({ idFactory: () => 'held-run' });
+  const run = store.startRun({
+    prompt: 'Review',
+    profileName: 'quality',
+    phase: 'panel',
+  });
+  store.updateRun(run.id, {
+    panelRunId: 'native-run',
+    recoveryRequired: 'launch-unknown',
+    cancellationRequested: true,
+    cancellationDelivery: { runId: 'native-run', state: 'delivered' },
+  });
+  const fixture = createFixture(store);
+  assert.deepEqual(
+    await fixture.request('held-status', 'status', { runId: run.id }),
+    success('held-status', 'status', {
+      run: {
+        runId: run.id,
+        phase: 'panel',
+        terminal: false,
+        recoveryRequired: 'launch-unknown',
+        cancellationRequested: true,
+        cancellationDelivery: { runId: 'native-run', state: 'delivered' },
+      },
+    }),
+  );
+  fixture.unregister();
+});
+
 interface FixtureOverrides {
   getContext?: () => typeof fakeContext | undefined;
   startRun?: () => Promise<FusionCommandResult>;

@@ -22,10 +22,10 @@ function judgeWorkflowTask(spawn: unknown): {
   task: string;
   model?: string;
 } {
-  if (!isRecord(spawn) || typeof spawn.workflowScript !== 'string') {
+  if (!isRecord(spawn) || typeof spawn.script !== 'string') {
     throw new TypeError('Expected a judge workflow spawn.');
   }
-  const serialized = spawn.workflowScript.match(
+  const serialized = spawn.script.match(
     /^return runs\.run\("judge", (.*)\);$/,
   )?.[1];
   if (!serialized) throw new TypeError('Expected a serialized judge task.');
@@ -126,10 +126,10 @@ test('startRun pings subagents, starts a panel run, and publishes UI status', as
   assert.equal(fixture.rpc.spawns.length, 1);
   const chainSpawn = fixture.rpc.spawns[0];
   assert.ok(isRecord(chainSpawn));
-  assert.deepEqual(
-    chainSpawn,
-    buildPanelSpawnParams(required(CONFIG.profiles.quality), 'compare APIs'),
-  );
+  assert.deepEqual(chainSpawn, {
+    ...buildPanelSpawnParams(required(CONFIG.profiles.quality), 'compare APIs'),
+    args: { fusionRunId: 'fusion-1', stage: 'panel' },
+  });
   assert.deepEqual(chainSpawn.acceptance, FUSION_ACCEPTANCE_DISABLED);
   assert.equal(fixture.orchestrator.getActiveRun()?.panelRunId, 'chain-1');
   assert.match(fixture.ui.lastStatus('fusion') ?? '', /chain-1/);
@@ -146,13 +146,13 @@ test('startRun parses string arguments before launching a profile', async () => 
   assert.equal(result.status, 'started');
   assert.equal(fixture.orchestrator.getActiveRun()?.profileName, 'fast');
   assert.equal(fixture.orchestrator.getActiveRun()?.prompt, 'compare APIs');
-  assert.deepEqual(
-    fixture.rpc.spawns[0],
-    buildPanelSpawnParams(required(CONFIG.profiles.fast), 'compare APIs'),
-  );
+  assert.deepEqual(fixture.rpc.spawns[0], {
+    ...buildPanelSpawnParams(required(CONFIG.profiles.fast), 'compare APIs'),
+    args: { fusionRunId: 'fusion-1', stage: 'panel' },
+  });
 });
 
-test('startRun preserves a synchronous subagent model error', async () => {
+test('startRun preserves an unproven synchronous subagent model error without releasing admission', async () => {
   const fixture = makeFixture();
   fixture.rpc.spawnResults[0] = {
     isError: true,
@@ -165,10 +165,15 @@ test('startRun preserves a synchronous subagent model error', async () => {
     fixture.ctx,
   );
 
-  assert.equal(result.status, 'failed');
-  assert.equal(result.error, 'Error: Model not found gpt-5.6-luna');
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
-  assert.match(fixture.messages.at(-1)?.content ?? '', /Model not found/);
+  assert.equal(result.status, 'started');
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
+  assert.match(
+    fixture.orchestrator.getActiveRun()?.error ?? '',
+    /Model not found gpt-5.6-luna/,
+  );
 });
 
 for (const phase of ['chain', 'panel', 'judge'] as const) {
@@ -468,7 +473,7 @@ test('panel completion without a judge result spawns a judge', async () => {
   assert.deepEqual(fixture.orchestrator.getActiveRun()?.panelFailures, []);
 });
 
-test('judge spawn preserves a synchronous subagent model error', async () => {
+test('judge spawn preserves an unproven synchronous subagent model error without releasing admission', async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);
   fixture.rpc.spawnResults.push({
@@ -482,10 +487,15 @@ test('judge spawn preserves a synchronous subagent model error', async () => {
     runId: 'chain-1',
   });
 
-  assert.equal(result.status, 'failed');
-  assert.equal(result.error, 'Error: Model not found gpt-5.6-luna');
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
-  assert.match(fixture.messages.at(-1)?.content ?? '', /Model not found/);
+  assert.equal(result.status, 'started');
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
+  assert.match(
+    fixture.orchestrator.getActiveRun()?.error ?? '',
+    /Model not found gpt-5.6-luna/,
+  );
 });
 
 test('stops a panel run when persisting its returned ID fails', async () => {
@@ -498,7 +508,11 @@ test('stops a panel run when persisting its returned ID fails', async () => {
 
   const result = await fixture.orchestrator.startRun('compare', fixture.ctx);
 
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'started');
+  assert.equal(
+    fixture.runStore.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.deepEqual(fixture.rpc.stops, [{ id: 'chain-1' }]);
 });
 
@@ -517,7 +531,11 @@ test('stops a judge run when persisting its returned ID fails', async () => {
     runId: 'chain-1',
   });
 
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'started');
+  assert.equal(
+    fixture.runStore.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.deepEqual(fixture.rpc.stops, [{ id: 'judge-1' }]);
 });
 
@@ -1525,13 +1543,11 @@ test('cancelling while the judge spawns stops the orphaned judge', async () => {
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   const cancelled = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
-  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.status, 'started');
+  assert.equal(fixture.runStore.getActiveRun()?.cancellationRequested, true);
   resolveSpawn({ details: { runId: 'late-judge' } });
-  assert.equal((await completing).status, 'ignored');
-  assert.deepEqual(fixture.rpc.stops, [
-    { id: 'chain-1' },
-    { id: 'late-judge' },
-  ]);
+  assert.equal((await completing).status, 'cancelled');
+  assert.deepEqual(fixture.rpc.stops, [{ id: 'late-judge' }]);
 });
 
 for (const stage of ['panel', 'judge'] as const) {
@@ -1609,7 +1625,8 @@ test('cancelActiveRun stops a panel that finishes spawning after local cancellat
   const starting = fixture.orchestrator.startRun('compare', fixture.ctx);
   await new Promise<void>((resolve) => setImmediate(resolve));
   const cancelled = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
-  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.status, 'started');
+  assert.equal(fixture.runStore.getActiveRun()?.cancellationRequested, true);
 
   resolveSpawn({ details: { runId: 'late-panel' } });
   const startResult = await starting;
@@ -1715,9 +1732,12 @@ test('restore fails closed when a panel spawn intent has no persisted remote ID'
   await fixture.orchestrator.restore(fixture.ctx);
 
   assert.equal(fixture.rpc.spawns.length, 0);
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.match(
-    fixture.runStore.getLastRunSummary()?.error ?? '',
+    fixture.orchestrator.getActiveRun()?.error ?? '',
     /will not be replayed/,
   );
 
@@ -1733,14 +1753,17 @@ test('restore fails closed when a panel spawn intent has no persisted remote ID'
     spawnIntent: { stage: 'judge', requestedAt: 1 },
   });
   await judgeIntent.orchestrator.restore(judgeIntent.ctx);
-  assert.equal(judgeIntent.orchestrator.getActiveRun(), undefined);
+  assert.equal(
+    judgeIntent.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.match(
-    judgeIntent.runStore.getLastRunSummary()?.error ?? '',
+    judgeIntent.orchestrator.getActiveRun()?.error ?? '',
     /judge spawn may have reached pi-subagents.*will not be replayed/,
   );
 });
 
-test('restore terminalizes incomplete phases and legacy slots outside the resolved panel', async () => {
+test('restore quarantines incomplete phases and rejects legacy slots outside the resolved panel', async () => {
   const missingJudgeId = makeFixture();
   missingJudgeId.runStore.startRun({
     id: 'fusion-1',
@@ -1749,10 +1772,17 @@ test('restore terminalizes incomplete phases and legacy slots outside the resolv
     phase: 'judge',
   });
   await missingJudgeId.orchestrator.restore(missingJudgeId.ctx);
-  assert.equal(missingJudgeId.orchestrator.getActiveRun(), undefined);
+  assert.equal(
+    missingJudgeId.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.match(
-    missingJudgeId.runStore.getLastRunSummary()?.error ?? '',
-    /judge phase has no persisted judge run ID/,
+    missingJudgeId.orchestrator.getActiveRun()?.error ?? '',
+    /Judge phase has no persisted judge run ID/,
+  );
+  assert.doesNotMatch(
+    missingJudgeId.orchestrator.getActiveRun()?.error ?? '',
+    /Fusion recovery stopped/,
   );
 
   const missingPanelId = makeFixture();
@@ -1763,10 +1793,17 @@ test('restore terminalizes incomplete phases and legacy slots outside the resolv
     phase: 'panel',
   });
   await missingPanelId.orchestrator.restore(missingPanelId.ctx);
-  assert.equal(missingPanelId.orchestrator.getActiveRun(), undefined);
+  assert.equal(
+    missingPanelId.orchestrator.getActiveRun()?.recoveryRequired,
+    'launch-unknown',
+  );
   assert.match(
-    missingPanelId.runStore.getLastRunSummary()?.error ?? '',
-    /panel phase has no persisted panel run ID/,
+    missingPanelId.orchestrator.getActiveRun()?.error ?? '',
+    /Panel phase has no persisted panel run ID/,
+  );
+  assert.doesNotMatch(
+    missingPanelId.orchestrator.getActiveRun()?.error ?? '',
+    /Fusion recovery stopped/,
   );
 
   const invalidLegacySlot = makeFixture();
@@ -2219,9 +2256,9 @@ test('merge run reaches done through the composer and emits no new phase', async
   );
   phases.push(fixture.orchestrator.getActiveRun()?.phase ?? 'none');
 
-  const panelSpawn = fixture.rpc.spawns[0] as { workflowScript?: string };
+  const panelSpawn = fixture.rpc.spawns[0] as { script?: string };
   assert.match(
-    panelSpawn.workflowScript ?? '',
+    panelSpawn.script ?? '',
     /Cover ONLY the security surface of: review the release/,
   );
 
@@ -2346,7 +2383,7 @@ test('restore uses the durable start profile after panel and synthesis config dr
   assert.deepEqual(persisted?.profileSnapshot, {
     panel: startConfig.profiles.quality?.panel,
     judge: startConfig.profiles.quality?.judge,
-    minimumSuccessfulPanelists: 1,
+    minimumSuccessfulPanelists: 2,
     context: 'fresh',
   });
   assert.equal(persisted?.minimumSuccessfulPanelists, undefined);
@@ -2393,7 +2430,7 @@ test('restore uses the durable start profile after panel and synthesis config dr
   assert.equal(
     second.orchestrator.getActiveRun()?.profileSnapshot
       ?.minimumSuccessfulPanelists,
-    1,
+    2,
   );
 });
 
