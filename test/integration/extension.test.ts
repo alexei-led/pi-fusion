@@ -285,7 +285,6 @@ test('start_fusion_review exposes the parameters a skill can drive', () => {
   const tool = pi.tools.get('start_fusion_review');
   assert.ok(tool, 'start_fusion_review must be registered');
   assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
-    'executionLifetime',
     'judgeTimeoutMs',
     'panel',
     'panelGraceMs',
@@ -295,6 +294,7 @@ test('start_fusion_review exposes the parameters a skill can drive', () => {
     'prompt',
   ]);
   assert.deepEqual(tool.parameters.required, ['prompt']);
+  assert.equal(tool.parameters.additionalProperties, false);
   const promptSchema = tool.parameters.properties.prompt;
   const panelSchema = tool.parameters.properties.panel;
   const profileSchema = tool.parameters.properties.profile;

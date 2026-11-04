@@ -1,10 +1,39 @@
-# Dependency and usability review
+# Dependency and usability review — Fusion 0.12 baseline
 
 Evidence checked: 2026-11-04. Scope: Fusion 0.12.0, baseline commit
 `1e1bb9a`, published npm packages, upstream release notes and implementation.
 This is a maintainer review, not a promise of compatibility with future releases.
 
-## Verdict
+## Implementation disposition in 0.13
+
+The remainder records the pre-change audit, not current release status. Current
+behavior is documented in the user guide; validation is recorded in
+[0.13 validation](./0.13-validation.md).
+
+Implemented: retained native results and completion evidence, explicit running
+workflow authority, exact retirement-gated cancellation without interrupt
+fallback, both owner-loss quarantines, recovery-policy prerequisite and doctor,
+model/effort inheritance warnings, source-aware usage, safe progress labels,
+native wakes/abort suppression, command completion/literal prompt/deadline
+syntax, expandable native reports, jobs-changed reconciliation, project trust
+and bundled writer-concurrency enforcement, Webfox integration tests, failed
+fixture retention, isolated compiled process workers and dependency CI lanes.
+
+Retained deliberately: public RPC, custom rolling panel script, native judge
+wrapper with validated result normalization, artifact-first extraction, local
+journal, exact caller output, read-only defaults and only the fusion status key.
+Builtin parallel/direct-judge substitutions were not needed and would change
+budget/deadline/agreement semantics. No second runner, footer or dashboard.
+
+Unavailable upstream: effective owner recovery policy, per-run auto-resume
+opt-out, atomic successor adoption/fencing, independent thinking-only async RPC,
+and kernel/durable strict lifetime. Fusion reports these limits, rejects explicit
+unsupported guarantees and never invents wire fields or imports owner internals.
+Provider retry diagnostics remain unknown when the selected public route does
+not expose them; no provider error or billed cost is guessed. Future breaking
+versions are not claimed supported; CI exercises locked/latest-allowed releases.
+
+## Baseline verdict
 
 Keep the architecture: Pi owns the host and terminal, pi-subagents owns child
 execution, and Fusion owns panel policy, evidence selection, synthesis and its

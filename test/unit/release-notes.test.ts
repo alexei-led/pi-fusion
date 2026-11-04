@@ -35,5 +35,9 @@ test('the package version has reviewed upgrade notes in the changelog', async ()
   );
   assert.match(notes, /### Changes/);
   assert.match(notes, /### Upgrade/);
-  assert.match(notes, /pi-subagents 0\.76\.1/);
+  const nativeRange = String(pkg.devDependencies['pi-subagents']).replace(
+    /^\^/,
+    '',
+  );
+  assert.ok(notes.includes(`pi-subagents ${nativeRange}`));
 });

@@ -64,6 +64,8 @@ jobs:
         run: npm run check
       - name: Test
         run: npm test
+      - name: Audit
+        run: npm audit --audit-level=moderate
       - name: Package dry run
         run: npm run pack:dry
       - name: Check npm version

@@ -17,6 +17,7 @@ export interface RegisteredTool {
   parameters: {
     properties: Record<string, unknown>;
     required?: string[];
+    additionalProperties?: boolean;
   };
   execute(
     toolCallId: string,
@@ -29,6 +30,12 @@ export interface RegisteredTool {
 
 export interface RegisteredCommand {
   description?: string;
+  getArgumentCompletions?(
+    prefix: string,
+  ):
+    | Promise<Array<{ value: string; label: string }> | null>
+    | Array<{ value: string; label: string }>
+    | null;
   handler(args: string, ctx: FakeCommandContext): unknown;
 }
 
@@ -79,6 +86,11 @@ export class FakePi {
   }
 
   readonly tools = new Map<string, RegisteredTool>();
+  readonly renderers = new Map<string, unknown>();
+
+  registerMessageRenderer(customType: string, renderer: unknown): void {
+    this.renderers.set(customType, renderer);
+  }
 
   registerCommand(name: string, command: RegisteredCommand): void {
     this.commands.set(name, command);
@@ -220,7 +232,24 @@ export class FakeEventBus {
     if (method === 'ping') return this.pingResult;
     if (method === 'spawn') return this.spawnData(params);
     if (method === 'status') return this.statusData(params);
-    if (method === 'stop' || method === 'interrupt') return { ok: true };
+    if (method === 'stop') {
+      assert.ok(isRecord(params) && typeof params.id === 'string');
+      this.statusResults.set(params.id, {
+        runId: params.id,
+        state: 'stopped',
+        workflowTerminalProof: {
+          version: 1,
+          kind: 'workflow',
+          runId: params.id,
+          state: 'observed',
+          dispatchClosed: true,
+          observedAt: Date.now(),
+          children: [],
+        },
+      });
+      return { runId: params.id, state: 'stopping' };
+    }
+    if (method === 'interrupt') return { ok: true };
     throw new Error(`Unexpected RPC method: ${method}`);
   }
 

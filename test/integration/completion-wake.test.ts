@@ -53,10 +53,8 @@ for (const terminal of ['done', 'cancelled'] as const) {
       await nextTick();
     }
     assert.equal(pi.messages.at(-1)?.customType, 'fusion-report');
-    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, false);
-    assert.deepEqual(pi.userMessages, [
-      { content: 'Fusion update above.', deliverAs: 'followUp' },
-    ]);
+    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, true);
+    assert.deepEqual(pi.userMessages, []);
   });
 }
 
@@ -102,10 +100,12 @@ for (const owner of [
     await nextTick();
     const reports = pi.messages.filter((m) => m.customType === 'fusion-report');
     assert.equal(reports.length, 1);
-    assert.equal(pi.messageOptions.at(-1)?.triggerTurn, false);
-    assert.equal(pi.userMessages.length, owner === 'interactive' ? 1 : 0);
-    if (owner === 'interactive')
-      assert.equal(pi.userMessages[0]?.deliverAs, 'followUp');
+    assert.equal(
+      pi.messageOptions.at(-1)?.triggerTurn,
+      owner === 'interactive',
+    );
+    assert.equal(pi.messageOptions.at(-1)?.deliverAs, 'followUp');
+    assert.deepEqual(pi.userMessages, []);
     pi.events.emit('subagent:async-complete', { runId: 'panel-1' });
     await nextTick();
     assert.equal(

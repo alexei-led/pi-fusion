@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -22,6 +22,45 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   let composerCalls = 0;
   let parentCalls = 0;
   let completeSynthesisInputs = 0;
+  let passed = false;
+  let webResults = 0;
+  let webCalls = 0;
+  let missingWebCalls = 0;
+  const webConfig = join(root, 'webfox.json');
+  const webfoxPath = resolve('node_modules/webfox/dist/pi.js');
+  await writeFile(
+    webConfig,
+    JSON.stringify({
+      defaults: Object.fromEntries(
+        ['search', 'contents', 'answer', 'research'].map((capability) => [
+          capability,
+          { provider: 'custom' },
+        ]),
+      ),
+      providers: {
+        custom: {
+          commands: Object.fromEntries(
+            ['search', 'contents', 'answer', 'research'].map((capability) => [
+              capability,
+              {
+                argv: [
+                  process.execPath,
+                  resolve('node_modules/webfox/examples/custom/provider.mjs'),
+                ],
+              },
+            ]),
+          ),
+        },
+      },
+    }),
+  );
+  await mkdir(join(home, '.config/webfox'), { recursive: true });
+  await copyFile(webConfig, join(home, '.config/webfox/config.yaml'));
+  await mkdir(join(agentDir, 'extensions/subagent'), { recursive: true });
+  await writeFile(
+    join(agentDir, 'extensions/subagent/config.json'),
+    '{"autoResume":false}',
+  );
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (data: Buffer) => {
@@ -30,6 +69,9 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
     req.on('end', () => {
       if (body.includes('You are the fusion judge.')) judgeCalls++;
       else if (body.includes('You are the fusion composer.')) composerCalls++;
+      else if (body.includes('Panel member: web-member-missing'))
+        missingWebCalls++;
+      else if (body.includes('Panel member: web-member')) webCalls++;
       else if (body.includes('Panel member:')) panelCalls++;
       else parentCalls++;
       if (
@@ -51,10 +93,57 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (
+        body.includes('Panel member: web-member') &&
+        !body.includes('"role":"tool"')
+      ) {
+        const call = {
+          id: 'web-fixture',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'fixture',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'web-call',
+                    type: 'function',
+                    function: {
+                      name: 'web_search',
+                      arguments: JSON.stringify({ queries: ['fixture query'] }),
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(call)}\n\n`);
+        res.write(
+          `data: ${JSON.stringify({ ...call, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+        );
+        res.end('data: [DONE]\n\n');
+        return;
+      }
+      if (
+        body.includes('Panel member: web-member') &&
+        body.includes('Example result for fixture query')
+      )
+        webResults++;
+      const role = body.includes('You are the fusion judge.')
+        ? 'JUDGE'
+        : body.includes('You are the fusion composer.')
+          ? 'COMPOSER'
+          : 'PANEL';
       const text =
-        '# Fusion Report\n## Summary\nFIXTURE_OK\n## Recommendation\nChoose the simple option.\n## Coverage Map\nBoth facets.\n## Combined Answer\nFIXTURE_OK\n## Gaps\nNone.\n## Conflicts At Seams\nNone.\n' +
+        '# Fusion Report\n## Summary\nFIXTURE_OK\n## Coverage Map\nBoth facets.\n## Combined Answer\nFIXTURE_OK\n## Gaps\nNone.\n## Conflicts At Seams\nNone.\n## Recommendation\nChoose the simple option.\n' +
         'Fixture evidence. '.repeat(160) +
-        '\nLONG_OUTPUT_END';
+        `\n${role}_FINAL_END\nLONG_OUTPUT_END`;
       const chunk = {
         id: 'fixture',
         object: 'chat.completion.chunk',
@@ -113,6 +202,15 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
       `---\nname: ${name}\ndescription: Read-only fixture\nmodel: smoke/fixture\nthinking: off\ntools: read\nsystemPromptMode: replace\ninheritProjectContext: false\ninheritSkills: false\n---\nReturn the fixture response.\n`,
     );
   }
+  for (const [name, extensions] of [
+    ['fixture-web', [webfoxPath]],
+    ['fixture-web-missing', []],
+  ] as const) {
+    await writeFile(
+      join(agentDir, 'agents', `${name}.md`),
+      `---\nname: ${name}\ndescription: Web integration fixture\nmodel: smoke/fixture\nthinking: off\ntools: read, web_search, web_contents, web_answer\nextensions: ${extensions.length ? `\n${extensions.map((path) => `  - ${path}`).join('\n')}` : '[]'}\ninheritProjectContext: false\ninheritSkills: false\n---\nUse the configured web tools for evidence.\n`,
+    );
+  }
   const base = {
     panel: [
       { id: 'a', agent: 'fixture-panel' },
@@ -139,6 +237,11 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
           })),
         },
         single: { ...base, panel: [base.panel[0]] },
+        web: { ...base, panel: [{ id: 'web-member', agent: 'fixture-web' }] },
+        'web-missing': {
+          ...base,
+          panel: [{ id: 'web-member-missing', agent: 'fixture-web-missing' }],
+        },
         refill: {
           ...base,
           concurrency: 4,
@@ -165,6 +268,8 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
       '--extension',
       resolve('node_modules/pi-subagents/index.js'),
       '--extension',
+      webfoxPath,
+      '--extension',
       resolve('src/index.ts'),
       '--extension',
       resolve('test/fixtures/rpc-compatibility-extension.ts'),
@@ -177,6 +282,7 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
         TMPDIR: root,
         PI_CODING_AGENT_DIR: agentDir,
         PI_OFFLINE: '1',
+        WEBFOX_CONFIG: webConfig,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
@@ -224,7 +330,12 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
     await closed;
     server.closeAllConnections();
     server.close();
-    await rm(root, { recursive: true, force: true });
+    if (passed) await rm(root, { recursive: true, force: true });
+    else {
+      await writeFile(join(root, 'host-stderr.log'), stderr);
+      await writeFile(join(root, 'host-stdout.jsonl'), stdout);
+      console.error(`Retained failed real-Pi fixture: ${root}`);
+    }
   });
   child.stdin.write(
     `${JSON.stringify({
@@ -244,15 +355,21 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   assert.equal(report.unsupportedLifetimeRejected, true);
   assert.deepEqual(
     report.runs,
-    ['select', 'merge', 'single', 'refill'].map((profile) => ({
-      profile,
-      phase: 'done',
-    })),
+    ['select', 'merge', 'single', 'refill', 'web', 'web-missing'].map(
+      (profile) => ({
+        profile,
+        phase: profile === 'web-missing' ? 'failed' : 'done',
+      }),
+    ),
   );
   assert.equal(panelCalls, 11);
+  assert.equal(webCalls, 2);
+  assert.ok(missingWebCalls <= 2);
+  assert.equal(webResults, 1);
   assert.equal(judgeCalls, 2);
   assert.equal(completeSynthesisInputs, 3);
   assert.equal(composerCalls, 1);
   // RPC completion wakes are native upstream behavior, not controlled by Fusion's option.
   assert.ok(parentCalls > 0);
+  passed = true;
 });

@@ -28,7 +28,32 @@ test('formatFusionStatusText includes phase, profile, and counts', () => {
     failed: 0,
   });
 
-  assert.equal(text, 'fusion: panel · 1/3 done, 1 running, 0 failed · quality');
+  assert.equal(
+    text,
+    'fusion: panel · 1/3 done, 1 running, 1 queued, 0 failed · quality',
+  );
+});
+
+test('rolling progress includes configured members not yet in the native roster', () => {
+  const run: FusionRun = {
+    ...RUN,
+    profileSnapshot: {
+      panel: Array.from({ length: 5 }, (_, index) => ({
+        id: `p${index}`,
+        agent: 'panel',
+      })),
+      judge: { agent: 'judge' },
+      minimumSuccessfulPanelists: 2,
+    },
+  };
+  const text = formatFusionStatusText(run, {
+    total: 2,
+    pending: 0,
+    running: 2,
+    completed: 0,
+    failed: 0,
+  });
+  assert.match(text, /0\/5 done, 2 running, 3 queued/);
 });
 
 test('publishFusionStatus and clearFusionUi use only the fusion status key', () => {

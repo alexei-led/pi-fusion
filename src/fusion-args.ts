@@ -65,6 +65,11 @@ export function parseFusionArgs(
     const token = tokens[index];
     if (!token) continue;
 
+    if (promptTokens.length === 0 && token === '--') {
+      promptTokens.push(...tokens.slice(index + 1));
+      break;
+    }
+
     if (promptTokens.length === 0 && token === '--panel') {
       const value = tokens[index + 1];
       if (!value || value.startsWith('-')) {

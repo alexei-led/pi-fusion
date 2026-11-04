@@ -109,7 +109,14 @@ export default function compatibilityFixture(pi: ExtensionAPI): void {
           unsubscribeSpawn();
         }
         const runs: unknown[] = [];
-        for (const profile of ['select', 'merge', 'single', 'refill']) {
+        for (const profile of [
+          'select',
+          'merge',
+          'single',
+          'refill',
+          'web',
+          'web-missing',
+        ]) {
           const params = {
             operationId: `smoke-${profile}`,
             profile,
@@ -134,8 +141,32 @@ export default function compatibilityFixture(pi: ExtensionAPI): void {
               isRecord(reply.data.run) &&
               reply.data.run.terminal
             ) {
-              assert.equal(reply.data.run.phase, 'done', JSON.stringify(reply));
-              assert.match(String(reply.data.run.report), /FIXTURE_OK/);
+              assert.equal(
+                reply.data.run.phase,
+                profile === 'web-missing' ? 'failed' : 'done',
+                JSON.stringify(reply),
+              );
+              if (profile === 'web-missing') {
+                assert.match(
+                  String(reply.data.run.report),
+                  /unavailable child tools/,
+                );
+                runs.push({ profile, phase: reply.data.run.phase });
+                done = true;
+                break;
+              }
+              const finalReport = String(reply.data.run.report);
+              assert.match(finalReport, /FIXTURE_OK/);
+              assert.match(
+                finalReport,
+                new RegExp(
+                  `${profile === 'merge' ? 'COMPOSER' : profile === 'single' || profile === 'web' ? 'PANEL' : 'JUDGE'}_FINAL_END`,
+                ),
+              );
+              assert.doesNotMatch(
+                finalReport,
+                /Workflow completed with|Return: \{/,
+              );
               if (profile === 'refill') {
                 assert.match(
                   String(reply.data.run.report),

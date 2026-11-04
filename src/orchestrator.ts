@@ -12,6 +12,12 @@ import {
   type ResolvedFusionProfile,
   resolveProfile as resolveFusionProfile,
 } from './config.js';
+import {
+  formatFusionDoctor,
+  readNativeRecoveryPolicy,
+  recoveryPolicyError,
+  thinkingWarnings,
+} from './diagnostics.js';
 import { FusionArgsError } from './errors.js';
 import { parseFusionArgs } from './fusion-args.js';
 import {
@@ -19,6 +25,14 @@ import {
   reconcileIndexedLifecycleResult,
   reconcilePanelResults,
 } from './lifecycle-reconcile.js';
+import {
+  ordinaryRetirementDetail,
+  ordinaryTerminalProof,
+} from './native-stop-proof.js';
+import {
+  nativeJudgeValue,
+  nativePanelResults,
+} from './native-workflow-results.js';
 import { FusionOperationJournal } from './operation-journal.js';
 import {
   decidePanelCompletion,
@@ -71,6 +85,7 @@ import {
 import { extractWorkflowFailureKind } from './runtime-values.js';
 import {
   clearFusionUi,
+  displayFusionProgress,
   extractFusionProgressCounts,
   type FusionProgressCounts,
   type FusionUi,
@@ -153,6 +168,8 @@ export interface FusionOrchestratorDeps {
   sendMessage?: FusionMessageSink['sendMessage'];
   loadConfig?: typeof loadFusionConfig;
   resolveProfile?: typeof resolveFusionProfile;
+  readRecoveryPolicy?: typeof readNativeRecoveryPolicy;
+  getParentTools?: () => readonly string[];
 }
 
 export type FusionCommandResult =
@@ -178,6 +195,8 @@ export class FusionOrchestrator {
   private readonly sendMessage: FusionMessageSink['sendMessage'] | undefined;
   private readonly loadConfig: typeof loadFusionConfig;
   private readonly resolveProfile: typeof resolveFusionProfile;
+  private readonly readRecoveryPolicy: typeof readNativeRecoveryPolicy;
+  private readonly getParentTools: (() => readonly string[]) | undefined;
   private context: FusionCommandContext | undefined;
   private activeProfile: FusionProfile | undefined;
   private activeProfileRunId: string | undefined;
@@ -188,8 +207,11 @@ export class FusionOrchestrator {
   private recoveringPreflight = false;
   private preflightRecoveryEnabled = false;
   private pendingCompletionPayload: unknown;
+  private readonly completionEvidence = new Map<string, unknown>();
+  private readonly missingJudgeOutputSince = new Map<string, number>();
   private disposed = false;
   private lifecycleHintQueued = false;
+  private eventDrivenRefresh = false;
   private lifecycleHintRunId: string | undefined;
   private readonly onSubagentsInfo: ((info: unknown) => void) | undefined;
   private readonly incompleteTerminalSince = new Map<string, number>();
@@ -205,6 +227,9 @@ export class FusionOrchestrator {
     this.sendMessage = deps.sendMessage;
     this.loadConfig = deps.loadConfig ?? loadFusionConfig;
     this.resolveProfile = deps.resolveProfile ?? resolveFusionProfile;
+    this.readRecoveryPolicy =
+      deps.readRecoveryPolicy ?? readNativeRecoveryPolicy;
+    this.getParentTools = deps.getParentTools;
   }
 
   async startRun(
@@ -214,6 +239,12 @@ export class FusionOrchestrator {
   ): Promise<FusionCommandResult> {
     if (this.disposed) return { status: 'ignored' };
     this.context = ctx;
+    if (!ctx.isProjectTrusted()) {
+      const error =
+        'Fusion requires project trust before launching or restoring project-owned review state.';
+      this.notify(ctx, error, 'error');
+      return { status: 'failed', error };
+    }
 
     let args = typeof input === 'string' ? parseFusionArgs(input) : input;
     const preflight =
@@ -238,7 +269,7 @@ export class FusionOrchestrator {
     let subagentsInfo: unknown;
     try {
       subagentsInfo = await this.rpc.ping();
-      this.onSubagentsInfo?.(subagentsInfo);
+      this.configureSubagentsInfo(subagentsInfo);
       this.installWarning = undefined;
     } catch (error: unknown) {
       const message = `pi-subagents RPC is unavailable: ${errorMessage(error)}`;
@@ -250,6 +281,12 @@ export class FusionOrchestrator {
     let resolved: ResolvedFusionProfile;
     let baseProfileName: string | undefined;
     try {
+      if (!args.executionLifetime) {
+        const policyError = recoveryPolicyError(
+          await this.readRecoveryPolicy(),
+        );
+        if (policyError) throw new FusionArgsError(policyError);
+      }
       if (
         args.executionLifetime &&
         (!supportsExecutionContract(subagentsInfo) ||
@@ -257,7 +294,7 @@ export class FusionOrchestrator {
           !this.rpc.cancel)
       ) {
         throw new FusionArgsError(
-          'pi-subagents does not support the verified executionLifetime, durable operation lookup/cancel, and process-tree proof contract. Update pi-subagents and reload Pi.',
+          'This runtime does not support the required executionLifetime, durable lookup/cancel, and kernel ownership contract. Published pi-subagents 0.84 does not provide it. Omit executionLifetime and use ordinary stage deadlines, or use a runtime explicitly advertising the full contract.',
         );
       }
       if (args.executionLifetime && !supportsTreeOwnership(subagentsInfo)) {
@@ -313,8 +350,21 @@ export class FusionOrchestrator {
           'Soft deadlines require pi-subagents RPC with nonRecoveringSteer. Update pi-subagents and reload Pi, or omit panelistSoftTimeoutMs.',
         );
       }
+      if (
+        (resolved.profile.concurrency ?? resolved.profile.panel.length) > 1 &&
+        resolved.profile.panel.some(
+          (member) =>
+            member.agent === 'pi-fusion.fusion-panelist-full' ||
+            member.agent === 'fusion-panelist-full',
+        )
+      )
+        throw new FusionArgsError(
+          'fusion-panelist-full cannot run concurrently in a shared working directory. Use concurrency: 1 or a read-only agent.',
+        );
       verifyReviewContext(args.reviewContext);
-      this.configWarning = undefined;
+      this.configWarning =
+        thinkingWarnings(resolved.profile).join(' ') || undefined;
+      if (this.configWarning) this.notify(ctx, this.configWarning, 'warning');
     } catch (error: unknown) {
       const message = errorMessage(error);
       this.configWarning = message;
@@ -547,13 +597,7 @@ export class FusionOrchestrator {
       await this.rpc.stop({ id: runId });
       return;
     } catch (stopError: unknown) {
-      try {
-        await this.rpc.interrupt({ id: runId });
-        this.installWarning = `Orphaned ${kind} stop fell back to interrupt for ${runId}: ${errorMessage(stopError)}`;
-        return;
-      } catch (interruptError: unknown) {
-        this.installWarning = `Could not stop orphaned ${kind} run ${runId}: ${errorMessage(interruptError)}`;
-      }
+      this.installWarning = `Could not deliver stop to orphaned ${kind} run ${runId}: ${errorMessage(stopError)}. No interrupt or replacement was attempted.`;
     }
     this.notify(
       this.context,
@@ -856,7 +900,7 @@ export class FusionOrchestrator {
   private async deliverQuarantinedCancellation(
     run: FusionRun,
   ): Promise<FusionCommandResult> {
-    if (this.disposed || !run.recoveryRequired || !run.cancellationRequested)
+    if (this.disposed || !run.cancellationRequested)
       return { status: 'ignored' };
     const target =
       run.spawnIntent?.stage === 'judge'
@@ -869,7 +913,7 @@ export class FusionOrchestrator {
       run.cancellationDelivery?.runId === target &&
       run.cancellationDelivery.state !== 'pending'
     ) {
-      this.stopReconcileLoop();
+      if (run.recoveryRequired) this.stopReconcileLoop();
       return { status: 'started', run };
     }
     let delivery: NonNullable<FusionRun['cancellationDelivery']>;
@@ -914,7 +958,8 @@ export class FusionOrchestrator {
     )
       ? current
       : this.runStore.updateRun(run.id, { cancellationDelivery: delivery });
-    if (delivery.state !== 'pending') this.stopReconcileLoop();
+    if (delivery.state !== 'pending' && updated.recoveryRequired)
+      this.stopReconcileLoop();
     return { status: 'started', run: updated };
   }
 
@@ -1081,6 +1126,22 @@ export class FusionOrchestrator {
     };
   }
 
+  handleJobsChanged(payload: unknown): void {
+    if (!isRecord(payload) || payload.version !== 1) return;
+    const target = activeRunId(this.runStore.getActiveRun());
+    if (target) this.handleLifecycleHint({ runId: target });
+  }
+
+  private configureSubagentsInfo(info: unknown): void {
+    this.eventDrivenRefresh = Boolean(
+      this.context?.hasUI &&
+        isRecord(info) &&
+        isRecord(info.events) &&
+        typeof info.events.jobsChanged === 'string',
+    );
+    this.onSubagentsInfo?.(info);
+  }
+
   handleLifecycleHint(payload: unknown): void {
     if (
       this.disposed ||
@@ -1121,7 +1182,13 @@ export class FusionOrchestrator {
     if (!active) return { status: 'ignored' };
 
     const completedRunId = extractSubagentRunId(payload);
-    if (!completedRunId) return { status: 'ignored' };
+    if (!completedRunId || completedRunId !== activeRunId(active))
+      return { status: 'ignored' };
+    if (
+      (findResultsArray(payload)?.length ?? 0) > 0 &&
+      !this.completionEvidence.has(completedRunId)
+    )
+      this.completionEvidence.set(completedRunId, payload);
 
     if (active.phase === 'judge') {
       if (!active.judgeRunId || completedRunId !== active.judgeRunId) {
@@ -1226,30 +1293,59 @@ export class FusionOrchestrator {
         : { status: 'started', run: pending };
     }
 
+    const pending = this.runStore.updateRun(active.id, {
+      cancellationRequested: true,
+      ...(active.cancellationDelivery?.state === 'undeliverable'
+        ? { cancellationDelivery: null }
+        : {}),
+    });
+    this.ensureReconcileLoop();
+    return this.reconcileOrdinaryCancellation(pending);
+  }
+
+  private reconcileOrdinaryCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
+    const pending = this.pendingCancellations.get(run.id);
+    if (pending) return pending;
+    const cancellation = this.observeOrdinaryCancellation(run).finally(() =>
+      this.pendingCancellations.delete(run.id),
+    );
+    this.pendingCancellations.set(run.id, cancellation);
+    return cancellation;
+  }
+
+  private async observeOrdinaryCancellation(
+    run: FusionRun,
+  ): Promise<FusionCommandResult> {
+    let active = run;
     const targetRunId = activeRunId(active);
-    let method: 'stop' | 'interrupt' | 'local' = 'local';
-    if (targetRunId) {
-      try {
-        await this.rpc.stop({ id: targetRunId });
-        method = 'stop';
-      } catch (stopError: unknown) {
-        this.installWarning = `Subagent stop failed for ${targetRunId}: ${errorMessage(stopError)}`;
-        try {
-          await this.rpc.interrupt({ id: targetRunId });
-          method = 'interrupt';
-        } catch (interruptError: unknown) {
-          const message = `Could not cancel subagent run ${targetRunId}: ${errorMessage(interruptError)}`;
-          this.notify(ctx, message, 'error');
-          return { status: 'failed', error: message };
-        }
-      }
+    if (!targetRunId) return { status: 'started', run: active };
+    const delivery = await this.deliverQuarantinedCancellation(active);
+    if (delivery.status !== 'started') return delivery;
+    active = delivery.run;
+    const payload = await this.nativeStatus(active, targetRunId);
+    const replacement = this.runtimeReplacement(active, {
+      statusPayload: payload,
+      resultIsTerminal: false,
+    });
+    if (replacement) return replacement;
+    const proof = ordinaryTerminalProof(payload, targetRunId);
+    if (!proof) {
+      const condition = `Cancellation pending: ${ordinaryRetirementDetail(payload, targetRunId)}. Stop acceptance is not exit proof; admission remains held. Inspect the exact native IDs in /subagents-fleet. No automatic reset is available.`;
+      if (active.error !== condition)
+        active = this.runStore.updateRun(active.id, { error: condition });
+      publishFusionStatus(
+        this.context,
+        active,
+        undefined,
+        'stopping; awaiting native retirement',
+      );
+      this.ensureReconcileLoop();
+      return { status: 'started', run: active };
     }
-
-    this.runStore.refreshDurable();
-    if (!sameStage(active, this.runStore.getActiveRun())) {
-      return { status: 'ignored' };
-    }
-
+    this.assertCurrentStage(active);
+    const method = 'stop';
     const profile = this.profileForRun(active);
     const report = renderCancelledReport({
       run: active,
@@ -1282,7 +1378,11 @@ export class FusionOrchestrator {
     this.postTerminalReport(cancelled, report);
     this.clearActiveRuntime();
     this.clearUi();
-    this.notify(ctx, `Fusion run ${cancelled.id} cancelled.`, 'info');
+    this.notify(
+      this.context,
+      `Fusion run ${cancelled.id} cancelled after native retirement.`,
+      'info',
+    );
     return terminalResult(cancelled, report);
   }
 
@@ -1382,7 +1482,7 @@ export class FusionOrchestrator {
 
     if (this.onSubagentsInfo) {
       try {
-        this.onSubagentsInfo(await this.rpc.ping());
+        this.configureSubagentsInfo(await this.rpc.ping());
       } catch {
         /* Periodic reconciliation still works without event discovery. */
       }
@@ -1403,6 +1503,51 @@ export class FusionOrchestrator {
     this.pendingCompletionPayload = undefined;
     this.preflightRecoveryEnabled = false;
     this.stopReconcileLoop();
+  }
+
+  async getProfileNames(): Promise<readonly string[]> {
+    if (this.disposed || !this.context) return [];
+    const config = await this.loadConfig(this.context);
+    return this.disposed ? [] : Object.keys(config.profiles);
+  }
+
+  async showDoctor(ctx: FusionCommandContext): Promise<string> {
+    this.context = ctx;
+    const [native, configuration, policy] = await Promise.allSettled([
+      this.rpc.ping(),
+      this.loadConfig(ctx),
+      this.readRecoveryPolicy(),
+    ]);
+    if (this.disposed) return 'Fusion runtime is no longer active.';
+    let resolved: ResolvedFusionProfile | undefined;
+    let configError: string | undefined;
+    if (configuration.status === 'fulfilled') {
+      try {
+        resolved = this.resolveProfile(configuration.value);
+      } catch (error: unknown) {
+        configError = errorMessage(error);
+      }
+    } else configError = errorMessage(configuration.reason);
+    const active = this.runStore.getActiveRun();
+    const report = formatFusionDoctor({
+      ...(native.status === 'fulfilled'
+        ? { info: native.value }
+        : { nativeError: errorMessage(native.reason) }),
+      policy:
+        policy.status === 'fulfilled'
+          ? policy.value
+          : { path: 'unavailable', configured: 'unknown' },
+      ...(resolved
+        ? { profileName: resolved.name, profile: resolved.profile }
+        : {
+            configError: configError ?? 'unavailable',
+          }),
+      trusted: ctx.isProjectTrusted(),
+      ...(this.getParentTools ? { parentTools: this.getParentTools() } : {}),
+      ...(active ? { active } : {}),
+    });
+    this.postMessage('fusion-status', report);
+    return report;
   }
 
   async showStatus(ctx: FusionCommandContext): Promise<string> {
@@ -1430,7 +1575,10 @@ export class FusionOrchestrator {
             targetRunId,
             activeAsyncDir(active),
           );
-          progress = extractFusionProgressCounts(payload);
+          progress = displayFusionProgress(
+            active,
+            extractFusionProgressCounts(payload),
+          );
           statusDetails = buildFusionStatusDetails(
             active,
             this.profileForRun(active),
@@ -1444,7 +1592,10 @@ export class FusionOrchestrator {
         active,
         ...(progress ? { progress } : {}),
         ...(statusDetails ? { details: statusDetails } : {}),
-        warnings: this.warnings(statusWarning),
+        warnings: this.warnings(
+          statusWarning ??
+            (active.cancellationRequested ? active.error : undefined),
+        ),
       });
     }
 
@@ -1721,6 +1872,10 @@ export class FusionOrchestrator {
         if (active.cancellationRequested)
           return await this.reconcileContractCancellation(active);
       }
+      if (!active.executionLifetime && active.cancellationRequested)
+        return this.pendingCancellations.has(active.id)
+          ? { status: 'ignored' }
+          : await this.reconcileOrdinaryCancellation(active);
       if (active.phase === 'panel') {
         return await this.handleLegacyPanelComplete(active, eventPayload);
       }
@@ -2071,19 +2226,19 @@ export class FusionOrchestrator {
   ): Promise<FusionCommandResult> {
     if (!active.panelRunId) return { status: 'ignored' };
 
-    let method: 'stop' | 'interrupt' = 'stop';
+    const method = 'stop';
     try {
-      await this.rpc.stop({ id: active.panelRunId });
+      const receipt = await this.rpc.stop({ id: active.panelRunId });
+      if (
+        !isRecord(receipt) ||
+        receipt.runId !== active.panelRunId ||
+        receipt.state !== 'stopping'
+      )
+        throw new Error('Native stop did not acknowledge the exact panel.');
     } catch (stopError: unknown) {
-      try {
-        await this.rpc.interrupt({ id: active.panelRunId });
-        method = 'interrupt';
-      } catch (interruptError: unknown) {
-        this.installWarning = `Could not stop panel run ${active.panelRunId} after agreement: ${errorMessage(interruptError)}`;
-        this.notify(this.context, this.installWarning, 'warning');
-        return { status: 'ignored' };
-      }
-      this.installWarning = `Panel stop fell back to interrupt for ${active.panelRunId}: ${errorMessage(stopError)}`;
+      this.installWarning = `Could not stop panel run ${active.panelRunId} after agreement: ${errorMessage(stopError)}. No interrupt was attempted.`;
+      this.notify(this.context, this.installWarning, 'warning');
+      return { status: 'ignored' };
     }
 
     this.runStore.refreshDurable();
@@ -2250,6 +2405,21 @@ export class FusionOrchestrator {
       const stepError = extractSubagentFailure(
         findStepsArray(snapshot.statusPayload)[0],
       );
+      if (
+        output.error === 'Fusion judge completed without output.' &&
+        !lifecycleError &&
+        !stepError
+      ) {
+        const target = active.judgeRunId ?? active.id;
+        const since = this.missingJudgeOutputSince.get(target);
+        if (since === undefined)
+          this.missingJudgeOutputSince.set(target, Date.now());
+        if (
+          since === undefined ||
+          Date.now() - since < WORKFLOW_RESULT_ARTIFACT_GRACE_MS
+        )
+          return { status: 'ignored' };
+      }
       const errors = [lifecycleError, stepError, output.error].filter(
         (error, index, all): error is string =>
           Boolean(error) && all.indexOf(error) === index,
@@ -2307,6 +2477,11 @@ export class FusionOrchestrator {
     asyncDir?: string;
     eventPayload?: unknown;
   }): Promise<RunLifecycleSnapshot> {
+    const retained = input.runId
+      ? this.completionEvidence.get(input.runId)
+      : undefined;
+    if (input.eventPayload === undefined && retained !== undefined)
+      input = { ...input, eventPayload: retained };
     const eventPayloadMatches =
       input.eventPayload !== undefined &&
       extractSubagentRunId(input.eventPayload) === input.runId;
@@ -2333,6 +2508,14 @@ export class FusionOrchestrator {
     ].find(isRuntimeReplaced);
     if (replaced !== undefined)
       return { statusPayload: replaced, resultIsTerminal: true };
+
+    if (!hasExplicitResultsArray(statusPayload) && isRecord(statusPayload)) {
+      const results =
+        input.run.phase !== 'judge'
+          ? nativePanelResults(statusPayload)
+          : undefined;
+      if (results) statusPayload = { ...statusPayload, results };
+    }
 
     const failureKind =
       (hasExplicitResultsArray(artifactResult)
@@ -2361,12 +2544,15 @@ export class FusionOrchestrator {
       );
     }
 
+    const statusState = extractSubagentState(statusPayload);
+    const eventState = extractSubagentState(input.eventPayload);
     const statusIsTerminal =
-      isTerminalSubagentState(extractSubagentState(statusPayload)) ||
-      isTerminalFusionProgress(statusPayload);
+      isTerminalSubagentState(statusState) ||
+      (statusState === undefined && isTerminalFusionProgress(statusPayload));
     const eventIsTerminal =
-      isTerminalSubagentState(extractSubagentState(input.eventPayload)) ||
-      isTerminalFusionProgress(input.eventPayload);
+      isTerminalSubagentState(eventState) ||
+      (eventState === undefined &&
+        isTerminalFusionProgress(input.eventPayload));
     const eventHasResults = hasExplicitResultsArray(input.eventPayload);
     // Completion events are compact and can truncate long inline outputs. A
     // result artifact is the complete terminal record, so select it before an
@@ -2381,7 +2567,19 @@ export class FusionOrchestrator {
       };
     }
 
-    if (statusIsTerminal && isWorkflowResultArtifactPending(statusPayload)) {
+    const expectedResults =
+      input.run.phase === 'judge'
+        ? 1
+        : this.profileForRun(input.run)?.panel.length;
+    const eventComplete =
+      expectedResults !== undefined &&
+      (findResultsArray(input.eventPayload)?.length ?? 0) >= expectedResults;
+    if (
+      statusIsTerminal &&
+      isWorkflowResultArtifactPending(statusPayload) &&
+      !nativeJudgeValue(statusPayload) &&
+      !eventComplete
+    ) {
       return {
         statusPayload,
         resultIsTerminal: false,
@@ -2603,7 +2801,9 @@ export class FusionOrchestrator {
       return undefined;
     return this.holdForRecovery(
       run,
-      'runtime-replaced',
+      runtimeLossReason(snapshot.statusPayload) ??
+        runtimeLossReason(snapshot.resultPayload) ??
+        'runtime-replaced',
       `Workflow ${activeRunId(run) ?? 'unknown'} lost its runtime; surviving children must be reconciled before admission can be released.`,
     );
   }
@@ -2668,6 +2868,8 @@ export class FusionOrchestrator {
 
   private clearActiveRuntime(): void {
     this.incompleteTerminalSince.clear();
+    this.completionEvidence.clear();
+    this.missingJudgeOutputSince.clear();
     this.activeProfile = undefined;
     this.activeProfileRunId = undefined;
     this.stopReconcileLoop();
@@ -2698,13 +2900,16 @@ export class FusionOrchestrator {
 
   private ensureReconcileLoop(): void {
     if (this.disposed || this.reconcileTimer) return;
-    this.reconcileTimer = setInterval(() => {
-      void this.reconcileActiveRun().catch((error: unknown) => {
-        const message = `Could not reconcile fusion run: ${errorMessage(error)}`;
-        this.installWarning = message;
-        this.notify(this.context, message, 'warning');
-      });
-    }, RECONCILE_INTERVAL_MS);
+    this.reconcileTimer = setInterval(
+      () => {
+        void this.reconcileActiveRun().catch((error: unknown) => {
+          const message = `Could not reconcile fusion run: ${errorMessage(error)}`;
+          this.installWarning = message;
+          this.notify(this.context, message, 'warning');
+        });
+      },
+      this.eventDrivenRefresh ? 10_000 : RECONCILE_INTERVAL_MS,
+    );
     this.reconcileTimer.unref?.();
   }
 
@@ -2928,7 +3133,16 @@ export function extractJudgeOutput(
   payload: unknown,
   options: { resultIndex?: number } = {},
 ): { ok: true; output: string } | { ok: false; error: string } {
-  const result = findResult(payload, options.resultIndex);
+  const returned = nativeJudgeValue(payload);
+  if (returned?.ok === false)
+    return {
+      ok: false,
+      error:
+        firstNonBlankString(returned.error, returned.output) ??
+        'Fusion judge failed without output.',
+    };
+  const result =
+    findResult(returned ?? payload, options.resultIndex) ?? returned;
   if (result) {
     const failed = resultFailed(result);
     const output = firstNonBlankString(
@@ -2946,15 +3160,23 @@ export function extractJudgeOutput(
       };
     }
     if (output) return { ok: true, output };
-    const artifactPath = extractArtifactPath(result);
-    if (artifactPath) {
-      return { ok: true, output: `Output artifact: ${artifactPath}` };
-    }
   }
 
-  const output = firstNonBlankStringFromPayload(payload);
+  const output = isWorkflowEnvelope(payload)
+    ? undefined
+    : firstNonBlankStringFromPayload(payload);
   if (output) return { ok: true, output };
   return { ok: false, error: 'Fusion judge completed without output.' };
+}
+
+function isWorkflowEnvelope(payload: unknown): boolean {
+  return (
+    isRecord(payload) &&
+    (payload.mode === 'workflow' ||
+      isRecord(payload.workflow) ||
+      isWorkflowEnvelope(payload.data) ||
+      isWorkflowEnvelope(payload.details))
+  );
 }
 
 interface FusionStatusPanelLine {
@@ -3606,20 +3828,6 @@ function isStatusEnvelopeText(value: string): boolean {
   );
 }
 
-function extractArtifactPath(
-  result: Record<string, unknown>,
-): string | undefined {
-  const direct = firstString(result.artifactPath, result.savedOutputPath);
-  if (direct) return direct;
-  if (isRecord(result.artifactPaths)) {
-    return firstString(result.artifactPaths.outputPath);
-  }
-  if (isRecord(result.outputReference)) {
-    return firstString(result.outputReference.path);
-  }
-  return undefined;
-}
-
 function shouldStopWhenPanelAgrees(
   profile: FusionProfile,
   outputs: readonly PanelOutput[],
@@ -3731,14 +3939,19 @@ function isPrelaunchRejection(error: unknown): boolean {
   );
 }
 
+function runtimeLossReason(
+  payload: unknown,
+): 'runtime-replaced' | 'owner-exited' | undefined {
+  if (!isRecord(payload)) return undefined;
+  const cause = isRecord(payload.workflow)
+    ? payload.workflow.stopCause
+    : undefined;
+  if (cause === 'runtime-replaced' || cause === 'owner-exited') return cause;
+  return runtimeLossReason(payload.details) ?? runtimeLossReason(payload.data);
+}
+
 function isRuntimeReplaced(payload: unknown): boolean {
-  if (!isRecord(payload)) return false;
-  if (
-    isRecord(payload.workflow) &&
-    payload.workflow.stopCause === 'runtime-replaced'
-  )
-    return true;
-  return isRuntimeReplaced(payload.details) || isRuntimeReplaced(payload.data);
+  return runtimeLossReason(payload) !== undefined;
 }
 
 function errorMessage(error: unknown): string {

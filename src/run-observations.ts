@@ -7,6 +7,7 @@ import type {
   RunObservation,
   RunUsage,
 } from './types.js';
+import { THINKING_LEVELS } from './types.js';
 import { isFiniteNumber, isRecord } from './utils.js';
 
 export const PANEL_DECISION_OPEN = '<fusion-panel-decision>';
@@ -120,6 +121,9 @@ export function mergeRunObservations(
     ...((latest.model ?? base.model)
       ? { model: latest.model ?? base.model }
       : {}),
+    ...((latest.thinking ?? base.thinking)
+      ? { thinking: latest.thinking ?? base.thinking }
+      : {}),
     ...((latest.durationMs ?? base.durationMs) !== undefined
       ? { durationMs: latest.durationMs ?? base.durationMs }
       : {}),
@@ -139,6 +143,9 @@ export function extractRunObservation(value: unknown): RunObservation {
   if (!isRecord(value)) return {};
 
   const model = firstString(value.model);
+  const thinking = THINKING_LEVELS.find(
+    (level) => level === (value.thinking ?? value.thinkingLevel),
+  );
   const durationMs = extractDuration(value);
   const usage = extractUsage(value);
   const attempts = extractAttempts(value.modelAttempts);
@@ -168,6 +175,7 @@ export function extractRunObservation(value: unknown): RunObservation {
 
   return {
     ...(model ? { model } : {}),
+    ...(thinking ? { thinking } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(usage ? { usage } : {}),
     ...(attempts.length > 0 ? { attempts } : {}),
@@ -212,10 +220,13 @@ function mergeUsage(
   const inputTokens = latest?.inputTokens ?? base?.inputTokens;
   const outputTokens = latest?.outputTokens ?? base?.outputTokens;
   const costUsd = latest?.costUsd ?? base?.costUsd;
+  const costSource =
+    latest?.costUsd !== undefined ? latest.costSource : base?.costSource;
   const usage: RunUsage = {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(costSource ? { costSource } : {}),
   };
   return { usage };
 }
@@ -254,6 +265,17 @@ function extractDuration(value: Record<string, unknown>): number | undefined {
 function extractUsage(value: Record<string, unknown>): RunUsage | undefined {
   const totalCost = isRecord(value.totalCost) ? value.totalCost : undefined;
   const rawUsage = isRecord(value.usage) ? value.usage : undefined;
+  const rawCost = isRecord(rawUsage?.cost) ? rawUsage.cost : undefined;
+  const costSource =
+    isFiniteNumber(totalCost?.costUsd) ||
+    isFiniteNumber(rawUsage?.costUsd) ||
+    isFiniteNumber(rawUsage?.cost)
+      ? undefined
+      : rawCost?.totalFromProvider === true
+        ? 'provider'
+        : rawCost?.totalFromProvider === false
+          ? 'estimate'
+          : undefined;
   const inputTokens = firstFinite(
     totalCost?.inputTokens,
     rawUsage?.inputTokens,
@@ -267,6 +289,7 @@ function extractUsage(value: Record<string, unknown>): RunUsage | undefined {
   const costUsd = firstFinite(
     totalCost?.costUsd,
     rawUsage?.costUsd,
+    rawUsage?.cost,
     isRecord(rawUsage?.cost) ? rawUsage.cost.total : undefined,
   );
 
@@ -281,6 +304,7 @@ function extractUsage(value: Record<string, unknown>): RunUsage | undefined {
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(costSource && costUsd !== undefined ? { costSource } : {}),
   };
 }
 

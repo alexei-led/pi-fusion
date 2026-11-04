@@ -2,12 +2,28 @@ import type { FusionRun } from './types.js';
 
 export const FUSION_STATUS_KEY = 'fusion';
 
+type FusionStatusRun = Pick<
+  FusionRun,
+  | 'phase'
+  | 'profileName'
+  | 'chainRunId'
+  | 'panelRunId'
+  | 'judgeRunId'
+  | 'recoveryRequired'
+  | 'cancellationRequested'
+  | 'panelFailures'
+  | 'profileSnapshot'
+  | 'panelStopReason'
+>;
+
 export interface FusionProgressCounts {
   total?: number;
   pending: number;
   running: number;
   completed: number;
   failed: number;
+  waiting?: number;
+  unknown?: number;
 }
 
 export interface FusionUi {
@@ -21,16 +37,7 @@ export interface FusionUiContext {
 
 export function publishFusionStatus(
   ctx: FusionUiContext | undefined,
-  run: Pick<
-    FusionRun,
-    | 'id'
-    | 'phase'
-    | 'profileName'
-    | 'chainRunId'
-    | 'panelRunId'
-    | 'judgeRunId'
-    | 'recoveryRequired'
-  >,
+  run: FusionStatusRun,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
 ): void {
@@ -47,23 +54,21 @@ export function clearFusionUi(ctx: FusionUiContext | undefined): void {
 }
 
 export function formatFusionStatusText(
-  run: Pick<
-    FusionRun,
-    | 'phase'
-    | 'profileName'
-    | 'chainRunId'
-    | 'panelRunId'
-    | 'judgeRunId'
-    | 'recoveryRequired'
-  >,
+  run: FusionStatusRun,
   progress?: FusionProgressCounts,
   phaseLabel?: string,
 ): string {
   const activeRunId =
     run.phase === 'judge' ? run.judgeRunId : (run.chainRunId ?? run.panelRunId);
+  const label = phaseLabel ?? (run.phase === 'judge' ? 'synthesis' : run.phase);
   const phase = run.recoveryRequired
-    ? 'recovery required'
-    : (phaseLabel ?? run.phase);
+    ? 'recovery required; /fusion status'
+    : run.cancellationRequested
+      ? 'stopping; retirement unverified'
+      : run.phase === 'judge' && run.panelFailures?.length
+        ? `${label} (partial coverage)`
+        : label;
+  progress = displayFusionProgress(run, progress);
   if (progress) {
     return `fusion: ${phase} · ${formatProgressCounts(progress)} · ${run.profileName}`;
   }
@@ -71,6 +76,37 @@ export function formatFusionStatusText(
     return `fusion: ${phase} · ${run.profileName} · ${activeRunId}`;
   }
   return `fusion: ${phase} · starting · ${run.profileName}`;
+}
+
+/** Presentation only: the configured queue never proves native admission or termination. */
+export function displayFusionProgress(
+  run: Pick<
+    FusionRun,
+    'phase' | 'profileSnapshot' | 'panelStopReason' | 'cancellationRequested'
+  >,
+  progress: FusionProgressCounts | undefined,
+): FusionProgressCounts | undefined {
+  const total = run.profileSnapshot?.panel.length;
+  if (
+    !progress ||
+    !total ||
+    run.phase !== 'panel' ||
+    run.panelStopReason ||
+    run.cancellationRequested
+  )
+    return progress;
+  const observed =
+    progress.total ??
+    progress.pending +
+      progress.running +
+      progress.completed +
+      progress.failed +
+      (progress.waiting ?? 0) +
+      (progress.unknown ?? 0);
+  const missing = Math.max(0, total - observed);
+  return missing
+    ? { ...progress, total, pending: progress.pending + missing }
+    : progress;
 }
 
 export function extractFusionProgressCounts(
@@ -92,7 +128,9 @@ export function extractFusionProgressCounts(
     if (status === 'pending') counts.pending++;
     else if (status === 'running') counts.running++;
     else if (status === 'completed') counts.completed++;
-    else counts.failed++;
+    else if (status === 'failed') counts.failed++;
+    else if (status === 'waiting') counts.waiting = (counts.waiting ?? 0) + 1;
+    else counts.unknown = (counts.unknown ?? 0) + 1;
   }
 
   return counts;
@@ -101,8 +139,20 @@ export function extractFusionProgressCounts(
 export function formatProgressCounts(progress: FusionProgressCounts): string {
   const total =
     progress.total ??
-    progress.pending + progress.running + progress.completed + progress.failed;
-  return `${progress.completed}/${total} done, ${progress.running} running, ${progress.failed} failed`;
+    progress.pending +
+      progress.running +
+      progress.completed +
+      progress.failed +
+      (progress.waiting ?? 0) +
+      (progress.unknown ?? 0);
+  return [
+    `${progress.completed}/${total} done`,
+    `${progress.running} running`,
+    `${progress.pending} queued`,
+    `${progress.failed} failed`,
+    ...(progress.waiting ? [`${progress.waiting} waiting`] : []),
+    ...(progress.unknown ? [`${progress.unknown} unknown`] : []),
+  ].join(', ');
 }
 
 export function isTerminalFusionProgress(payload: unknown): boolean {
@@ -115,11 +165,19 @@ export function isTerminalFusionProgress(payload: unknown): boolean {
       progress.total !== undefined &&
       progress.total > 0 &&
       progress.pending === 0 &&
-      progress.running === 0,
+      progress.running === 0 &&
+      !progress.waiting &&
+      !progress.unknown,
   );
 }
 
-type ProgressStatus = 'pending' | 'running' | 'completed' | 'failed';
+type ProgressStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'waiting'
+  | 'unknown';
 
 function findProgressContainer(
   payload: unknown,
@@ -161,25 +219,39 @@ function findTerminalProgressPayload(payload: unknown): unknown {
 }
 
 function classifyProgressItem(value: unknown): ProgressStatus {
-  if (!isRecord(value)) return 'failed';
-  if (value.success === true) return 'completed';
-  if (value.success === false) return 'failed';
-  if (value.timedOut === true || value.interrupted === true) return 'failed';
+  if (!isRecord(value)) return 'unknown';
   const status = firstString(value.status, value.state);
   if (status === 'pending' || status === 'queued') return 'pending';
   if (status === 'running' || status === 'active') return 'running';
+  if (status === 'paused' || status === 'detached') return 'waiting';
+  if (status === 'partial') return 'unknown';
+  if (
+    value.timedOut === true ||
+    value.interrupted === true ||
+    value.success === false
+  )
+    return 'failed';
   if (status === 'completed' || status === 'complete' || status === 'done') {
     return 'completed';
   }
-  if (status === 'failed' || status === 'paused' || status === 'detached') {
+  if (
+    [
+      'failed',
+      'cancelled',
+      'stopped',
+      'rejected',
+      'timed_out',
+      'error',
+    ].includes(status ?? '')
+  ) {
     return 'failed';
   }
+  if (status !== undefined) return 'unknown';
+  if (value.success === true) return 'completed';
   if (typeof value.exitCode === 'number') {
     return value.exitCode === 0 ? 'completed' : 'failed';
   }
-  return firstString(value.output, value.finalOutput, value.summary, value.text)
-    ? 'completed'
-    : 'pending';
+  return 'unknown';
 }
 
 function firstString(...values: readonly unknown[]): string | undefined {

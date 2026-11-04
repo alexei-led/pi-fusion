@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./node_modules/.cache/pi-fusion-test-workers",
+    "rootDir": "."
+  },
+  "include": [
+    "test/support/shared-admission-worker.ts",
+    "test/support/stale-recovery-worker.ts"
+  ]
+}
