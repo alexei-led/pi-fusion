@@ -725,7 +725,7 @@ function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
     `- Aggregate model time: ${formatTotal(observations, (observation) => observation.durationMs, formatDuration)}`,
     `- Total input tokens: ${formatTotal(observations, (observation) => observation.usage?.inputTokens, formatTokens)}`,
     `- Total output tokens: ${formatTotal(observations, (observation) => observation.usage?.outputTokens, formatTokens)}`,
-    `- Total estimated cost: ${formatTotal(observations, (observation) => observation.usage?.costUsd, formatCost)}`,
+    `- ${aggregateCostLabel(observations)}: ${formatTotal(observations, (observation) => observation.usage?.costUsd, formatCost)}`,
   );
   if (providerFailures.length > 0) {
     lines.push('- Model issues:');
@@ -738,6 +738,21 @@ function formatRunDetails(input: RunDetailsInput): ReportSection | undefined {
   return { title: 'Run Details', content: lines };
 }
 
+function aggregateCostLabel(observations: readonly RunObservation[]): string {
+  const sources = observations.map((observation) =>
+    observation.usage?.costUsd === undefined
+      ? undefined
+      : observation.usage.costSource,
+  );
+  if (sources.every((source) => source === 'provider'))
+    return 'Total provider-reported cost';
+  if (sources.every((source) => source === 'estimate'))
+    return 'Total estimated cost';
+  return sources.every((source) => source !== undefined)
+    ? 'Total cost (mixed sources)'
+    : 'Total cost (provenance unknown)';
+}
+
 function formatObservation(
   observation: RunObservation,
   configuredModel?: string,
@@ -748,6 +763,9 @@ function formatObservation(
     observation.durationMs !== undefined
       ? formatDuration(observation.durationMs)
       : 'time unknown',
+    ...(observation.thinking
+      ? [`effort ${observation.thinking} (observed)`]
+      : []),
     formatUsage(observation),
   ].join(' · ');
 }
@@ -759,7 +777,9 @@ function formatUsage(observation: RunObservation): string {
   return [
     input !== undefined ? `in ${formatTokens(input)}` : 'input unknown',
     output !== undefined ? `out ${formatTokens(output)}` : 'output unknown',
-    cost !== undefined ? formatCost(cost) : 'cost unknown',
+    cost !== undefined
+      ? `${formatCost(cost)}${observation.usage?.costSource === 'provider' ? ' (provider-reported)' : observation.usage?.costSource === 'estimate' ? ' (estimated)' : ''}`
+      : 'cost unknown',
   ].join(', ');
 }
 
@@ -818,9 +838,9 @@ function formatAgentStatus(options: AgentStatusOptions): string[] {
   }
 
   lines.push(`- ${synthesisLabel(options.synthesis)}: ${options.judgeStatus}`);
-  if (options.judgeModel) {
-    lines.push(`  Configured model: ${options.judgeModel}`);
-  }
+  lines.push(
+    `  Configured model: ${options.judgeModel ?? 'inherited from native agent/defaults'}`,
+  );
   if (options.extra) lines.push(...options.extra);
   return lines;
 }
@@ -844,7 +864,12 @@ function formatPanelDetails(
       ? [`  Model: ${item.observation.model}`]
       : (item.configuredModel ?? item.model)
         ? [`  Configured model: ${item.configuredModel ?? item.model}`]
-        : []),
+        : [
+            '  Model selection: inherited from native agent/defaults; observed model unknown',
+          ]),
+    ...(item.observation?.thinking
+      ? [`  Observed effort: ${item.observation.thinking}`]
+      : []),
     ...(item.configuredModel &&
     item.observation?.model &&
     item.configuredModel !== item.observation.model
@@ -880,7 +905,7 @@ function formatRunMetadata(run: ReportRun): string[] {
   ];
 }
 
-function parseMarkdownSections(markdown: string): Map<string, string> {
+export function parseMarkdownSections(markdown: string): Map<string, string> {
   const sections = new Map<string, string>();
   let currentTitle: string | undefined;
   let currentLines: string[] = [];

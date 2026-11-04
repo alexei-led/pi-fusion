@@ -2,13 +2,13 @@ import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { registerFusionCommands } from './commands.js';
-import { createFusionMessageSink } from './completion-wake.js';
 import { registerFusionRpc } from './fusion-rpc.js';
 import {
   type FusionCommandContext,
   FusionOrchestrator,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
 } from './orchestrator.js';
+import { renderFusionReport } from './report-renderer.js';
 import { FusionRunStore } from './run-store.js';
 import { MAX_TIMER_MS } from './runtime-values.js';
 import { SubagentsRpcClient } from './subagents-rpc.js';
@@ -36,72 +36,63 @@ function registerFusionTool(
       'Use start_fusion_review only for hard decisions, design tradeoffs, risk review, tricky debugging, research-heavy questions, or breadth sweeps such as audits. Do not use it for routine edits, formatting, or obvious one-step fixes.',
       'Pass panel only when the user names the models to compare. Otherwise omit it and let the profile decide.',
     ],
-    parameters: Type.Object({
-      prompt: Type.String({
-        minLength: 1,
-        pattern: '.*\\S.*',
-        description:
-          'What to review or discuss (must contain non-whitespace text)',
-      }),
-      executionLifetime: Type.Optional(
-        Type.Union([
-          Type.Object({ mode: Type.Literal('unbounded') }),
-          Type.Object({
-            mode: Type.Literal('bounded'),
-            timeoutMs: Type.Integer({ minimum: 1, maximum: MAX_TIMER_MS }),
-          }),
-        ]),
-      ),
-      profile: Type.Optional(
-        Type.String({
+    parameters: Type.Object(
+      {
+        prompt: Type.String({
           minLength: 1,
-          description: 'Fusion profile name (optional)',
-        }),
-      ),
-      panel: Type.Optional(
-        Type.Array(Type.String({ minLength: 1 }), {
-          minItems: 1,
+          pattern: '.*\\S.*',
           description:
-            'Models to use for this run, overriding the profile panel. Each entry is <model> or <agent>:<model>. Use only when the user names specific models.',
+            'What to review or discuss (must contain non-whitespace text)',
         }),
-      ),
-      panelistTimeoutMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_TIMER_MS,
-          description: 'Per-panelist deadline in milliseconds',
-        }),
-      ),
-      panelTimeoutMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_TIMER_MS,
-          description: 'Panel workflow deadline in milliseconds',
-        }),
-      ),
-      panelGraceMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_TIMER_MS,
-          description:
-            'Reserved grace between child and panel deadlines in milliseconds',
-        }),
-      ),
-      judgeTimeoutMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_TIMER_MS,
-          description: 'Judge/composer deadline in milliseconds',
-        }),
-      ),
-    }),
+        profile: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description: 'Fusion profile name (optional)',
+          }),
+        ),
+        panel: Type.Optional(
+          Type.Array(Type.String({ minLength: 1 }), {
+            minItems: 1,
+            description:
+              'Models to use for this run, overriding the profile panel. Each entry is <model> or <agent>:<model>. Use only when the user names specific models.',
+          }),
+        ),
+        panelistTimeoutMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_TIMER_MS,
+            description: 'Per-panelist deadline in milliseconds',
+          }),
+        ),
+        panelTimeoutMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_TIMER_MS,
+            description: 'Panel workflow deadline in milliseconds',
+          }),
+        ),
+        panelGraceMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_TIMER_MS,
+            description:
+              'Reserved grace between child and panel deadlines in milliseconds',
+          }),
+        ),
+        judgeTimeoutMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_TIMER_MS,
+            description: 'Judge/composer deadline in milliseconds',
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await orchestrator.startRun(
         {
           prompt: params.prompt,
-          ...(params.executionLifetime
-            ? { executionLifetime: params.executionLifetime }
-            : {}),
           ...(params.profile !== undefined ? { profile: params.profile } : {}),
           ...(params.panel !== undefined ? { panel: params.panel } : {}),
           ...(params.panelistTimeoutMs !== undefined ||
@@ -133,9 +124,7 @@ function registerFusionTool(
           ? result.run.recoveryRequired
             ? (result.run.error ??
               'Fusion recovery required. No replacement run will be started.')
-            : params.executionLifetime && !result.run.effectiveExecutionLifetime
-              ? 'Fusion launch is unresolved. Native admission is still being reconciled under the original operation identity.'
-              : 'Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum.'
+            : 'Fusion panel review started. The report will be posted when the panel finishes; synthesis may be skipped below quorum.'
           : result.status === 'conflict'
             ? `A fusion run is already active (${result.activeRunId}). Do not start another; wait for its report.`
             : `Fusion review failed to start: ${result.status === 'failed' ? result.error : result.status}`;
@@ -178,12 +167,22 @@ export default function fusionExtension(pi: ExtensionAPI): void {
   const store = new FusionRunStore({ persistence: pi });
   let sessionContext: FusionCommandContext | undefined;
   let shuttingDown = false;
+  let wakeSuppressed = false;
   let unsubscribeHints: Array<() => void> = [];
   const orchestrator = new FusionOrchestrator({
     onSubagentsInfo(info) {
       for (const unsubscribe of unsubscribeHints) unsubscribe();
       unsubscribeHints = [];
       if (shuttingDown || !isRecord(info) || !isRecord(info.events)) return;
+      if (
+        typeof info.events.jobsChanged === 'string' &&
+        info.events.jobsChanged.startsWith('subagent:')
+      ) {
+        const unsubscribe = pi.events.on(info.events.jobsChanged, (payload) =>
+          orchestrator.handleJobsChanged(payload),
+        );
+        if (unsubscribe) unsubscribeHints.push(unsubscribe);
+      }
       const channels = new Set([
         info.events.childStatus,
         info.events.processTerminal,
@@ -198,12 +197,27 @@ export default function fusionExtension(pi: ExtensionAPI): void {
       }
     },
     rpc: new SubagentsRpcClient({ events: pi.events }),
+    getParentTools: () => pi.getAllTools?.().map((tool) => tool.name) ?? [],
     runStore: store,
-    sendMessage: createFusionMessageSink(pi, () => sessionContext),
+    sendMessage: (message, options) =>
+      pi.sendMessage(
+        message,
+        options?.triggerTurn && wakeSuppressed
+          ? { ...options, triggerTurn: false }
+          : options,
+      ),
+  });
+
+  pi.on('agent_settled', (event) => {
+    if (event.aborted) wakeSuppressed = true;
+  });
+  pi.on('input', (event) => {
+    if (event.source !== 'extension') wakeSuppressed = false;
   });
 
   registerFusionCommands(pi, orchestrator);
   registerFusionTool(pi, orchestrator);
+  pi.registerMessageRenderer('fusion-report', renderFusionReport);
   pi.registerTool({
     name: 'resolve_fusion_deadline',
     exposure: 'model-only',
@@ -265,6 +279,10 @@ export default function fusionExtension(pi: ExtensionAPI): void {
 
   pi.on('session_start', async (_event, ctx) => {
     sessionContext = ctx;
+    if (!ctx.isProjectTrusted()) {
+      orchestrator.clearUi();
+      return;
+    }
     store.setDirectory(join(ctx.cwd, '.pi', 'fusion', 'runs'));
     await orchestrator.restore(ctx);
   });

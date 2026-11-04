@@ -361,7 +361,7 @@ test('showStatus reports active run IDs, progress counts, and warnings', async (
 
   assert.match(report, /State: active/);
   assert.match(report, /Panel run: chain-1/);
-  assert.match(report, /Progress: 1\/2 done, 1 running, 0 failed/);
+  assert.match(report, /Progress: 1\/2 done, 1 running, 0 queued, 0 failed/);
   assert.match(report, /Warnings: none/);
   assert.equal(fixture.messages.at(-1)?.customType, 'fusion-status');
 });
@@ -1027,7 +1027,7 @@ test('matching events with partial results do not finish a running panel', async
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, 'panel');
 });
 
-test('terminal child failures finish a running panel without waiting for the deadline', async () => {
+test('terminal child failures remain visible but do not close an explicitly running workflow', async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);
   fixture.rpc.statusResults.set('chain-1', {
@@ -1051,8 +1051,15 @@ test('terminal child failures finish a running panel without waiting for the dea
     runId: 'chain-1',
   });
 
-  assert.equal(result.status, 'failed');
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.equal(result.status, 'ignored');
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, 'panel');
+  const running = fixture.rpc.statusResults.get('chain-1');
+  assert.ok(isRecord(running));
+  fixture.rpc.statusResults.set('chain-1', { ...running, state: 'failed' });
+  const finished = await fixture.orchestrator.handleSubagentComplete({
+    runId: 'chain-1',
+  });
+  assert.equal(finished.status, 'failed');
   assert.match(fixture.messages.at(-1)?.content ?? '', /Model not found/);
 });
 
@@ -1074,8 +1081,27 @@ test('terminal subagent errors without child results preserve the provider error
   assert.match(fixture.messages.at(-1)?.content ?? '', /Model not found/);
 });
 
+test('running workflow is not terminal when its current rolling roster has finished', async () => {
+  const fixture = makeFixture();
+  await fixture.orchestrator.startRun('compare', fixture.ctx);
+  fixture.rpc.statusResults.set('chain-1', {
+    runId: 'chain-1',
+    mode: 'workflow',
+    state: 'running',
+    steps: [
+      { agent: 'panel-agent', status: 'failed', error: 'Auth failure' },
+      { agent: 'panel-agent', status: 'complete' },
+    ],
+  });
+  await fixture.orchestrator.getStatusReport();
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, 'panel');
+  assert.equal(fixture.rpc.spawns.length, 1);
+  fixture.orchestrator.dispose();
+});
+
 test('panel agreement stops unfinished work and still runs the judge', async () => {
   const fixture = makeFixture();
+  fixture.rpc.retireOnStop = false;
   fixture.rpc.spawnResults.push({ details: { runId: 'judge-1' } });
   await fixture.orchestrator.startRun(
     '--profile agreement compare',
@@ -1315,7 +1341,8 @@ test('panel completion fails closed when terminal status explicitly contains no 
   );
 });
 
-test('judge completion treats terminal status text as complete even when event payload has no results', async () => {
+test('judge completion waits briefly when terminal status has no output evidence', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);
   fixture.rpc.spawnResults.push({ details: { runId: 'judge-1' } });
@@ -1330,7 +1357,10 @@ test('judge completion treats terminal status text as complete even when event p
     runId: 'judge-1',
   });
 
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'ignored');
+  assert.equal(fixture.orchestrator.getActiveRun()?.phase, 'judge');
+  vi.setSystemTime(Date.now() + 5_001);
+  await fixture.orchestrator.getStatusReport();
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
   assert.match(
     fixture.messages.at(-1)?.content ?? '',
@@ -1585,7 +1615,7 @@ for (const stage of ['panel', 'judge'] as const) {
   });
 }
 
-test('cancelActiveRun does not throw when completion wins during stop', async () => {
+test('cancelActiveRun does not throw when a competing terminal commit wins during stop', async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);
 
@@ -1596,19 +1626,11 @@ test('cancelActiveRun does not throw when completion wins during stop', async ()
   const cancelling = fixture.orchestrator.cancelActiveRun(fixture.ctx);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
-  fixture.rpc.statusResults.set('chain-1', {
-    runId: 'chain-1',
-    state: 'complete',
-    results: [
-      { agent: 'panel-agent', success: true, output: 'Choose A.' },
-      { agent: 'panel-agent', success: false, error: 'boom' },
-    ],
+  const active = fixture.runStore.getActiveRun();
+  assert.ok(active);
+  fixture.runStore.completeRun(active.id, {
+    report: 'Committed by another owner',
   });
-  assert.equal(
-    (await fixture.orchestrator.handleSubagentComplete({ runId: 'chain-1' }))
-      .status,
-    'done',
-  );
 
   resolveStop({ ok: true });
   assert.equal((await cancelling).status, 'ignored');
@@ -1635,21 +1657,25 @@ test('cancelActiveRun stops a panel that finishes spawning after local cancellat
   assert.equal(fixture.orchestrator.getActiveRun(), undefined);
 });
 
-test('cancelActiveRun stops the active run and falls back to interrupt', async () => {
+test('cancelActiveRun preserves stop uncertainty without falling back to interrupt', async () => {
   const fixture = makeFixture();
   fixture.rpc.stopError = new Error('stop unsupported');
   await fixture.orchestrator.startRun('compare', fixture.ctx);
 
   const result = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
 
-  assert.equal(result.status, 'cancelled');
+  assert.equal(result.status, 'started');
   assert.deepEqual(fixture.rpc.stops, [{ id: 'chain-1' }]);
-  assert.deepEqual(fixture.rpc.interrupts, [{ id: 'chain-1' }]);
-  assert.match(
-    fixture.messages.at(-1)?.content ?? '',
-    /Cancellation method: interrupt/,
+  assert.deepEqual(fixture.rpc.interrupts, []);
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.cancellationRequested,
+    true,
   );
-  assert.equal(fixture.orchestrator.getActiveRun(), undefined);
+  assert.equal(
+    fixture.orchestrator.getActiveRun()?.cancellationDelivery?.state,
+    'pending',
+  );
+  fixture.orchestrator.dispose();
 });
 
 test('clearUi clears the fusion status key', async () => {
@@ -2114,6 +2140,10 @@ function makeFixture(seed?: {
     runStore,
     sendMessage: (message) => messages.push(message),
     loadConfig: async () => seed?.config ?? CONFIG,
+    readRecoveryPolicy: async () => ({
+      path: '/fixture/config.json',
+      configured: 'disabled',
+    }),
   });
   return { orchestrator, rpc, runStore, entries, ui, ctx, messages };
 }
@@ -2133,6 +2163,7 @@ class FakeRpc implements FusionRpcClientLike {
   statusPromise: Promise<unknown> | undefined;
   stopPromise: Promise<unknown> | undefined;
   stopError: Error | undefined;
+  retireOnStop = true;
   interruptError: Error | undefined;
 
   async ping(): Promise<unknown> {
@@ -2168,7 +2199,22 @@ class FakeRpc implements FusionRpcClientLike {
     this.stops.push(params);
     if (this.stopPromise !== undefined) return this.stopPromise;
     if (this.stopError) throw this.stopError;
-    return { ok: true };
+    assert.ok(isRecord(params) && typeof params.id === 'string');
+    if (this.retireOnStop)
+      this.statusResults.set(params.id, {
+        runId: params.id,
+        state: 'stopped',
+        workflowTerminalProof: {
+          version: 1,
+          kind: 'workflow',
+          runId: params.id,
+          state: 'observed',
+          dispatchClosed: true,
+          observedAt: Date.now(),
+          children: [],
+        },
+      });
+    return { runId: params.id, state: 'stopping' };
   }
 
   async steer(params: object): Promise<unknown> {

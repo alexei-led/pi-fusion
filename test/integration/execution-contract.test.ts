@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { onTestFinished, type TestContext, test, vi } from 'vitest';
+import {
+  beforeEach,
+  describe,
+  onTestFinished,
+  type TestContext,
+  test,
+  vi,
+} from 'vitest';
 import { DurableRunSnapshotStore } from '../../src/durable-run-store.js';
 import {
   FUSION_RPC_REQUEST_EVENT,
@@ -28,7 +35,12 @@ import {
 } from '../../src/subagents-rpc.js';
 import type { FusionConfig } from '../../src/types.js';
 import { isRecord } from '../../src/utils.js';
+import {
+  isolatedProcessEnvironment,
+  observeChild,
+} from '../support/child-process.js';
 import { FakePi } from '../support/fake-pi.js';
+import { copyGitTemplate, fixtureGit } from '../support/git-fixtures.js';
 import { required } from '../support/required.js';
 
 const capabilities = {
@@ -174,10 +186,11 @@ function admissionProcess(
   const child = spawn(
     process.execPath,
     [
-      '--import',
-      'jiti/register',
       fileURLToPath(
-        new URL('../support/shared-admission-worker.ts', import.meta.url),
+        new URL(
+          '../../node_modules/.cache/pi-fusion-test-workers/test/support/shared-admission-worker.js',
+          import.meta.url,
+        ),
       ),
       cwd,
       operationId,
@@ -185,69 +198,41 @@ function admissionProcess(
       fault,
       JSON.stringify(capabilities),
     ],
-    { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+    {
+      env: isolatedProcessEnvironment(cwd),
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    },
   );
-  assert.ok(child.stderr);
-  let stderr = '';
-  child.stderr.on('data', (data: Buffer) => {
-    stderr += data.toString();
-  });
-  t.onTestFinished(() => {
-    if (child.exitCode === null) child.kill('SIGKILL');
-  });
-  const ready = new Promise<void>((resolve, reject) => {
-    child.once('message', () => resolve());
-    child.once('error', reject);
-    child.once('exit', (code) => {
-      if (code !== 0 && code !== 78)
-        reject(new Error(`Admission worker exited ${code}: ${stderr}`));
-    });
-  });
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code) =>
-      code === 0 || code === 78
-        ? resolve(code)
-        : reject(new Error(`Admission worker exited ${code}: ${stderr}`)),
-    );
-  });
-  return { ready, exited };
+  return observeChild(t, child, 'Admission worker', [0, 78]);
 }
 
 function recoveryProcess(t: TestContext, cwd: string, mode: string) {
   const child = spawn(
     process.execPath,
     [
-      '--import',
-      'jiti/register',
       fileURLToPath(
-        new URL('../support/stale-recovery-worker.ts', import.meta.url),
+        new URL(
+          '../../node_modules/.cache/pi-fusion-test-workers/test/support/stale-recovery-worker.js',
+          import.meta.url,
+        ),
       ),
       cwd,
       mode,
     ],
-    { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
+    {
+      env: isolatedProcessEnvironment(cwd),
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    },
   );
-  assert.ok(child.stderr);
-  let stderr = '';
-  child.stderr.on('data', (data: Buffer) => {
-    stderr += data.toString();
-  });
-  t.onTestFinished(() => {
-    if (child.exitCode === null) child.kill('SIGKILL');
-  });
-  const waiting = new Promise<void>((resolve) =>
-    child.once('message', () => resolve()),
-  );
-  const exited = new Promise<void>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`Recovery worker exited ${code}: ${stderr}`)),
-    );
-  });
-  return { waiting, exited };
+  const observed = observeChild(t, child, 'Recovery worker');
+  return {
+    get waiting() {
+      return observed.ready;
+    },
+    get exited() {
+      return observed.exited;
+    },
+  };
 }
 
 for (const boundary of ['lookup', 'spawn', 'lookup-refreshed']) {
@@ -517,7 +502,7 @@ test('unbounded launch persists identity and survives old elapsed deadlines', as
 
 for (const fault of ['after-initial-write', 'before-intent-write'] as const) {
   for (const outcome of ['launch', 'cancel', 'continue'] as const) {
-    test(`direct public tool survives ${fault} and recovers by ${outcome}`, async (_t) => {
+    test(`controller RPC survives ${fault} and recovers by ${outcome}`, async (_t) => {
       const cwd = await mkdtemp(join(tmpdir(), 'fusion-direct-intent-'));
       onTestFinished(() => rm(cwd, { recursive: true, force: true }));
       await mkdir(join(cwd, '.pi'));
@@ -612,19 +597,30 @@ for (const fault of ['after-initial-write', 'before-intent-write'] as const) {
           )
             throw new Error('interrupted after initial publication');
         });
-      const tool = first.pi.tools.get('start_fusion_review');
-      assert.ok(tool);
-      await tool.execute(
-        'direct-call',
-        { prompt: 'Review', executionLifetime: lifetime },
-        undefined,
-        undefined,
-        first.ctx,
-      );
+      await new Promise<void>((resolve) => {
+        const off = first.pi.events.on(
+          fusionRpcReplyEvent('controller-call'),
+          () => {
+            off();
+            resolve();
+          },
+        );
+        first.pi.events.emit(FUSION_RPC_REQUEST_EVENT, {
+          version: 1,
+          requestId: 'controller-call',
+          method: 'start',
+          params: {
+            prompt: 'Review',
+            operationId: 'controller-call',
+            digest: 'caller-direct',
+            executionLifetime: lifetime,
+          },
+        });
+      });
       mockedWrite.mockRestore();
       const run = new FusionRunStore({ directory }).getActiveRun();
       assert.ok(run?.spawnIntent?.requestId);
-      assert.equal(run.operationId, undefined);
+      assert.equal(run.operationId, 'controller-call');
       assert.equal(run.spawnIntent.requestId, `${run.id}:panel`);
       assert.equal(
         run.spawnIntent.requestDigest,
@@ -1070,7 +1066,7 @@ test('ordinary-only capabilities reject explicit lifetime before spawn', async (
   );
   assert.equal(result.status, 'failed');
   if (result.status === 'failed')
-    assert.match(result.error, /verified executionLifetime/);
+    assert.match(result.error, /required executionLifetime/);
   assert.equal(rpc.spawns.length, 0);
 });
 
@@ -1572,74 +1568,76 @@ for (const boundary of ['ping', 'config'] as const) {
   });
 }
 
-test('simultaneous RPC preflight replays freeze one profile and one native identity', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const rpc = new NativeRuntime();
-  const gates: (() => void)[] = [];
-  rpc.ping = () =>
-    new Promise((resolve) => {
-      gates.push(() => resolve({ capabilities }));
-    });
-  const first = rpcHarness(t, candidate.sessionCwd, rpc);
-  const changedConfig: FusionConfig = {
-    defaultProfile: 'quality',
-    profiles: {
-      quality: {
-        panel: [{ id: 'changed', agent: 'changed-panelist' }],
-        judge: { agent: 'changed-judge' },
+candidateTest(
+  'simultaneous RPC preflight replays freeze one profile and one native identity',
+  async (t, candidate) => {
+    const rpc = new NativeRuntime();
+    const gates: (() => void)[] = [];
+    rpc.ping = () =>
+      new Promise((resolve) => {
+        gates.push(() => resolve({ capabilities }));
+      });
+    const first = rpcHarness(t, candidate.sessionCwd, rpc);
+    const changedConfig: FusionConfig = {
+      defaultProfile: 'quality',
+      profiles: {
+        quality: {
+          panel: [{ id: 'changed', agent: 'changed-panelist' }],
+          judge: { agent: 'changed-judge' },
+        },
       },
-    },
-  };
-  const second = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
-  const third = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
-  const input = {
-    operationId: 'concurrent-preflight',
-    prompt: 'Frozen prompt',
-    profile: 'quality',
-    digest: 'frozen-caller',
-    executionLifetime: lifetime,
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.reviewedCommit,
-  };
-  const starts = [
-    first.request('start', input),
-    second.request('start', input),
-    third.request('start', input),
-  ];
-  assert.equal(gates.length, 3);
-  for (const release of gates) release();
-  for (const reply of await Promise.all(starts))
-    assert.equal(reply.success, true);
-  const run = first.store.getActiveRun();
-  assert.ok(run);
-  assert.equal(second.store.getActiveRun()?.id, run.id);
-  assert.equal(third.store.getActiveRun()?.id, run.id);
-  assert.equal(rpc.spawns.length, 1);
-  assert.equal(run.profileSnapshot?.panel[0]?.agent, 'panelist');
-  assert.equal(run.prompt, input.prompt);
-  assert.deepEqual(run.reviewContext, {
-    cwd: input.cwd,
-    reviewedCommit: input.reviewedCommit,
-  });
-  assert.equal(
-    responseData(
-      await second.request('status', { operationId: input.operationId }),
-    ).requestDigest,
-    input.digest,
-  );
-  assert.equal(
-    (await second.request('start', { ...input, prompt: 'Changed' })).success,
-    false,
-  );
-  first.dispose();
-  third.dispose();
-  rpc.statusValue = 'completed';
-  rpc.proof = proof(rpc);
-  await second.orchestrator.getStatusReport();
-  assert.equal(second.store.getLastRunSummary()?.phase, 'done');
-  assert.equal(second.store.getLastRunSummary()?.error, undefined);
-  assert.equal(rpc.spawns.length, 1);
-});
+    };
+    const second = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
+    const third = rpcHarness(t, candidate.sessionCwd, rpc, changedConfig);
+    const input = {
+      operationId: 'concurrent-preflight',
+      prompt: 'Frozen prompt',
+      profile: 'quality',
+      digest: 'frozen-caller',
+      executionLifetime: lifetime,
+      cwd: candidate.candidateCwd,
+      reviewedCommit: candidate.reviewedCommit,
+    };
+    const starts = [
+      first.request('start', input),
+      second.request('start', input),
+      third.request('start', input),
+    ];
+    assert.equal(gates.length, 3);
+    for (const release of gates) release();
+    for (const reply of await Promise.all(starts))
+      assert.equal(reply.success, true);
+    const run = first.store.getActiveRun();
+    assert.ok(run);
+    assert.equal(second.store.getActiveRun()?.id, run.id);
+    assert.equal(third.store.getActiveRun()?.id, run.id);
+    assert.equal(rpc.spawns.length, 1);
+    assert.equal(run.profileSnapshot?.panel[0]?.agent, 'panelist');
+    assert.equal(run.prompt, input.prompt);
+    assert.deepEqual(run.reviewContext, {
+      cwd: input.cwd,
+      reviewedCommit: input.reviewedCommit,
+    });
+    assert.equal(
+      responseData(
+        await second.request('status', { operationId: input.operationId }),
+      ).requestDigest,
+      input.digest,
+    );
+    assert.equal(
+      (await second.request('start', { ...input, prompt: 'Changed' })).success,
+      false,
+    );
+    first.dispose();
+    third.dispose();
+    rpc.statusValue = 'completed';
+    rpc.proof = proof(rpc);
+    await second.orchestrator.getStatusReport();
+    assert.equal(second.store.getLastRunSummary()?.phase, 'done');
+    assert.equal(second.store.getLastRunSummary()?.error, undefined);
+    assert.equal(rpc.spawns.length, 1);
+  },
+);
 
 test('cancel during restarted preflight fences simultaneous replay and late original', async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), 'fusion-restarted-cancel-'));
@@ -2205,14 +2203,26 @@ test('owned panel and direct judge close under separate native identities bound 
   }
 });
 
-function fixtureGit(args: string[]): string {
-  const environment = { ...process.env };
-  for (const name of Object.keys(environment))
-    if (name.startsWith('GIT_')) delete environment[name];
-  return execFileSync('git', args, {
-    encoding: 'utf8',
-    env: environment,
-  }).trim();
+function candidateTest(
+  title: string,
+  body: (
+    t: TestContext,
+    candidate: Awaited<ReturnType<typeof candidateRepositories>>,
+  ) => Promise<void>,
+): void {
+  describe(title, () => {
+    let candidate:
+      | Awaited<ReturnType<typeof candidateRepositories>>
+      | undefined;
+    beforeEach(async (t) => {
+      candidate = await candidateRepositories(t);
+    });
+    // Real Git operations allow 10s each; the 5s unit default is not this integration's budget.
+    test('checks the public contract', { timeout: 20_000 }, async (t) => {
+      assert.ok(candidate);
+      await body(t, candidate);
+    });
+  });
 }
 
 async function candidateRepositories(t: TestContext) {
@@ -2225,24 +2235,7 @@ async function candidateRepositories(t: TestContext) {
     [candidateCwd, 'candidate'],
   ]) {
     assert.ok(cwd && label);
-    await mkdir(cwd);
-    fixtureGit(['init', '--quiet', cwd]);
-    await writeFile(join(cwd, 'marker.txt'), label);
-    fixtureGit(['-C', cwd, 'add', 'marker.txt']);
-    fixtureGit([
-      '-C',
-      cwd,
-      '-c',
-      'user.name=Fixture',
-      '-c',
-      'user.email=fixture@example.invalid',
-      '-c',
-      'commit.gpgsign=false',
-      'commit',
-      '--quiet',
-      '-m',
-      label,
-    ]);
+    await copyGitTemplate(label, cwd);
   }
   const head = (cwd: string) => fixtureGit(['-C', cwd, 'rev-parse', 'HEAD']);
   return {
@@ -2253,211 +2246,222 @@ async function candidateRepositories(t: TestContext) {
   };
 }
 
-test('candidate context uses repository B for panel and restored judge while Pi stays in A', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const panelConfig: FusionConfig = {
-    defaultProfile: 'quality',
-    profiles: {
-      quality: {
-        panel: [
-          { id: 'one', agent: 'panelist' },
-          { id: 'two', agent: 'panelist' },
-        ],
-        judge: { agent: 'judge' },
-        concurrency: 2,
+candidateTest(
+  'candidate context uses repository B for panel and restored judge while Pi stays in A',
+  async (t, candidate) => {
+    const panelConfig: FusionConfig = {
+      defaultProfile: 'quality',
+      profiles: {
+        quality: {
+          panel: [
+            { id: 'one', agent: 'panelist' },
+            { id: 'two', agent: 'panelist' },
+          ],
+          judge: { agent: 'judge' },
+          concurrency: 2,
+        },
       },
-    },
-  };
-  class CandidateRuntime extends NativeRuntime {
-    override async spawn(params: object): Promise<unknown> {
-      const result = await super.spawn(params);
-      this.statusValue = 'running';
-      this.proof = undefined;
-      return result;
+    };
+    class CandidateRuntime extends NativeRuntime {
+      override async spawn(params: object): Promise<unknown> {
+        const result = await super.spawn(params);
+        this.statusValue = 'running';
+        this.proof = undefined;
+        return result;
+      }
+      override payload(): unknown {
+        return {
+          runId: this.runId,
+          state: this.statusValue,
+          ...(this.proof ? { processTerminalProof: this.proof } : {}),
+          results:
+            this.route === 'parallel-data'
+              ? [
+                  { agent: 'panelist', output: 'First', success: true },
+                  { agent: 'panelist', output: 'Second', success: true },
+                ]
+              : [
+                  {
+                    agent: 'judge',
+                    output:
+                      '# Fusion Report\n\n## Summary\nReviewed candidate.',
+                    success: true,
+                  },
+                ],
+        };
+      }
     }
-    override payload(): unknown {
-      return {
-        runId: this.runId,
-        state: this.statusValue,
-        ...(this.proof ? { processTerminalProof: this.proof } : {}),
-        results:
-          this.route === 'parallel-data'
-            ? [
-                { agent: 'panelist', output: 'First', success: true },
-                { agent: 'panelist', output: 'Second', success: true },
-              ]
-            : [
-                {
-                  agent: 'judge',
-                  output: '# Fusion Report\n\n## Summary\nReviewed candidate.',
-                  success: true,
-                },
-              ],
-      };
-    }
-  }
-  const rpc = new CandidateRuntime();
-  const first = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
-  const context = {
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.reviewedCommit,
-  };
-  const input = {
-    operationId: 'candidate-review',
-    digest: 'caller-candidate-digest',
-    prompt: 'Review',
-    executionLifetime: lifetime,
-    ...context,
-  };
-  assert.equal((await first.request('start', input)).success, true);
-  assert.deepEqual(first.store.getActiveRun()?.reviewContext, context);
-  const panelSpawn = rpc.spawns[0];
-  assert.ok(
-    panelSpawn &&
-      'cwd' in panelSpawn &&
-      'operationId' in panelSpawn &&
-      'digest' in panelSpawn &&
-      'worktree' in panelSpawn,
-  );
-  assert.equal(panelSpawn.cwd, candidate.candidateCwd);
-  assert.equal(panelSpawn.worktree, false);
-  const { operationId, digest, ...params } = panelSpawn;
-  assert.equal(operationId, first.store.getActiveRun()?.spawnIntent?.requestId);
-  assert.equal(digest, requestDigest({ params, reviewContext: context }));
-  const admitted: unknown = JSON.parse(
-    await readFile(
-      join(candidate.sessionCwd, 'runs', '.admissions', 'root.json'),
-      'utf8',
-    ),
-  );
-  assert.ok(
-    isRecord(admitted) &&
-      isRecord(admitted.data) &&
-      isRecord(admitted.data.spawnIntent) &&
-      isRecord(admitted.data.spawnIntent.params),
-  );
-  assert.equal(admitted.data.spawnIntent.params.worktree, false);
-  assert.equal(admitted.data.spawnIntent.requestDigest, digest);
-  assert.equal(
-    (
-      await first.request('start', {
-        ...input,
-        cwd: candidate.sessionCwd,
-        reviewedCommit: candidate.sessionCommit,
-      })
-    ).success,
-    false,
-  );
-  assert.equal(rpc.spawns.length, 1);
-  first.dispose();
-  const restored = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
-  rpc.statusValue = 'completed';
-  rpc.proof = proof(rpc);
-  await restored.orchestrator.restore(
-    new FakePi().createContext(candidate.sessionCwd),
-  );
-  assert.equal(restored.store.getActiveRun()?.phase, 'judge');
-  assert.deepEqual(restored.store.getActiveRun()?.reviewContext, context);
-  const judgeSpawn = rpc.spawns[1];
-  assert.ok(
-    judgeSpawn &&
-      'cwd' in judgeSpawn &&
-      'agent' in judgeSpawn &&
-      'worktree' in judgeSpawn &&
-      'operationId' in judgeSpawn &&
-      'digest' in judgeSpawn,
-  );
-  assert.equal(judgeSpawn.cwd, candidate.candidateCwd);
-  assert.equal(judgeSpawn.worktree, false);
-  assert.equal(judgeSpawn.agent, 'judge');
-  const {
-    operationId: _judgeId,
-    digest: judgeDigest,
-    ...judgeParams
-  } = judgeSpawn;
-  assert.equal(
-    judgeDigest,
-    requestDigest({ params: judgeParams, reviewContext: context }),
-  );
-  rpc.statusValue = 'completed';
-  rpc.proof = proof(rpc);
-  await restored.orchestrator.getStatusReport();
-  assert.equal(restored.store.getLastRunSummary()?.phase, 'done');
-  assert.deepEqual(
-    new FusionRunStore({
-      directory: join(candidate.sessionCwd, 'runs'),
-    }).getRunByOperationId(input.operationId)?.reviewContext,
-    context,
-  );
-});
+    const rpc = new CandidateRuntime();
+    const first = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
+    const context = {
+      cwd: candidate.candidateCwd,
+      reviewedCommit: candidate.reviewedCommit,
+    };
+    const input = {
+      operationId: 'candidate-review',
+      digest: 'caller-candidate-digest',
+      prompt: 'Review',
+      executionLifetime: lifetime,
+      ...context,
+    };
+    assert.equal((await first.request('start', input)).success, true);
+    assert.deepEqual(first.store.getActiveRun()?.reviewContext, context);
+    const panelSpawn = rpc.spawns[0];
+    assert.ok(
+      panelSpawn &&
+        'cwd' in panelSpawn &&
+        'operationId' in panelSpawn &&
+        'digest' in panelSpawn &&
+        'worktree' in panelSpawn,
+    );
+    assert.equal(panelSpawn.cwd, candidate.candidateCwd);
+    assert.equal(panelSpawn.worktree, false);
+    const { operationId, digest, ...params } = panelSpawn;
+    assert.equal(
+      operationId,
+      first.store.getActiveRun()?.spawnIntent?.requestId,
+    );
+    assert.equal(digest, requestDigest({ params, reviewContext: context }));
+    const admitted: unknown = JSON.parse(
+      await readFile(
+        join(candidate.sessionCwd, 'runs', '.admissions', 'root.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(
+      isRecord(admitted) &&
+        isRecord(admitted.data) &&
+        isRecord(admitted.data.spawnIntent) &&
+        isRecord(admitted.data.spawnIntent.params),
+    );
+    assert.equal(admitted.data.spawnIntent.params.worktree, false);
+    assert.equal(admitted.data.spawnIntent.requestDigest, digest);
+    assert.equal(
+      (
+        await first.request('start', {
+          ...input,
+          cwd: candidate.sessionCwd,
+          reviewedCommit: candidate.sessionCommit,
+        })
+      ).success,
+      false,
+    );
+    assert.equal(rpc.spawns.length, 1);
+    first.dispose();
+    const restored = rpcHarness(t, candidate.sessionCwd, rpc, panelConfig);
+    rpc.statusValue = 'completed';
+    rpc.proof = proof(rpc);
+    await restored.orchestrator.restore(
+      new FakePi().createContext(candidate.sessionCwd),
+    );
+    assert.equal(restored.store.getActiveRun()?.phase, 'judge');
+    assert.deepEqual(restored.store.getActiveRun()?.reviewContext, context);
+    const judgeSpawn = rpc.spawns[1];
+    assert.ok(
+      judgeSpawn &&
+        'cwd' in judgeSpawn &&
+        'agent' in judgeSpawn &&
+        'worktree' in judgeSpawn &&
+        'operationId' in judgeSpawn &&
+        'digest' in judgeSpawn,
+    );
+    assert.equal(judgeSpawn.cwd, candidate.candidateCwd);
+    assert.equal(judgeSpawn.worktree, false);
+    assert.equal(judgeSpawn.agent, 'judge');
+    const {
+      operationId: _judgeId,
+      digest: judgeDigest,
+      ...judgeParams
+    } = judgeSpawn;
+    assert.equal(
+      judgeDigest,
+      requestDigest({ params: judgeParams, reviewContext: context }),
+    );
+    rpc.statusValue = 'completed';
+    rpc.proof = proof(rpc);
+    await restored.orchestrator.getStatusReport();
+    assert.equal(restored.store.getLastRunSummary()?.phase, 'done');
+    assert.deepEqual(
+      new FusionRunStore({
+        directory: join(candidate.sessionCwd, 'runs'),
+      }).getRunByOperationId(input.operationId)?.reviewContext,
+      context,
+    );
+  },
+);
 
-test('candidate HEAD mismatch rejects before native admission and leaves cancellation available', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const fixture = rpcHarness(t, candidate.sessionCwd);
-  const operationId = 'mismatched-candidate';
-  const response = await fixture.request('start', {
-    operationId,
-    digest: 'caller-digest',
-    prompt: 'Review',
-    executionLifetime: lifetime,
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.sessionCommit,
-  });
-  assert.equal(response.success, false);
-  assert.match(JSON.stringify(response), /does not match reviewedCommit/);
-  assert.equal(fixture.rpc.spawns.length, 0);
-  assert.equal(fixture.store.getActiveRun(), undefined);
-  assert.deepEqual(
-    responseData(await fixture.request('status', { operationId })),
-    { operationId, state: 'absent', replaySafe: true },
-  );
-  assert.equal(
-    responseData(await fixture.request('cancel', { operationId })).neverStarted,
-    true,
-  );
-});
+candidateTest(
+  'candidate HEAD mismatch rejects before native admission and leaves cancellation available',
+  async (t, candidate) => {
+    const fixture = rpcHarness(t, candidate.sessionCwd);
+    const operationId = 'mismatched-candidate';
+    const response = await fixture.request('start', {
+      operationId,
+      digest: 'caller-digest',
+      prompt: 'Review',
+      executionLifetime: lifetime,
+      cwd: candidate.candidateCwd,
+      reviewedCommit: candidate.sessionCommit,
+    });
+    assert.equal(response.success, false);
+    assert.match(JSON.stringify(response), /does not match reviewedCommit/);
+    assert.equal(fixture.rpc.spawns.length, 0);
+    assert.equal(fixture.store.getActiveRun(), undefined);
+    assert.deepEqual(
+      responseData(await fixture.request('status', { operationId })),
+      { operationId, state: 'absent', replaySafe: true },
+    );
+    assert.equal(
+      responseData(await fixture.request('cancel', { operationId }))
+        .neverStarted,
+      true,
+    );
+  },
+);
 
-test('candidate HEAD drift cannot produce an accepted report and does not prevent cancellation', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const fixture = rpcHarness(t, candidate.sessionCwd);
-  await fixture.request('start', {
-    operationId: 'drifting-candidate',
-    digest: 'caller-digest',
-    prompt: 'Review',
-    executionLifetime: lifetime,
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.reviewedCommit,
-  });
-  fixtureGit([
-    '-C',
-    candidate.candidateCwd,
-    '-c',
-    'user.name=Fixture',
-    '-c',
-    'user.email=fixture@example.invalid',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '--quiet',
-    '--allow-empty',
-    '-m',
-    'changed candidate',
-  ]);
-  fixture.rpc.statusValue = 'completed';
-  fixture.rpc.proof = proof(fixture.rpc);
-  await assert.rejects(
-    fixture.orchestrator.getStatusReport(),
-    /does not match reviewedCommit/,
-  );
-  assert.equal(fixture.store.getActiveRun()?.phase, 'panel');
-  assert.equal(fixture.store.getLastRunSummary(), undefined);
-  assert.equal(fixture.rpc.spawns.length, 1);
-  const cancelled = responseData(
-    await fixture.request('cancel', { operationId: 'drifting-candidate' }),
-  );
-  assert.equal(cancelled.cancelled, true);
-  assert.equal(fixture.store.getLastRunSummary()?.phase, 'cancelled');
-});
+candidateTest(
+  'candidate HEAD drift cannot produce an accepted report and does not prevent cancellation',
+  async (t, candidate) => {
+    const fixture = rpcHarness(t, candidate.sessionCwd);
+    await fixture.request('start', {
+      operationId: 'drifting-candidate',
+      digest: 'caller-digest',
+      prompt: 'Review',
+      executionLifetime: lifetime,
+      cwd: candidate.candidateCwd,
+      reviewedCommit: candidate.reviewedCommit,
+    });
+    fixtureGit([
+      '-C',
+      candidate.candidateCwd,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '--quiet',
+      '--allow-empty',
+      '-m',
+      'changed candidate',
+    ]);
+    fixture.rpc.statusValue = 'completed';
+    fixture.rpc.proof = proof(fixture.rpc);
+    await assert.rejects(
+      fixture.orchestrator.getStatusReport(),
+      /does not match reviewedCommit/,
+    );
+    assert.equal(fixture.store.getActiveRun()?.phase, 'panel');
+    assert.equal(fixture.store.getLastRunSummary(), undefined);
+    assert.equal(fixture.rpc.spawns.length, 1);
+    const cancelled = responseData(
+      await fixture.request('cancel', { operationId: 'drifting-candidate' }),
+    );
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(fixture.store.getLastRunSummary()?.phase, 'cancelled');
+  },
+);
 
 test('review context requires a complete absolute directory and immutable commit pair', async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), 'fusion-context-validation-'));
@@ -2482,125 +2486,131 @@ test('review context requires a complete absolute directory and immutable commit
   assert.equal(fixture.rpc.spawns.length, 0);
 });
 
-test('lost-launch replay retains candidate context and native digest after restart', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const rpc = new NativeRuntime();
-  rpc.loseReply = true;
-  const first = rpcHarness(t, candidate.sessionCwd, rpc);
-  const input = {
-    operationId: 'candidate-replay',
-    digest: 'caller-digest',
-    prompt: 'Review',
-    executionLifetime: lifetime,
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.reviewedCommit,
-  };
-  assert.equal((await first.request('start', input)).success, true);
-  const original = rpc.spawns[0];
-  assert.ok(original && 'worktree' in original);
-  assert.equal(original.worktree, false);
-  first.dispose();
-  rpc.loseReply = false;
-  rpc.lookup = async () => ({
-    operationId: rpc.identity?.operationId,
-    state: 'absent',
-  });
-  const restored = rpcHarness(t, candidate.sessionCwd, rpc);
-  await restored.orchestrator.restore(
-    new FakePi().createContext(candidate.sessionCwd),
-  );
-  assert.equal(rpc.spawns.length, 2);
-  assert.deepEqual(rpc.spawns[1], original);
-  assert.deepEqual(restored.store.getActiveRun()?.reviewContext, {
-    cwd: candidate.candidateCwd,
-    reviewedCommit: candidate.reviewedCommit,
-  });
-  assert.equal(restored.store.getActiveRun()?.panelRunId, 'native-panel');
-});
-
-test('candidate verification cannot be redirected by inherited Git repository variables', async (t) => {
-  const candidate = await candidateRepositories(t);
-  const fixture = rpcHarness(t, candidate.sessionCwd);
-  const previous = process.env.GIT_DIR;
-  process.env.GIT_DIR = join(candidate.sessionCwd, '.git');
-  try {
-    const response = await fixture.request('start', {
-      operationId: 'git-environment-candidate',
+candidateTest(
+  'lost-launch replay retains candidate context and native digest after restart',
+  async (t, candidate) => {
+    const rpc = new NativeRuntime();
+    rpc.loseReply = true;
+    const first = rpcHarness(t, candidate.sessionCwd, rpc);
+    const input = {
+      operationId: 'candidate-replay',
       digest: 'caller-digest',
       prompt: 'Review',
       executionLifetime: lifetime,
       cwd: candidate.candidateCwd,
-      reviewedCommit: candidate.sessionCommit,
+      reviewedCommit: candidate.reviewedCommit,
+    };
+    assert.equal((await first.request('start', input)).success, true);
+    const original = rpc.spawns[0];
+    assert.ok(original && 'worktree' in original);
+    assert.equal(original.worktree, false);
+    first.dispose();
+    rpc.loseReply = false;
+    rpc.lookup = async () => ({
+      operationId: rpc.identity?.operationId,
+      state: 'absent',
     });
-    assert.equal(response.success, false);
-    assert.match(JSON.stringify(response), /does not match reviewedCommit/);
-    assert.equal(fixture.rpc.spawns.length, 0);
-  } finally {
-    if (previous === undefined) delete process.env.GIT_DIR;
-    else process.env.GIT_DIR = previous;
-  }
-});
+    const restored = rpcHarness(t, candidate.sessionCwd, rpc);
+    await restored.orchestrator.restore(
+      new FakePi().createContext(candidate.sessionCwd),
+    );
+    assert.equal(rpc.spawns.length, 2);
+    assert.deepEqual(rpc.spawns[1], original);
+    assert.deepEqual(restored.store.getActiveRun()?.reviewContext, {
+      cwd: candidate.candidateCwd,
+      reviewedCommit: candidate.reviewedCommit,
+    });
+    assert.equal(restored.store.getActiveRun()?.panelRunId, 'native-panel');
+  },
+);
 
-test('fixture Git commands isolate inherited hook selectors from a disposable sentinel repository', async (t) => {
-  const sentinel = await candidateRepositories(t);
-  const sentinelGitDir = join(sentinel.sessionCwd, '.git');
-  const beforeHead = fixtureGit([
-    '-C',
-    sentinel.sessionCwd,
-    'rev-parse',
-    'HEAD',
-  ]);
-  const beforeRefs = fixtureGit([
-    '-C',
-    sentinel.sessionCwd,
-    'show-ref',
-    '--heads',
-  ]);
-  const beforeConfig = await readFile(join(sentinelGitDir, 'config'));
-  const beforeIndex = await readFile(join(sentinelGitDir, 'index'));
-  const originalGitEnvironment = Object.entries(process.env).filter(([name]) =>
-    name.startsWith('GIT_'),
-  );
-  const injected = {
-    GIT_DIR: sentinelGitDir,
-    GIT_WORK_TREE: sentinel.sessionCwd,
-    GIT_COMMON_DIR: sentinelGitDir,
-    GIT_INDEX_FILE: join(sentinelGitDir, 'index'),
-    GIT_OBJECT_DIRECTORY: join(sentinelGitDir, 'objects'),
-    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(sentinelGitDir, 'objects'),
-    GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: 'core.bare',
-    GIT_CONFIG_VALUE_0: 'true',
-    GIT_CONFIG_PARAMETERS: "'core.bare=true'",
-  };
-  Object.assign(process.env, injected);
-  try {
-    const isolated = await candidateRepositories(t);
-    assert.notEqual(isolated.sessionCommit, isolated.reviewedCommit);
-    assert.equal(
-      fixtureGit(['-C', sentinel.sessionCwd, 'rev-parse', 'HEAD']),
-      beforeHead,
+candidateTest(
+  'candidate verification cannot be redirected by inherited Git repository variables',
+  async (t, candidate) => {
+    const fixture = rpcHarness(t, candidate.sessionCwd);
+    const previous = process.env.GIT_DIR;
+    process.env.GIT_DIR = join(candidate.sessionCwd, '.git');
+    try {
+      const response = await fixture.request('start', {
+        operationId: 'git-environment-candidate',
+        digest: 'caller-digest',
+        prompt: 'Review',
+        executionLifetime: lifetime,
+        cwd: candidate.candidateCwd,
+        reviewedCommit: candidate.sessionCommit,
+      });
+      assert.equal(response.success, false);
+      assert.match(JSON.stringify(response), /does not match reviewedCommit/);
+      assert.equal(fixture.rpc.spawns.length, 0);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previous;
+    }
+  },
+);
+
+candidateTest(
+  'fixture Git commands isolate inherited hook selectors from a disposable sentinel repository',
+  async (t, sentinel) => {
+    const sentinelGitDir = join(sentinel.sessionCwd, '.git');
+    const beforeHead = fixtureGit([
+      '-C',
+      sentinel.sessionCwd,
+      'rev-parse',
+      'HEAD',
+    ]);
+    const beforeRefs = fixtureGit([
+      '-C',
+      sentinel.sessionCwd,
+      'show-ref',
+      '--heads',
+    ]);
+    const beforeConfig = await readFile(join(sentinelGitDir, 'config'));
+    const beforeIndex = await readFile(join(sentinelGitDir, 'index'));
+    const originalGitEnvironment = Object.entries(process.env).filter(
+      ([name]) => name.startsWith('GIT_'),
     );
-    assert.equal(
-      fixtureGit(['-C', sentinel.sessionCwd, 'show-ref', '--heads']),
-      beforeRefs,
-    );
-    assert.deepEqual(
-      await readFile(join(sentinelGitDir, 'config')),
-      beforeConfig,
-    );
-    assert.deepEqual(
-      await readFile(join(sentinelGitDir, 'index')),
-      beforeIndex,
-    );
-    assert.equal(
-      fixtureGit(['-C', sentinel.sessionCwd, 'status', '--short']),
-      '',
-    );
-  } finally {
-    for (const name of Object.keys(process.env))
-      if (name.startsWith('GIT_')) delete process.env[name];
-    for (const [name, value] of originalGitEnvironment)
-      if (value !== undefined) process.env[name] = value;
-  }
-});
+    const injected = {
+      GIT_DIR: sentinelGitDir,
+      GIT_WORK_TREE: sentinel.sessionCwd,
+      GIT_COMMON_DIR: sentinelGitDir,
+      GIT_INDEX_FILE: join(sentinelGitDir, 'index'),
+      GIT_OBJECT_DIRECTORY: join(sentinelGitDir, 'objects'),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(sentinelGitDir, 'objects'),
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.bare',
+      GIT_CONFIG_VALUE_0: 'true',
+      GIT_CONFIG_PARAMETERS: "'core.bare=true'",
+    };
+    Object.assign(process.env, injected);
+    try {
+      const isolated = await candidateRepositories(t);
+      assert.notEqual(isolated.sessionCommit, isolated.reviewedCommit);
+      assert.equal(
+        fixtureGit(['-C', sentinel.sessionCwd, 'rev-parse', 'HEAD']),
+        beforeHead,
+      );
+      assert.equal(
+        fixtureGit(['-C', sentinel.sessionCwd, 'show-ref', '--heads']),
+        beforeRefs,
+      );
+      assert.deepEqual(
+        await readFile(join(sentinelGitDir, 'config')),
+        beforeConfig,
+      );
+      assert.deepEqual(
+        await readFile(join(sentinelGitDir, 'index')),
+        beforeIndex,
+      );
+      assert.equal(
+        fixtureGit(['-C', sentinel.sessionCwd, 'status', '--short']),
+        '',
+      );
+    } finally {
+      for (const name of Object.keys(process.env))
+        if (name.startsWith('GIT_')) delete process.env[name];
+      for (const [name, value] of originalGitEnvironment)
+        if (value !== undefined) process.env[name] = value;
+    }
+  },
+);

@@ -178,6 +178,7 @@ export interface RunUsage {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  costSource?: 'provider' | 'estimate';
 }
 
 export interface ModelAttempt {
@@ -195,6 +196,7 @@ export interface ProviderFailure {
 
 export interface RunObservation {
   model?: string;
+  thinking?: ThinkingLevel;
   durationMs?: number;
   usage?: RunUsage;
   attempts?: ModelAttempt[];
@@ -327,7 +329,7 @@ export interface FusionRun {
   /** Native stop acceptance, never proof of process exit. */
   cancellationDelivery?: FusionCancellationDelivery;
   /** Nonterminal quarantine: native work may survive; never replay automatically. */
-  recoveryRequired?: 'runtime-replaced' | 'launch-unknown';
+  recoveryRequired?: 'runtime-replaced' | 'owner-exited' | 'launch-unknown';
   completionWakeSessionId?: string;
   failureKind?: WorkflowFailureKind;
   reviewContext?: FusionReviewContext;

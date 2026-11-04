@@ -86,8 +86,37 @@ export default function compatibilityFixture(pi: ExtensionAPI): void {
         assert.ok(isRecord(missing.error));
         assert.equal(missing.error.code, 'not_found');
         report.nativeStopRejections = [stopped.error.code, missing.error.code];
+        let strictSpawns = 0;
+        const unsubscribeSpawn = pi.events.on(
+          'subagents:rpc:v1:request',
+          (payload: unknown) => {
+            if (isRecord(payload) && payload.method === 'spawn') strictSpawns++;
+          },
+        );
+        try {
+          const strict = await request('fusion:rpc:v1', 'start', {
+            operationId: 'smoke-unsupported-lifetime',
+            prompt: 'FUSION_COMPATIBILITY_FIXTURE',
+            executionLifetime: { mode: 'unbounded' },
+          });
+          assert.equal(strict.success, false, JSON.stringify(strict));
+          assert.ok(isRecord(strict.error));
+          assert.equal(strict.error.code, 'start_failed');
+          assert.match(String(strict.error.message), /does not support/);
+          assert.equal(strictSpawns, 0);
+          report.unsupportedLifetimeRejected = true;
+        } finally {
+          unsubscribeSpawn();
+        }
         const runs: unknown[] = [];
-        for (const profile of ['select', 'merge', 'single', 'refill']) {
+        for (const profile of [
+          'select',
+          'merge',
+          'single',
+          'refill',
+          'web',
+          'web-missing',
+        ]) {
           const params = {
             operationId: `smoke-${profile}`,
             profile,
@@ -112,8 +141,32 @@ export default function compatibilityFixture(pi: ExtensionAPI): void {
               isRecord(reply.data.run) &&
               reply.data.run.terminal
             ) {
-              assert.equal(reply.data.run.phase, 'done', JSON.stringify(reply));
-              assert.match(String(reply.data.run.report), /FIXTURE_OK/);
+              assert.equal(
+                reply.data.run.phase,
+                profile === 'web-missing' ? 'failed' : 'done',
+                JSON.stringify(reply),
+              );
+              if (profile === 'web-missing') {
+                assert.match(
+                  String(reply.data.run.report),
+                  /unavailable child tools/,
+                );
+                runs.push({ profile, phase: reply.data.run.phase });
+                done = true;
+                break;
+              }
+              const finalReport = String(reply.data.run.report);
+              assert.match(finalReport, /FIXTURE_OK/);
+              assert.match(
+                finalReport,
+                new RegExp(
+                  `${profile === 'merge' ? 'COMPOSER' : profile === 'single' || profile === 'web' ? 'PANEL' : 'JUDGE'}_FINAL_END`,
+                ),
+              );
+              assert.doesNotMatch(
+                finalReport,
+                /Workflow completed with|Return: \{/,
+              );
               if (profile === 'refill') {
                 assert.match(
                   String(reply.data.run.report),

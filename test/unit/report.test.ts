@@ -156,9 +156,12 @@ test('renderJudgeReport renders deterministic success sections', () => {
       '- Failed panelists: 0',
       '- Architect: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Tester: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Judge: succeeded',
+      '  Configured model: inherited from native agent/defaults',
       '',
       '## Consensus',
       'Both panelists prefer A.',
@@ -239,7 +242,7 @@ test('renderJudgeReport includes readable per-panel and judge run details', () =
   assert.match(report, /Architect.*ollama\/qwen.*1\.2s/);
   assert.match(report, /Tester.*openai\/gpt-mini.*2\.3s/);
   assert.match(report, /Judge.*anthropic\/claude-haiku.*0\.8s/);
-  assert.match(report, /Total estimated cost: \$0\.0300/);
+  assert.match(report, /Total cost \(provenance unknown\): \$0\.0300/);
   assert.match(report, /openai\/gpt-mini.*retry.*x2/);
 });
 
@@ -288,7 +291,7 @@ test('renderJudgeReport marks totals unknown when any execution lacks telemetry'
   assert.match(report, /Tester \(completed\): model unknown/);
   assert.match(report, /Total input tokens: unknown/);
   assert.match(report, /Total output tokens: unknown/);
-  assert.match(report, /Total estimated cost: unknown/);
+  assert.match(report, /Total cost \(provenance unknown\): unknown/);
 });
 
 test('renderJudgeReport shows partial success and timed-out panelists', () => {
@@ -312,11 +315,14 @@ test('renderJudgeReport shows partial success and timed-out panelists', () => {
       '- Failed panelists: 1',
       '- Architect: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Tester: failed - Timed out',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '  Artifact: /tmp/tester.md',
       '  Session: /tmp/tester.jsonl',
       '- Judge: succeeded',
+      '  Configured model: inherited from native agent/defaults',
       '',
       '## Consensus',
       'Not specified by the judge.',
@@ -375,11 +381,14 @@ test('renderSinglePanelReport renders the single result with required sections',
       '- Failed panelists: 1',
       '- Architect: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Tester: failed - Timed out',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '  Artifact: /tmp/tester.md',
       '  Session: /tmp/tester.jsonl',
       '- Judge: skipped - one successful panelist',
+      '  Configured model: inherited from native agent/defaults',
       '',
       '## Consensus',
       'Only one panelist succeeded; no cross-panel consensus was available.',
@@ -437,13 +446,16 @@ test('renderPanelFailureReport renders all-panel failure', () => {
       '- Failed panelists: 2',
       '- Architect: failed - Timed out',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '  Artifact: /tmp/tester.md',
       '  Session: /tmp/tester.jsonl',
       '- Tester: failed - Timed out',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '  Artifact: /tmp/tester.md',
       '  Session: /tmp/tester.jsonl',
       '- Judge: not run - no successful panelists',
+      '  Configured model: inherited from native agent/defaults',
       '',
       '## Consensus',
       'No consensus was available because all panelists failed.',
@@ -499,9 +511,12 @@ test('renderFailureReport renders judge failure with panel status', () => {
       '- Failed panelists: 0',
       '- Architect: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Tester: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Judge: failed - Judge failed',
+      '  Configured model: inherited from native agent/defaults',
       '- Phase: judge',
       '',
       '## Consensus',
@@ -560,11 +575,14 @@ test('renderCancelledReport renders cancellation details', () => {
       '- Failed panelists: 1',
       '- Architect: succeeded',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '- Tester: failed - Timed out',
       '  Agent: panel-agent',
+      '  Model selection: inherited from native agent/defaults; observed model unknown',
       '  Artifact: /tmp/tester.md',
       '  Session: /tmp/tester.jsonl',
       '- Judge: cancelled or not completed',
+      '  Configured model: inherited from native agent/defaults',
       '- Phase: judge',
       '- Cancellation method: interrupt',
       '- Target run: judge-1',

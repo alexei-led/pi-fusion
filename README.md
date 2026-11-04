@@ -11,6 +11,8 @@
 It sends one prompt to a small panel of models that run in parallel.
 A judge agent then compares the answers and returns the best realistic one.
 
+Defaults are three independent role-based reviews, not necessarily three different models. Native agent/default model selection is inherited. Configure distinct models when you want model diversity.
+
 CI covers lint, typecheck, unit tests, integration tests, package smoke tests,
 and `npm pack --dry-run`.
 
@@ -141,8 +143,9 @@ Do not use it for trivial edits, formatting, or obvious one-step fixes.
 /fusion -p <name> <prompt>
 /fusion status
 /fusion stop
-/fusion continue <fusion-run-id> <panelist-number>
-/fusion finish <fusion-run-id> <panelist-number>
+/fusion doctor
+/fusion deadline continue|finish <fusion-run-id> <panelist-number>
+/fusion -- <literal prompt>
 /fusion init
 ```
 
@@ -183,9 +186,9 @@ Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 
 Requirements:
 
-- Pi 1.0.2 or later in the 1.x series
+- Pi 1.5 or later in the 1.x series
 - Node.js 22.19+
-- `pi-subagents` 0.76.1 (checked RPC contract). See the [compatibility notes](./docs/user-guide.md#runtime-compatibility).
+- `pi-subagents` 0.84.x (checked RPC contract). See the [compatibility and recovery notes](./docs/user-guide.md#runtime-compatibility).
 
 ```bash
 pi install npm:pi-subagents
@@ -196,8 +199,12 @@ Optional. Only needed if a panel member uses the `fusion-panelist-web` or
 `fusion-panelist-full` agent:
 
 ```bash
-pi install npm:pi-web-providers
+pi install npm:webfox
 ```
+
+Configure Webfox defaults for every web tool the chosen agent declares; installation alone is not enough. See [web setup and migration](./docs/user-guide.md#web-setup-and-migration).
+
+Before using Fusion with pi-subagents 0.84, set `autoResume: false` in the [upstream configuration](https://github.com/nicobailon/pi-subagents/blob/v0.84.0/docs/configuration.md#autoresume). Native automatic resumption can create run IDs Fusion does not track. This setting affects all subagent workflows, not just Fusion.
 
 Restart Pi after upgrading Pi or pi-subagents. For a Fusion-only code reload:
 
@@ -212,12 +219,14 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - Bare `/fusion` shows a short command summary.
 - Config is optional. Defaults work. Use `/fusion init` when you want project config.
 - Project config lives at `.pi/fusion.json`. Global config lives at `~/.pi/agent/fusion.json`.
-- Output appears as a Pi custom message. Active progress also uses the `fusion` status key.
+- Reports use a compact expandable Pi custom message. The full report and controller output stay unchanged. Active progress uses only the `fusion` status key and distinguishes queued, waiting, unknown, partial and stopping work.
 - Active runs are reconciled from `pi-subagents` lifecycle artifacts, not only completion events. Verified panel outputs survive a panel deadline; unavailable perspectives and timeout failures are disclosed in a partial report when quorum is not met or coverage is incomplete.
 - Normal panels refill free concurrency slots immediately. Agreement-stopping panels retain quorum-sized rounds. Default panel time covers effective execution waves, including the agreement quorum cap; explicit deadlines remain hard caps.
 - Optional `panelistSoftTimeoutMs` asks the parent for a deadline decision. The parent can approve one continuation within the existing hard budget or ask for current findings. No reply within one minute requests finalization. Fusion reserves one minute to finalize, never revives children or extends hard deadlines, and cannot guarantee a final answer from an unresponsive provider.
 - Incomplete terminal snapshots get a bounded five-second reconciliation window. Late errors are retained; at a confirmed workflow deadline, genuinely absent slots become explicit failures instead of discarding successful answers.
 - Unknown launch outcomes and runtime replacement preserve active admission in recovery quarantine. There is no automatic replay or release. Native `execution_failed` can also quarantine a definite capacity/configuration rejection; this fail-closed limitation is accepted for 0.12.0. See the [recovery rules](./docs/user-guide.md#recovery-required) before stopping or retrying.
+- `/fusion doctor` reports advertised capabilities, recovery configuration, inherited model selection and web setup limits without starting model work.
+- `/fusion stop` keeps admission until exact native tracked-run retirement is observed; stop delivery alone is not completion. It does not fall back to resumable interrupt. Native `writer-close-unverified` can leave cancellation pending indefinitely; the reason is exposed and there is no automatic reset.
 - `wakeOnCompletion` controls Fusion's final-report wake only. Native pi-subagents completion notices can still wake the parent, including RPC-controlled runs.
 - `pi-fusion` does not own the footer.
 - Fusion sends your prompt and any inspected snippets to every panel model, and to the judge, through `pi-subagents`.
@@ -225,10 +234,11 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - `Model` is lifecycle metadata. `Configured model` is the profile request. Both appear when the run differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, initially executes only the configured synthesis quorum (not always two) so it can avoid starting later work, records skipped panelists in the report, and still runs the judge. It cannot be combined with an exact caller output contract.
 - Panel answers reach the judge in an order seeded from the run id, not in config order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
-- Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
+- Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires configured Webfox tools (or legacy `pi-web-providers`). Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
 - `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
-- `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in, it voids the read-only property the other agents have, and it is unsafe at `concurrency > 1` because panelists share one working directory.
+- `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in and requires `concurrency: 1`; concurrent use is rejected before child launch. Custom agents remain the operator's responsibility.
+- Project trust is required before Fusion launches reviews or restores project-owned snapshots.
 
 ## Read more
 

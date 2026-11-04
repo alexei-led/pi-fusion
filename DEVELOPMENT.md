@@ -17,21 +17,35 @@ Restart Pi after updating upstream packages. For a Fusion-only code reload:
 
 ## Runtime behavior
 
-Development checks pin Pi `1.0.4` and pi-subagents `0.76.1`; the Pi peer range
-remains `^1.0.2`. Neither upstream package is imported through private runtime
-modules. Fusion communicates with pi-subagents only through event-bus RPC.
+Development ranges are Pi `^1.5` and pi-subagents `^0.84`; the lockfile records
+the exact tested dependency tree. The Pi peer range is `^1.5`. Neither upstream
+package is imported through private runtime modules. Fusion communicates with
+pi-subagents only through event-bus RPC. Pi supplies TypeBox and the `^1.5`
+TUI peer used by the native report renderer. No private Pi or subagent imports.
+
+For pre-1.0 pi-subagents, `^0.84` stops before the next minor, `0.85`.
+Test a new minor before widening that range. Pi 2.x is likewise not claimed.
+Keep `@types/node` on the Node 24 line rather than admitting Node 26-only APIs;
+the runtime minimum remains Node 22.19. See the
+[dependency review](./docs/reviews/dependency-compatibility.md) for evidence,
+recommendations, and lifecycle coverage gaps.
 
 The SDK smoke test disables model network refresh. The upstream E2E test loads
 both real extensions in a separate Pi process, with an isolated home and agent
 directory and a localhost fake model provider. It checks the public RPC validator,
 select/merge/single-member runs, rolling refill after authentication failure,
-native stop rejection codes, operation replay, and clean host shutdown.
+native stop rejection codes, operation replay, full outputs beyond the native
+2,000-character preview, rejection of unsupported strict lifetime requests before
+native spawn, configured Webfox tool calls inside native children, explicit
+missing-tool failures, and clean host shutdown.
 It does not read personal credentials or call a paid model. Native completion
 wakes are observed as an upstream limitation, not mistaken for Fusion wakes.
 
 - Uses `pi-subagents` over its event-bus RPC channel.
 - New runs use one async parallel panel run followed by a standalone judge run; restored legacy chain runs remain supported.
-- Completion recovery reads `pi-subagents` lifecycle artifacts. A matching completion event treats its result payload as terminal; status polling alone requires a terminal lifecycle state.
+- Completion recovery keeps matching event evidence across native result consumption and reads narrow retained workflow values. Explicit running workflow state outranks a temporarily settled rolling child roster.
+- Ordinary cancellation persists intent and exact delivery, then waits for native tracked-run retirement proof. It is not a kernel containment guarantee.
+- Native `owner-exited` and `runtime-replaced` preserve admission in quarantine; Fusion never adopts or replays successor runs automatically.
 - Publishes only the `fusion` status key.
 - Bundled panel agents are read-only by default.
 - Does not replace the Pi footer.
@@ -55,10 +69,10 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm run check` runs Biome and the TypeScript compiler. Biome is not
-type-aware: the type-checked ESLint rules the previous setup enforced
-(`no-unsafe-*`, `restrict-template-expressions`, `unbound-method`, and
-similar) are intentionally dropped and `tsc` does not replace them. Keep
+`npm run check` runs Biome and the TypeScript compiler. Biome does not
+replace the previous type-checked ESLint rule set (`no-unsafe-*`,
+`restrict-template-expressions`, `unbound-method`, and similar).
+Those rules remain dropped, and `tsc` does not replace them. Keep
 those patterns out by review until a type-aware linter returns. `npm test`
 runs the whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
 scripts remain available for focused runs. `npm run test:all` runs the full
@@ -68,6 +82,34 @@ Git hygiene:
 
 - `pre-commit`: whitespace/conflict check, staged Biome check, staged gitleaks scan
 - `pre-push`: full `npm run test:all`
+
+### Real Pi TUI validation
+
+Run `node scripts/validate-pi.ts` in a dedicated agterm session. It launches the
+real installed Pi and pi-subagents with candidate Fusion code and a localhost
+model fixture. It uses isolated HOME/agent/session/config directories, no
+personal credentials, and no paid provider. The printed fixture root retains
+evidence. To reopen it, pass that root as the first argument; the second optional
+argument is `regular` or `fullscreen` (default). Do not reopen while its old host
+is alive.
+
+Exercise `/fusion doctor`, command/profile completion, select/merge/partial,
+configured expand key, narrow/wide resize, `SLOW_FIXTURE` plus stop, and reload
+while work is active. `ui-events.jsonl` records native hook types without prompt
+or credential content. A reload/crash should hold admission, not replay work.
+Keep the quarantine record; do not delete snapshots to make the check pass.
+
+The test global setup compiles process workers once against the installed tree,
+prepares disposable Git templates, and isolates native configuration. Worker
+teardown owns close/exit; loader aliases and personal state are not inherited.
+Git repository setup runs in setup hooks, outside behavioral test time limits.
+Git-context integration cases have a 20-second harness budget because each real
+Git verification already has a 10-second operation cap; unit tests keep their
+five-second default. This does not change Fusion's execution deadlines.
+Two Vitest workers limit overlapping native-host imports and filesystem work;
+no behavior assertions or runtime deadlines are disabled. CI checks locked Node
+22.19/24 plus latest-allowed dependencies on Node 24. A future breaking version
+needs a separate contract review; it is not silently admitted.
 
 ## Release
 

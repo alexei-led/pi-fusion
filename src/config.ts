@@ -36,8 +36,9 @@ export {
 
 /**
  * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
- * tools contributed by `pi-web-providers`. A name outside this set resolves to
- * nothing at runtime, so a typo is only discovered after a panel run is spent.
+ * tools contributed by Webfox (or legacy `pi-web-providers`). A name outside
+ * this set resolves to nothing at runtime, so a typo is only discovered after
+ * a panel run is spent.
  * Single source of truth for `test/unit/agents.test.ts`.
  */
 export const KNOWN_TOOL_NAMES: readonly string[] = [
@@ -94,27 +95,23 @@ export function createDefaultFusionConfig(): FusionConfig {
             id: 'architect',
             label: 'Architect',
             agent: PANEL_AGENT,
-            thinking: 'high',
             role: 'architecture, tradeoffs, and failure modes',
           },
           {
             id: 'implementer',
             label: 'Implementer',
             agent: PANEL_AGENT,
-            thinking: 'medium',
             role: 'implementation details, API contracts, and edge cases',
           },
           {
             id: 'tester',
             label: 'Tester',
             agent: PANEL_AGENT,
-            thinking: 'medium',
             role: 'test strategy, regressions, and verification',
           },
         ],
         judge: {
           agent: JUDGE_AGENT,
-          thinking: 'high',
         },
         concurrency: 3,
         panelTimeoutMs: 900_000,

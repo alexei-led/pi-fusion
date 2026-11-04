@@ -20,8 +20,9 @@ const FUSION_HELP = [
   '/fusion --judge <agent>[:<model>[:<level>]] <prompt>',
   '/fusion status',
   '/fusion stop',
-  '/fusion continue <fusion-run-id> <panelist-number>',
-  '/fusion finish <fusion-run-id> <panelist-number>',
+  '/fusion deadline continue|finish <fusion-run-id> <panelist-number>',
+  '/fusion doctor',
+  '/fusion -- <literal prompt>',
   '/fusion init',
 ].join('\n');
 
@@ -31,6 +32,8 @@ export interface FusionRuntimeCommandHandler {
     ctx: ExtensionCommandContext,
   ): Promise<unknown>;
   showStatus(ctx: ExtensionCommandContext): Promise<unknown>;
+  showDoctor?(ctx: ExtensionCommandContext): Promise<unknown>;
+  getProfileNames?(): Promise<readonly string[]>;
   cancelActiveRun(ctx: ExtensionCommandContext): Promise<unknown>;
   resolvePanelDeadline?(
     runId: string,
@@ -44,16 +47,57 @@ export function registerFusionCommands(
   handler: FusionRuntimeCommandHandler,
 ): void {
   pi.registerCommand('fusion', {
-    description: 'Run a fusion review, or use status/stop/init',
+    description: 'Run a fusion review, or use status/stop/doctor/init',
+    getArgumentCompletions: async (prefix) => {
+      try {
+        const profile = prefix.match(/^((?:--profile|-p)(?:=|\s+))([^\s]*)$/);
+        if (profile) {
+          const names = (await handler.getProfileNames?.()) ?? [];
+          const items = names
+            .filter((name) => name.startsWith(profile[2] ?? ''))
+            .map((name) => ({
+              value: `${profile[1]}${/[\s"'\\]/.test(name) ? JSON.stringify(name) : name}`,
+              label: name,
+            }));
+          return items.length && !items.some((item) => item.value === prefix)
+            ? items
+            : null;
+        }
+        const items = [
+          'status',
+          'stop',
+          'doctor',
+          'init',
+          'deadline continue',
+          'deadline finish',
+          '--profile',
+          '--panel',
+          '--judge',
+          '--',
+        ]
+          .filter((value) => value.startsWith(prefix))
+          .map((value) => ({ value, label: value }));
+        return items.length && !items.some((item) => item.value === prefix)
+          ? items
+          : null;
+      } catch {
+        return null;
+      }
+    },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       if (args.trim() === '') {
         ctx.ui.notify(FUSION_HELP, 'info');
         return;
       }
 
-      const decision = args
-        .trim()
-        .match(/^(continue|finish)\s+(\S+)\s+([1-9]\d*)$/);
+      const trimmed = args.trim();
+      if (trimmed === 'doctor' && handler.showDoctor) {
+        await handler.showDoctor(ctx);
+        return;
+      }
+      const decision = trimmed.match(
+        /^(?:deadline\s+)?(continue|finish)\s+(\S+)\s+([1-9]\d*)$/,
+      );
       const [, action, runId, panelistNumber] = decision ?? [];
       if (action && runId && panelistNumber && handler.resolvePanelDeadline) {
         try {
@@ -74,9 +118,12 @@ export function registerFusionCommands(
         }
         return;
       }
-      if (/^(continue|finish)(?:\s|$)/.test(args.trim())) {
+      if (
+        /^deadline(?:\s|$)/.test(trimmed) ||
+        /^(continue|finish)\s+\S+\s+[+-]?\d+\s*$/.test(trimmed)
+      ) {
         ctx.ui.notify(
-          'Use /fusion continue|finish <fusion-run-id> <panelist-number>.',
+          'Use /fusion deadline continue|finish <fusion-run-id> <panelist-number>.',
           'error',
         );
         return;

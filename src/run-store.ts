@@ -1056,6 +1056,7 @@ function isFusionRunState(value: unknown): value is FusionRun {
   if (
     value.recoveryRequired !== undefined &&
     value.recoveryRequired !== 'runtime-replaced' &&
+    value.recoveryRequired !== 'owner-exited' &&
     value.recoveryRequired !== 'launch-unknown'
   )
     return false;
@@ -1678,6 +1679,7 @@ function clonePanelFailures(
 function cloneObservation(observation: RunObservation): RunObservation {
   return {
     ...(observation.model ? { model: observation.model } : {}),
+    ...(observation.thinking ? { thinking: observation.thinking } : {}),
     ...(observation.durationMs !== undefined
       ? { durationMs: observation.durationMs }
       : {}),
@@ -1703,6 +1705,8 @@ function isRunObservation(value: unknown): value is RunObservation {
   if (!isRecord(value)) return false;
   if (value.model !== undefined && typeof value.model !== 'string')
     return false;
+  if (value.thinking !== undefined && !isThinkingLevel(value.thinking))
+    return false;
   if (value.durationMs !== undefined && !isFiniteNumber(value.durationMs)) {
     return false;
   }
@@ -1722,7 +1726,10 @@ function isRunUsage(value: unknown): value is RunUsage {
   return (
     (value.inputTokens === undefined || isFiniteNumber(value.inputTokens)) &&
     (value.outputTokens === undefined || isFiniteNumber(value.outputTokens)) &&
-    (value.costUsd === undefined || isFiniteNumber(value.costUsd))
+    (value.costUsd === undefined || isFiniteNumber(value.costUsd)) &&
+    (value.costSource === undefined ||
+      value.costSource === 'provider' ||
+      value.costSource === 'estimate')
   );
 }
 

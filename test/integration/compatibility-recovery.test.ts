@@ -72,42 +72,47 @@ test('ordinary workflow identity and exact request survive durable reload', asyn
   assert.ok(restored?.spawnIntent?.requestId);
 });
 
-for (const stage of ['panel', 'judge', 'chain'] as const) {
-  test(`runtime-replaced ${stage} holds admission across restart without replay`, async (t) => {
-    const f = await fixture(t);
-    const run = f.store.startRun({
-      prompt: 'review',
-      profileName: 'quality',
-      phase: stage,
+for (const cause of ['runtime-replaced', 'owner-exited'] as const) {
+  for (const stage of ['panel', 'judge', 'chain'] as const) {
+    test(`${cause} ${stage} holds admission across restart without replay`, async (t) => {
+      const f = await fixture(t);
+      const run = f.store.startRun({
+        prompt: 'review',
+        profileName: 'quality',
+        phase: stage,
+      });
+      f.store.updateRun(
+        run.id,
+        stage === 'judge'
+          ? { judgeRunId: 'old-native' }
+          : stage === 'chain'
+            ? { chainRunId: 'old-native' }
+            : { panelRunId: 'old-native' },
+      );
+      f.status.set('old-native', {
+        runId: 'old-native',
+        mode: 'workflow',
+        state: 'stopped',
+        workflow: { stopCause: cause },
+        steps: [{ agent: 'panel-1', runId: 'still-alive', status: 'running' }],
+      });
+      await f.orchestrator.restore(f.ctx);
+      assert.equal(f.store.getActiveRun()?.recoveryRequired, cause);
+      const restored = new FusionRunStore({ directory: f.directory });
+      assert.equal(restored.getActiveRun()?.recoveryRequired, cause);
+      assert.equal(
+        (await f.orchestrator.startRun('new review', f.ctx)).status,
+        'conflict',
+      );
+      await f.orchestrator.cancelActiveRun(f.ctx);
+      assert.ok(f.store.getActiveRun());
+      assert.equal(f.spawns.length, 0);
+      assert.match(
+        await f.orchestrator.getStatusReport(),
+        /recovery required/i,
+      );
     });
-    f.store.updateRun(
-      run.id,
-      stage === 'judge'
-        ? { judgeRunId: 'old-native' }
-        : stage === 'chain'
-          ? { chainRunId: 'old-native' }
-          : { panelRunId: 'old-native' },
-    );
-    f.status.set('old-native', {
-      runId: 'old-native',
-      mode: 'workflow',
-      state: 'stopped',
-      workflow: { stopCause: 'runtime-replaced' },
-      steps: [{ agent: 'panel-1', runId: 'still-alive', status: 'running' }],
-    });
-    await f.orchestrator.restore(f.ctx);
-    assert.equal(f.store.getActiveRun()?.recoveryRequired, 'runtime-replaced');
-    const restored = new FusionRunStore({ directory: f.directory });
-    assert.equal(restored.getActiveRun()?.recoveryRequired, 'runtime-replaced');
-    assert.equal(
-      (await f.orchestrator.startRun('new review', f.ctx)).status,
-      'conflict',
-    );
-    await f.orchestrator.cancelActiveRun(f.ctx);
-    assert.ok(f.store.getActiveRun());
-    assert.equal(f.spawns.length, 0);
-    assert.match(await f.orchestrator.getStatusReport(), /recovery required/i);
-  });
+  }
 }
 
 test('generic execution_failed cannot prove no-start even for a capacity rejection message', async (t) => {

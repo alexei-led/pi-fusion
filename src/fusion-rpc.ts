@@ -735,7 +735,7 @@ function findRun(
       const run = store.getRunById(operation.runId);
       if (run) return run;
     }
-    if (operation?.pending) {
+    if (operation?.pending !== undefined) {
       const active = store.getActiveRun();
       if (active?.operationId === params.operationId) return active;
       throw new RpcFailure({

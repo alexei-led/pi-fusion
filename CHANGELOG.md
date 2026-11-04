@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.0 - 2026-11-04
+
+### Changes
+
+- Preserve complete panel and synthesis evidence when pi-subagents consumes result files. Read retained native workflow returns, keep matching completion events, and give missing synthesis output a bounded reconciliation window.
+- Keep explicitly running workflows active while rolling children settle; a finished child roster no longer closes the whole panel.
+- Keep cancellation pending until exact native tracked-run retirement is observed. A stop receipt is not exit proof, and stop errors no longer fall back to resumable interrupt.
+- Quarantine both runtime replacement and owner exit without replay or automatic adoption.
+- Add compact expandable reports, queued/waiting/unknown progress, profile and command completion, and `/fusion doctor`. Use `/fusion -- <prompt>` for literal prompts and `/fusion deadline continue|finish …` for deadline controls; old valid controls still work.
+- Use native custom-message wakes without synthetic user prompts. An aborted parent suppresses Fusion's opt-in wake until new explicit input; native subagent notices remain independently controlled.
+- Show inherited model selection and observed effort/cost provenance. Warn when thinking without a model cannot override native effort. New defaults inherit rather than suggest unenforced effort settings.
+- Require project trust before launch/restoration and reject concurrent bundled mutation-capable panels.
+- Test real Pi/subagents execution, long final answers, configured Webfox child tools, missing child tools, and supported Node/runtime dependency combinations. Retain failed fixture evidence.
+
+### Known limit
+
+pi-subagents 0.84 can report `writer-close-unverified` after stop. Fusion then remains stopping, exposes the native reason, and holds admission indefinitely rather than guessing exit. There is no automatic reset.
+
+### Upgrade
+
+- Before starting Fusion, install Pi 1.5+ and pi-subagents 0.84.x. Preserve existing native settings while setting `autoResume: false` in `~/.pi/agent/extensions/subagent/config.json`, then restart every owning Pi session. This disables automatic recovery for all native workflows. RPC cannot verify a running owner's effective setting.
+- Do not upgrade or downgrade active/quarantined reviews. Preserve their evidence; this release does not add an unsafe reset or successor adoption.
+- Use an explicit model when you need a thinking override. Use `concurrency: 1` for `fusion-panelist-full`.
+- The model-facing tool no longer offers unsupported `executionLifetime`. The controller RPC retains capability-checked support for custom runtimes; published pi-subagents does not provide the stronger contract.
+- Optional web users should migrate deprecated pi-web-providers configuration to Webfox. Configure every declared capability and do not load both extensions.
+
+[Full changes](https://github.com/alexei-led/pi-fusion/compare/v0.12.0...v0.13.0)
+
 ## 0.12.0 - 2026-10-06
 
 ### Changes
