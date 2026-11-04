@@ -21,6 +21,7 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   let judgeCalls = 0;
   let composerCalls = 0;
   let parentCalls = 0;
+  let completeSynthesisInputs = 0;
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (data: Buffer) => {
@@ -31,6 +32,12 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
       else if (body.includes('You are the fusion composer.')) composerCalls++;
       else if (body.includes('Panel member:')) panelCalls++;
       else parentCalls++;
+      if (
+        (body.includes('You are the fusion judge.') ||
+          body.includes('You are the fusion composer.')) &&
+        body.includes('LONG_OUTPUT_END')
+      )
+        completeSynthesisInputs++;
       if (body.includes('Panel member: FAIL_FIRST (FAIL_FIRST)')) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(
@@ -45,7 +52,9 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
       }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const text =
-        '# Fusion Report\n## Summary\nFIXTURE_OK\n## Recommendation\nChoose the simple option.\n## Coverage Map\nBoth facets.\n## Combined Answer\nFIXTURE_OK\n## Gaps\nNone.\n## Conflicts At Seams\nNone.';
+        '# Fusion Report\n## Summary\nFIXTURE_OK\n## Recommendation\nChoose the simple option.\n## Coverage Map\nBoth facets.\n## Combined Answer\nFIXTURE_OK\n## Gaps\nNone.\n## Conflicts At Seams\nNone.\n' +
+        'Fixture evidence. '.repeat(160) +
+        '\nLONG_OUTPUT_END';
       const chunk = {
         id: 'fixture',
         object: 'chat.completion.chunk',
@@ -232,6 +241,7 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   assert.equal(report.success, true, JSON.stringify(report));
   assert.equal(report.legacyRejected, true);
   assert.deepEqual(report.nativeStopRejections, ['invalid_state', 'not_found']);
+  assert.equal(report.unsupportedLifetimeRejected, true);
   assert.deepEqual(
     report.runs,
     ['select', 'merge', 'single', 'refill'].map((profile) => ({
@@ -241,6 +251,7 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   );
   assert.equal(panelCalls, 11);
   assert.equal(judgeCalls, 2);
+  assert.equal(completeSynthesisInputs, 3);
   assert.equal(composerCalls, 1);
   // RPC completion wakes are native upstream behavior, not controlled by Fusion's option.
   assert.ok(parentCalls > 0);

@@ -183,9 +183,9 @@ Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 
 Requirements:
 
-- Pi 1.0.2 or later in the 1.x series
+- Pi 1.5 or later in the 1.x series
 - Node.js 22.19+
-- `pi-subagents` 0.76.1 (checked RPC contract). See the [compatibility notes](./docs/user-guide.md#runtime-compatibility).
+- `pi-subagents` 0.84.x (checked RPC contract). See the [compatibility and recovery notes](./docs/user-guide.md#runtime-compatibility).
 
 ```bash
 pi install npm:pi-subagents
@@ -196,8 +196,12 @@ Optional. Only needed if a panel member uses the `fusion-panelist-web` or
 `fusion-panelist-full` agent:
 
 ```bash
-pi install npm:pi-web-providers
+pi install npm:webfox
 ```
+
+Configure Webfox defaults for every web tool the chosen agent declares; installation alone is not enough. See [web setup and migration](./docs/user-guide.md#web-setup-and-migration).
+
+Before using Fusion with pi-subagents 0.84, set `autoResume: false` in the [upstream configuration](https://github.com/nicobailon/pi-subagents/blob/v0.84.0/docs/configuration.md#autoresume). Native automatic resumption can create run IDs Fusion does not track. This setting affects all subagent workflows, not just Fusion.
 
 Restart Pi after upgrading Pi or pi-subagents. For a Fusion-only code reload:
 
@@ -225,7 +229,7 @@ For commands, config, and troubleshooting details, see [`docs/user-guide.md`](./
 - `Model` is lifecycle metadata. `Configured model` is the profile request. Both appear when the run differs from the request.
 - `stopWhenPanelAgrees` is an opt-in profile setting. It requires matching high-confidence decision records with no request for more evidence, initially executes only the configured synthesis quorum (not always two) so it can avoid starting later work, records skipped panelists in the report, and still runs the judge. It cannot be combined with an exact caller output contract.
 - Panel answers reach the judge in an order seeded from the run id, not in config order. A fixed order advantages the same member on every run, because judges favour whichever candidate they see first or last.
-- Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires `pi-web-providers`. Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
+- Panelists can search the web by opting in to the `fusion-panelist-web` agent, which requires configured Webfox tools (or legacy `pi-web-providers`). Defaults stay local-only on purpose: tool names are a strict allowlist, so an agent declaring a tool whose extension is missing fails every task that uses it.
 - `synthesis: "merge"` switches from picking the best answer to merging answers that covered different facets, using the `fusion-composer` agent. Panel members get facets through their optional `question` field. See the user guide.
 - `blindPanelLabels` hides member names, roles, agents, and artifact paths from the judge, so role labels stop acting as authority cues. Your report still shows real names.
 - `fusion-panelist-full` grants `bash`, `edit`, and `write`. It is opt-in, it voids the read-only property the other agents have, and it is unsafe at `concurrency > 1` because panelists share one working directory.

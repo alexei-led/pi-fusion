@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -32,8 +32,7 @@
         "noFloatingPromises": "error",
         "noMisusedPromises": "error",
         "useAwaitThenable": "error",
-        "useExhaustiveSwitchCases": "error",
-        "useImportsFirst": "error"
+        "useExhaustiveSwitchCases": "error"
       },
       "suspicious": {
         "noAsyncPromiseExecutor": "error",
@@ -41,6 +40,7 @@
         "noNestedPromises": "error"
       },
       "style": {
+        "useImportsFirst": "error",
         "useImportType": "error",
         "useNodejsImportProtocol": "error"
       }

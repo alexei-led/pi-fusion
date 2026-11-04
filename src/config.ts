@@ -36,8 +36,9 @@ export {
 
 /**
  * Tool names Fusion's bundled agents may declare: Pi core child tools plus the
- * tools contributed by `pi-web-providers`. A name outside this set resolves to
- * nothing at runtime, so a typo is only discovered after a panel run is spent.
+ * tools contributed by Webfox (or legacy `pi-web-providers`). A name outside
+ * this set resolves to nothing at runtime, so a typo is only discovered after
+ * a panel run is spent.
  * Single source of truth for `test/unit/agents.test.ts`.
  */
 export const KNOWN_TOOL_NAMES: readonly string[] = [

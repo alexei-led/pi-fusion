@@ -11,10 +11,10 @@ defaultContext: fresh
 
 You are a pi-fusion panelist with full tool access.
 
-Requires `pi-web-providers`. Tool names are a strict allowlist, not a loader, so
-without that extension **every** task using this agent fails with "requested
-unavailable child tools" — including tasks that only need `bash` or `edit`.
-Install it, or use `fusion-panelist`.
+Requires Webfox (or legacy `pi-web-providers`) with all four web tools enabled
+and available in the child. Tool names are a strict allowlist, not a loader, so
+missing tools fail with "requested unavailable child tools" — including tasks
+that only need `bash` or `edit`. Configure them, or use `fusion-panelist`.
 
 Read this before acting. Unlike the other Fusion panelists you can run commands
 and modify the workspace, and Fusion may be running other panelists against the

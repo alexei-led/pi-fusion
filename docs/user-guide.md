@@ -201,7 +201,7 @@ Profile:
 
 - `panel`: one or more panel members
 - `judge`: judge agent config
-- `wakeOnCompletion`: optional boolean, default `false`. Controls **Fusion's final-report wake**, not pi-subagents' native notifications. With the default, Fusion appends its report without starting or interrupting a turn. When enabled, only the same interactive session that started the run is woken; an idle wake uses a normal user prompt so `before_agent_start` runs, and a busy wake queues a follow-up. Fusion does not wake the interactive agent for RPC starts; their controller owns continuation. However, pi-subagents 0.76.1 independently wakes the parent after native panel/judge completion, including RPC starts. Its public RPC has no per-run suppression option. Only the successful terminal-state writer publishes the Fusion report: duplicate events, competing writers, and reload do not replay it, but a crash between persistence and sending can lose a wake. This is at-most-once attempt, not guaranteed delivery, and does not retry the review.
+- `wakeOnCompletion`: optional boolean, default `false`. Controls **Fusion's final-report wake**, not pi-subagents' native notifications. With the default, Fusion appends its report without starting or interrupting a turn. When enabled, only the same interactive session that started the run is woken; an idle wake uses a normal user prompt so `before_agent_start` runs, and a busy wake queues a follow-up. Fusion does not wake the interactive agent for RPC starts; their controller owns continuation. However, pi-subagents 0.84 independently wakes the parent after native panel/judge completion, including RPC starts. Its public RPC has no per-run suppression option. Only the successful terminal-state writer publishes the Fusion report: duplicate events, competing writers, and reload do not replay it, but a crash between persistence and sending can lose a wake. This is at-most-once attempt, not guaranteed delivery, and does not retry the review.
 - `concurrency`: max parallel panelists. Ordinary panels immediately start the next queued member when a slot finishes or fails, while retaining configured result order. Each slot uses failure-collecting `runs.all` semantics, so a rejected panelist does not discard successful siblings or prevent queued members from running. When `stopWhenPanelAgrees` is on, Fusion initially executes only the resolved synthesis quorum (capped by `concurrency`) before launching another batch, so a non-default quorum—not always the first two—governs early agreement.
 - `timeoutMs`: legacy shared wall-clock timeout in milliseconds. It is a fallback only; `/fusion status` warns when it supplied an effective deadline.
 - `panelistSoftTimeoutMs`: optional soft deadline, measured from each child's actual start, not its queue time. Requires `pi-subagents` RPC advertising `nonRecoveringSteer`. It must leave more than one minute before the effective hard child deadline, and the panel budget must cover every concurrency wave plus grace.
@@ -223,13 +223,15 @@ Timeouts are hard workflow deadlines. A child terminated at the deadline can rep
 
 ### Runtime compatibility
 
-Fusion requires Pi 1.0.2 or later in the 1.x series. The current compatibility checks use Pi 1.0.4 and pi-subagents 0.76.1. Restart Pi after updating either upstream package; `/reload` cannot safely replace already-imported upstream modules. Restart all sessions owning this project's Fusion state before switching versions. Do not downgrade while a run is active or requires recovery.
+Fusion requires Pi 1.5 or later in the 1.x series. The current compatibility checks use Pi 1.5.0 and pi-subagents 0.84.0. Development ranges are `^1.5` and `^0.84`; exact resolved versions belong in the lockfile, not package pins. The next pre-1.0 pi-subagents minor (0.85) and Pi 2.x need a contract review and real-process tests before support is claimed. Restart Pi after updating either upstream package; `/reload` cannot safely replace already-imported upstream modules. Restart all sessions owning this project's Fusion state before switching versions. Do not downgrade while a run is active or requires recovery.
 
 | Runtime | Contract checked |
 | --- | --- |
-| Pi 1.0.4 | API/types, isolated SDK loading, model-only tools, commands, and a separate-process integration with a localhost model fixture |
-| pi-subagents 0.76.1 | Real RPC validation and select/merge/single-member execution, operation replay, lifecycle artifacts, and host shutdown |
+| Pi 1.5.0 | API/types, isolated SDK loading, model-only tools, commands, and a separate-process integration with a localhost model fixture |
+| pi-subagents 0.84.0 | Real RPC validation and select/merge/single-member execution, operation replay, lifecycle artifacts, long-output preservation, unsupported-lifetime rejection, and host shutdown |
 | pi-subagents before 0.74.0 | Not supported by the current `script` request format; no automatic fallback/retry |
+
+**Recovery prerequisite:** set `"autoResume": false` in `~/.pi/agent/extensions/subagent/config.json`, preserving any other settings. Since pi-subagents 0.82, interrupted workflows can otherwise resume automatically on session reopen or `/reload` under new native IDs that Fusion does not adopt. This is a global upstream setting and disables auto-resume for non-Fusion workflows too. Do not reload during an active Fusion run. Ordinary execution tests do not establish crash/reload recovery compatibility; that remains a release-validation gap. See the [upstream setting](https://github.com/nicobailon/pi-subagents/blob/v0.84.0/docs/configuration.md#autoresume).
 
 Fusion subscribes to advertised `childStatus` and `processTerminal` channels. Correlated events only schedule a status/artifact reconciliation, never count as successful results. Bursts are coalesced; events during a pending check request one follow-up check. The two-second fallback poll and restore-time reconciliation remain because events can be missed. Subscriptions and queued hints are cleared on shutdown.
 
@@ -241,9 +243,9 @@ Lifecycle hints are not stop or containment proofs. An ordinary stop acknowledge
 
 #### Ordinary workflows and strict lifetime
 
-Use pi-subagents 0.76.1 for the checked ordinary path. Start it as usual, for example `/fusion Compare these designs`; leave `executionLifetime` out of tool and RPC requests. The `script` panel and separate judge use the profile's ordinary timeout rules above. Disabling upstream `workflow-scripts` also disables ordinary Fusion; Fusion does not bypass that policy.
+Use pi-subagents 0.84.x for the checked ordinary path. Start it as usual, for example `/fusion Compare these designs`; leave `executionLifetime` out of tool and RPC requests. The `script` panel and separate judge use the profile's ordinary timeout rules above. Disabling upstream `workflow-scripts` also disables ordinary Fusion; Fusion does not bypass that policy.
 
-Explicit `executionLifetime` is not available with the checked pi-subagents 0.76.1 capabilities. Native `ping` advertises async spawn, stop, non-recovering steer, and process terminal proof, but not durable operations, explicit lifetimes, or owned-tree containment. Fusion rejects an explicit lifetime before spawning. Tune ordinary stage timeouts when more time is needed; they are not a strict execution-lifetime guarantee. Fusion calls native RPC directly and does not use `@alexeiled/pi-subagents-bridge`; installing or updating Bridge does not enable this mode.
+Explicit `executionLifetime` is not available with the checked pi-subagents 0.84.0 capabilities. No published release inspected in this review supplies the required stronger contract; updating alone does not enable it. Native `ping` advertises async spawn, stop, non-recovering steer, and process terminal proof, but not durable operations, explicit lifetimes, or owned-tree containment. Fusion rejects an explicit lifetime before spawning. Tune ordinary stage timeouts when more time is needed; they are not a strict execution-lifetime guarantee. Fusion calls native RPC directly and does not use `@alexeiled/pi-subagents-bridge`; installing or updating Bridge does not enable this mode.
 
 ### Recovery required
 
@@ -377,23 +379,42 @@ Fusion ships five:
 | Agent                            | Tools                                                        | Use for                                                        |
 | -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
 | `pi-fusion.fusion-panelist` | `read, grep, find, ls` | Default. Local inspection only. It needs no extra extension. |
-| `pi-fusion.fusion-panelist-web` | above plus `web_search, web_contents, web_answer` | Opt-in. **Requires `pi-web-providers`.** |
-| `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research` | Opt-in. Requires `pi-web-providers`. **See the warning below.** |
+| `pi-fusion.fusion-panelist-web` | above plus `web_search, web_contents, web_answer` | Opt-in. **Requires configured Webfox tools.** |
+| `pi-fusion.fusion-panelist-full` | above plus `bash, edit, write, web_research` | Opt-in. Requires all four Webfox tools. **See the warning below.** |
 | `pi-fusion.fusion-judge` | `read, grep, find, ls` | Judge. The read tools let it verify contested claims. |
 | `pi-fusion.fusion-composer` | `read, grep, find, ls` | Synthesis under `synthesis: "merge"`. |
 
 > **Tool names are a strict allowlist, not a loader.** If an agent declares a tool
 > whose provider extension is not installed, every task using that agent fails
 > with `requested unavailable child tools`. That is why the default agents stay on
-> Pi core tools: `pi-web-providers` is optional, so depending on it by default
+> Pi core tools: Webfox is optional, so depending on it by default
 > breaks every run for anyone without it. Install it before you use the `-web`
 > or `-full` variant:
 >
 > ```bash
-> pi install npm:pi-web-providers
+> pi install npm:webfox
 > ```
 
-Mix them per member:
+### Web setup and migration
+
+Webfox is the maintained successor to the deprecated `pi-web-providers` package.
+The four tool names did not change, so Fusion's tool allowlists still apply.
+Installing Webfox alone does not enable every tool: configure defaults and
+credentials for `search`, `contents`, and `answer` before using `-web`, and also
+`research` before using `-full`. The tools must be available in the child runtime,
+not only in the parent session. Restart Pi after changing defaults.
+
+Webfox uses `~/.config/webfox/config.yaml` (or `WEBFOX_CONFIG`), not the old
+`~/.pi/agent/web-providers.json`. Recreate the configuration; renaming the old file
+is not a migration. Claude/Codex providers and the `/web-providers` settings UI
+were removed. See the [migration notes](https://github.com/mavam/webfox/releases/tag/v4.0.0)
+and [current setup](https://github.com/mavam/webfox#-use-with-pi). Preserve the old
+configuration until the replacement works; do not load both packages, because
+they register the same tool names. Legacy `pi-web-providers` 3.5.1 needs Node 24+;
+Webfox 4.10 supports Node 22+, so Fusion's Node 22.19+ minimum need not change.
+Webfox was inspected, not exercised against live providers in Fusion's suite.
+
+Mix agents per member:
 
 ```json
 {
@@ -415,8 +436,8 @@ Mix them per member:
 
 For any other combination, write your own agent markdown file with the `tools:`
 frontmatter you want and point `agent` at it. Valid tool names are the Pi core
-tools `read, bash, edit, write, grep, find, ls` and, when `pi-web-providers` is
-installed, `web_search, web_contents, web_answer, web_research`. A name outside
+tools `read, bash, edit, write, grep, find, ls` and, when Webfox is
+configured and its tools are available, `web_search, web_contents, web_answer, web_research`. A name outside
 that set resolves to nothing and the run fails with a missing-tool error.
 
 `web_research` is excluded from the default panelist on purpose: it routes to a
@@ -651,7 +672,7 @@ For an economical mixed panel, give each member a fast or inexpensive frontier, 
 
 `pi-subagents RPC is unavailable`
 
-- install or update `pi-subagents` to the checked 0.76.1 release
+- install or update `pi-subagents` to the checked 0.84.x series and follow the [recovery prerequisite](#runtime-compatibility)
 - restart Pi
 - retry `/fusion status`
 

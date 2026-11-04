@@ -17,15 +17,26 @@ Restart Pi after updating upstream packages. For a Fusion-only code reload:
 
 ## Runtime behavior
 
-Development checks pin Pi `1.0.4` and pi-subagents `0.76.1`; the Pi peer range
-remains `^1.0.2`. Neither upstream package is imported through private runtime
-modules. Fusion communicates with pi-subagents only through event-bus RPC.
+Development ranges are Pi `^1.5` and pi-subagents `^0.84`; the lockfile records
+the exact tested dependency tree. The Pi peer range is `^1.5`. Neither upstream
+package is imported through private runtime modules. Fusion communicates with
+pi-subagents only through event-bus RPC. Pi supplies TypeBox; Fusion does not
+import TUI components, so it no longer declares an unused TUI peer.
+
+For pre-1.0 pi-subagents, `^0.84` stops before the next minor, `0.85`.
+Test a new minor before widening that range. Pi 2.x is likewise not claimed.
+Keep `@types/node` on the Node 24 line rather than admitting Node 26-only APIs;
+the runtime minimum remains Node 22.19. See the
+[dependency review](./docs/reviews/dependency-compatibility.md) for evidence,
+recommendations, and lifecycle coverage gaps.
 
 The SDK smoke test disables model network refresh. The upstream E2E test loads
 both real extensions in a separate Pi process, with an isolated home and agent
 directory and a localhost fake model provider. It checks the public RPC validator,
 select/merge/single-member runs, rolling refill after authentication failure,
-native stop rejection codes, operation replay, and clean host shutdown.
+native stop rejection codes, operation replay, full outputs beyond the native
+2,000-character preview, rejection of unsupported strict lifetime requests before
+native spawn, and clean host shutdown.
 It does not read personal credentials or call a paid model. Native completion
 wakes are observed as an upstream limitation, not mistaken for Fusion wakes.
 
@@ -55,10 +66,10 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm run check` runs Biome and the TypeScript compiler. Biome is not
-type-aware: the type-checked ESLint rules the previous setup enforced
-(`no-unsafe-*`, `restrict-template-expressions`, `unbound-method`, and
-similar) are intentionally dropped and `tsc` does not replace them. Keep
+`npm run check` runs Biome and the TypeScript compiler. Biome does not
+replace the previous type-checked ESLint rule set (`no-unsafe-*`,
+`restrict-template-expressions`, `unbound-method`, and similar).
+Those rules remain dropped, and `tsc` does not replace them. Keep
 those patterns out by review until a type-aware linter returns. `npm test`
 runs the whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
 scripts remain available for focused runs. `npm run test:all` runs the full

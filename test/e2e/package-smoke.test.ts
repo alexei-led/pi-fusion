@@ -50,6 +50,7 @@ test('npm package contains only runtime extension assets', async (_t) => {
   );
   assert.ok(files.has('package.json'));
   assert.ok(files.has('README.md'));
+  assert.ok(files.has('CHANGELOG.md'));
   assert.ok(files.has('agents/fusion-panelist.md'));
   assert.ok(files.has('agents/fusion-panelist-web.md'));
   assert.ok(files.has('agents/fusion-panelist-full.md'));

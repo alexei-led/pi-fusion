@@ -86,6 +86,28 @@ export default function compatibilityFixture(pi: ExtensionAPI): void {
         assert.ok(isRecord(missing.error));
         assert.equal(missing.error.code, 'not_found');
         report.nativeStopRejections = [stopped.error.code, missing.error.code];
+        let strictSpawns = 0;
+        const unsubscribeSpawn = pi.events.on(
+          'subagents:rpc:v1:request',
+          (payload: unknown) => {
+            if (isRecord(payload) && payload.method === 'spawn') strictSpawns++;
+          },
+        );
+        try {
+          const strict = await request('fusion:rpc:v1', 'start', {
+            operationId: 'smoke-unsupported-lifetime',
+            prompt: 'FUSION_COMPATIBILITY_FIXTURE',
+            executionLifetime: { mode: 'unbounded' },
+          });
+          assert.equal(strict.success, false, JSON.stringify(strict));
+          assert.ok(isRecord(strict.error));
+          assert.equal(strict.error.code, 'start_failed');
+          assert.match(String(strict.error.message), /does not support/);
+          assert.equal(strictSpawns, 0);
+          report.unsupportedLifetimeRejected = true;
+        } finally {
+          unsubscribeSpawn();
+        }
         const runs: unknown[] = [];
         for (const profile of ['select', 'merge', 'single', 'refill']) {
           const params = {
