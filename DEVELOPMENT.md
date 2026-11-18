@@ -116,6 +116,11 @@ no behavior assertions or runtime deadlines are disabled. CI checks locked Node
 22.19/24 plus latest-allowed dependencies on Node 24. A future breaking version
 needs a separate contract review; it is not silently admitted.
 
+CI and release require a clean runtime audit at moderate severity or above.
+The full audit makes one exception for dev-only `picomatch` and findings caused
+solely by [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+Remove the exception once the locked dev tree has a patched version.
+
 ## Release
 
 Target package:

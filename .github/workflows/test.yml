@@ -48,7 +48,12 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}
       - name: Audit
-        run: npm audit --audit-level=moderate
+        run: |
+          npm audit --omit=dev --audit-level=moderate
+          rc=0
+          npm audit --audit-level=moderate --json > "$RUNNER_TEMP/npm-audit.json" || rc=$?
+          if [ "$rc" -gt 1 ]; then exit "$rc"; fi
+          node scripts/audit-dev-exception.ts < "$RUNNER_TEMP/npm-audit.json"
       - name: Package dry run
         run: npm run pack:dry
       - name: Retain failed real-Pi evidence
