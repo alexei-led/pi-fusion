@@ -186,9 +186,9 @@ Failure codes are `invalid_request`, `unsupported_method`, `busy`, `not_found`,
 
 Requirements:
 
-- Pi 1.5 or later in the 1.x series
+- Pi 1.5.2 or later in the 1.x series
 - Node.js 22.19+
-- `pi-subagents` 0.84.x (checked RPC contract). See the [compatibility and recovery notes](./docs/user-guide.md#runtime-compatibility).
+- `pi-subagents` 0.89.x (checked RPC contract). See the [compatibility and recovery notes](./docs/user-guide.md#runtime-compatibility).
 
 ```bash
 pi install npm:pi-subagents
@@ -204,7 +204,7 @@ pi install npm:webfox
 
 Configure Webfox defaults for every web tool the chosen agent declares; installation alone is not enough. See [web setup and migration](./docs/user-guide.md#web-setup-and-migration).
 
-Before using Fusion with pi-subagents 0.84, set `autoResume: false` in the [upstream configuration](https://github.com/nicobailon/pi-subagents/blob/v0.84.0/docs/configuration.md#autoresume). Native automatic resumption can create run IDs Fusion does not track. This setting affects all subagent workflows, not just Fusion.
+Before using Fusion with pi-subagents 0.89, set `autoResume: false` in the [upstream configuration](https://github.com/nicobailon/pi-subagents/blob/v0.89.0/docs/configuration.md#autoresume). Native automatic resumption can create run IDs Fusion does not track. This setting affects all subagent workflows, not just Fusion.
 
 Restart Pi after upgrading Pi or pi-subagents. For a Fusion-only code reload:
 

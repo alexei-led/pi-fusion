@@ -108,3 +108,30 @@ test('launch tool returns a structured receipt and marks conflicts as errors', a
   assert.equal(conflict.structuredContent.status, 'conflict');
   assert.equal(conflict.isError, true);
 });
+
+test('a child that reports success without an answer does not discard its siblings', async (t) => {
+  const cwd = await createProjectDir(t);
+  const pi = new FakePi();
+  const ctx = pi.createContext(cwd);
+  fusionExtension(pi.asExtensionApi());
+  await pi.emitLifecycle('session_start', {}, ctx);
+  t.onTestFinished(() => pi.emitLifecycle('session_shutdown', {}, ctx));
+  await pi.runCommand('fusion', 'review', ctx);
+  pi.events.statusResults.set('panel-1', {
+    runId: 'panel-1',
+    state: 'complete',
+    results: [
+      { success: true, output: ' ' },
+      { success: true, output: 'First usable answer' },
+      { success: false, error: 'OAuth refresh failed for fixture: HTTP 400' },
+    ],
+  });
+  pi.events.emit('subagent:async-complete', { runId: 'panel-1' });
+  await nextTick();
+
+  const report = pi.messages.at(-1)?.content ?? '';
+  assert.match(report, /First usable answer/);
+  assert.match(report, /reported success but returned no answer/);
+  assert.match(report, /OAuth refresh failed/);
+  assert.equal(pi.events.spawns.length, 1);
+});

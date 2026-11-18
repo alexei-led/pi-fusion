@@ -35,6 +35,16 @@ test('the package version has reviewed upgrade notes in the changelog', async ()
   );
   assert.match(notes, /### Changes/);
   assert.match(notes, /### Upgrade/);
+});
+
+test('the current dependency range is documented in the pending or released upgrade notes', async () => {
+  const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+  const changelog = await readFile('CHANGELOG.md', 'utf8');
+  const notes = extractReleaseNotes(
+    changelog,
+    /^## Unreleased$/m.test(changelog) ? 'Unreleased' : pkg.version,
+  );
+  assert.match(notes, /### Upgrade/);
   const nativeRange = String(pkg.devDependencies['pi-subagents']).replace(
     /^\^/,
     '',

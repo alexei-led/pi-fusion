@@ -260,6 +260,7 @@ function workflowSlotIndex(
     rawResult.key,
     rawResult.taskKey,
     rawResult.stepKey,
+    rawResult.workflowKey,
     rawResult.agent,
   );
   // Workflow scripts name their public child slots panel-1, panel-2, etc.
@@ -320,11 +321,21 @@ function normalizeChildResult(
       firstNonBlankString(decision?.answerMarkdown, rawOutput) ??
       artifactOutput(artifactPath);
     if (!output) {
-      return error(
-        'missing-result-field',
-        'Successful subagents child result did not include output or an artifact path.',
-        path,
-      );
+      // An empty reply cannot vote, but it does not invalidate sibling results.
+      return {
+        ok: true,
+        status: 'failed',
+        failure: buildFailedPanelSummary({
+          index,
+          member,
+          agent,
+          summary: 'Panelist reported success but returned no answer.',
+          reason: 'missing-output',
+          observation: extractRunObservation(rawResult),
+          artifactPath,
+          sessionPath,
+        }),
+      };
     }
     return {
       ok: true,

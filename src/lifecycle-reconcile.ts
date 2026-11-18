@@ -128,6 +128,16 @@ export function reconcilePanelResults(
 
   const statusCount =
     statusResults.outputs.length + statusResults.failures.length;
+  // An affirmative result without text is missing evidence, not a native
+  // execution failure. A matching slot can still have a complete answer in
+  // the other terminal source.
+  const sameSlots = new Set((rawEvent ?? []).map(stablePanelSlot));
+  const matching = new Set(
+    rawStatus
+      .map(stablePanelSlot)
+      .filter((slot) => slot !== undefined && sameSlots.has(slot)),
+  );
+  const recoveredOutputs: PanelOutput[] = [];
   if (
     !options.terminalizeRunning &&
     eventResults.outputs.length + eventResults.failures.length === expectedCount
@@ -150,6 +160,29 @@ export function reconcilePanelResults(
         statusKnown &&
         eventSucceeded.has(index) !== statusSucceeded.has(index)
       ) {
+        if (matching.has(index)) {
+          if (
+            statusSucceeded.has(index) &&
+            eventResults.failures.some(
+              (failure) =>
+                failure.index === index && failure.reason === 'missing-output',
+            )
+          )
+            continue;
+          const emptyStatus = statusResults.failures.find(
+            (failure) =>
+              failure.index === index && failure.reason === 'missing-output',
+          );
+          const eventOutput = eventResults.outputs.find(
+            (item) => item.index === index,
+          );
+          if (emptyStatus && eventOutput) {
+            recoveredOutputs.push(
+              withObservation(eventOutput, emptyStatus.observation),
+            );
+            continue;
+          }
+        }
         return error(
           `Subagents event and status disagree about panel result ${index + 1}.`,
           `$.steps[${index}]`,
@@ -169,6 +202,21 @@ export function reconcilePanelResults(
   ).filter((index) => !statusIndices.has(index));
 
   if (statusCount === expectedCount) {
+    if (recoveredOutputs.length > 0) {
+      const recovered = new Set(recoveredOutputs.map(({ index }) => index));
+      return preserveAgreementReasons(
+        {
+          ...statusResults,
+          outputs: [...statusResults.outputs, ...recoveredOutputs].sort(
+            (a, b) => a.index - b.index,
+          ),
+          failures: statusResults.failures.filter(
+            ({ index }) => !recovered.has(index),
+          ),
+        },
+        eventResults,
+      );
+    }
     return options.terminalizeRunning
       ? mergeTerminalDeadlineResults(
           eventResults,
@@ -359,6 +407,7 @@ function stablePanelSlot(result: unknown): number | undefined {
     result.key,
     result.taskKey,
     result.stepKey,
+    result.workflowKey,
     result.agent,
   );
   const match = key?.match(/^panel-([1-9]\d*)$/);

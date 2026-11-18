@@ -103,6 +103,7 @@ import {
   type SubagentsSteerParams,
   type SubagentsTargetParams,
 } from './subagents-rpc.js';
+import { traceFailureKind, traceFusion, traceId } from './trace.js';
 import {
   type FailedPanelSummary,
   type FusionProfile,
@@ -547,6 +548,9 @@ export class FusionOrchestrator {
           `Native run ${panelRunId} was started but its binding could not be saved: ${errorMessage(persistenceError)}`,
         );
       }
+      traceFusion('stage-bound', updated, () => ({
+        nativeId: traceId(panelRunId),
+      }));
       if (updated.cancellationRequested && !updated.executionLifetime)
         return this.cancelActiveRun(ctx);
       publishFusionStatus(ctx, updated);
@@ -691,6 +695,7 @@ export class FusionOrchestrator {
       this.runStore.updateRun(run.id, { cancellationRequested: true });
       throw new FusionArgsError('Cancellation won native dispatch admission.');
     }
+    traceFusion('stage-dispatch', run, () => ({ stage }));
     let reply: unknown;
     try {
       reply = await this.rpc.spawn(
@@ -705,6 +710,11 @@ export class FusionOrchestrator {
         throw new FusionRunConflictError(
           'The launch owner was disposed while awaiting RPC.',
         );
+      traceFusion('spawn-error', run, () => ({
+        stage,
+        outcome: isPrelaunchRejection(error) ? 'rejected' : 'unresolved',
+        failure: traceFailureKind(errorMessage(error)),
+      }));
       if (isPrelaunchRejection(error)) throw error;
       throw new UnresolvedLaunchError(errorMessage(error));
     }
@@ -2340,6 +2350,9 @@ export class FusionOrchestrator {
           `Native run ${judgeRunId} was started but its binding could not be saved: ${errorMessage(persistenceError)}`,
         );
       }
+      traceFusion('stage-bound', nextRun, () => ({
+        nativeId: traceId(judgeRunId),
+      }));
       if (
         nextRun.cancellationRequested &&
         !nextRun.executionLifetime &&
@@ -2493,6 +2506,10 @@ export class FusionOrchestrator {
       } catch (error: unknown) {
         if (error instanceof FusionRunConflictError) throw error;
         this.installWarning = `Could not refresh subagent run ${input.runId}: ${errorMessage(error)}`;
+        traceFusion('status-error', input.run, () => ({
+          nativeId: traceId(input.runId),
+          failure: traceFailureKind(errorMessage(error)),
+        }));
       }
     }
 
@@ -2558,7 +2575,16 @@ export class FusionOrchestrator {
     // result artifact is the complete terminal record, so select it before an
     // event and use it as the reconciliation snapshot as well. Otherwise a
     // partial status/event could discard verified slots or the judge end tag.
+    const traceEvidence = (
+      source: 'artifact' | 'event' | 'status' | 'artifact-pending',
+    ) =>
+      traceFusion('terminal-evidence', input.run, () => ({
+        nativeId: traceId(input.runId),
+        source,
+        failureKind,
+      }));
     if (hasExplicitResultsArray(artifactResult)) {
+      traceEvidence('artifact');
       return {
         statusPayload: artifactResult,
         resultPayload: artifactResult,
@@ -2580,6 +2606,7 @@ export class FusionOrchestrator {
       !nativeJudgeValue(statusPayload) &&
       !eventComplete
     ) {
+      traceEvidence('artifact-pending');
       return {
         statusPayload,
         resultIsTerminal: false,
@@ -2588,6 +2615,7 @@ export class FusionOrchestrator {
     }
 
     if (eventPayloadMatches && eventHasResults) {
+      if (eventIsTerminal || statusIsTerminal) traceEvidence('event');
       return {
         statusPayload,
         resultPayload: input.eventPayload,
@@ -2597,6 +2625,7 @@ export class FusionOrchestrator {
     }
 
     if (hasExplicitResultsArray(statusPayload)) {
+      if (statusIsTerminal) traceEvidence('status');
       return {
         statusPayload,
         resultPayload: statusPayload,
@@ -2606,6 +2635,7 @@ export class FusionOrchestrator {
     }
 
     if (statusIsTerminal) {
+      traceEvidence('status');
       return {
         statusPayload,
         resultPayload: statusPayload,
@@ -2614,6 +2644,7 @@ export class FusionOrchestrator {
     }
 
     if (eventPayloadMatches) {
+      if (eventIsTerminal) traceEvidence('event');
       return {
         statusPayload,
         resultPayload: input.eventPayload,
@@ -2782,6 +2813,10 @@ export class FusionOrchestrator {
       recoveryRequired: reason,
       error: `Fusion recovery required (${reason}): ${message} Native work may still be running. Automatic replay and new Fusion runs are blocked.`,
     });
+    traceFusion('recovery-hold', updated, () => ({
+      nativeId: traceId(activeRunId(updated)),
+      reason,
+    }));
     this.stopReconcileLoop();
     if (updated.cancellationRequested) this.ensureReconcileLoop();
     publishFusionStatus(this.context, updated);
@@ -2927,6 +2962,21 @@ export class FusionOrchestrator {
 
   private postTerminalReport(run: FusionRun, report: string): void {
     if (this.disposed) return;
+    traceFusion('review-settled', run, () => ({
+      panelId: traceId(run.panelRunId ?? run.chainRunId),
+      judgeId: traceId(run.judgeRunId),
+      elapsedMs: Math.max(0, Date.now() - run.createdAt),
+      completionQuality: run.completionQuality,
+      successfulPanelists: run.panelOutputs?.length ?? 0,
+      failedSlots: run.panelFailures?.map((failure) => ({
+        slot: failure.index + 1,
+        reason:
+          failure.reason ??
+          traceFailureKind(failure.observation?.providerFailures?.[0]?.message),
+      })),
+      failureKind: run.failureKind,
+      failure: run.error ? traceFailureKind(run.error) : undefined,
+    }));
     // Only the terminal-commit winner publishes. A crash after committing may lose
     // a wake, but reload must not replay terminal notifications.
     const triggerTurn =
