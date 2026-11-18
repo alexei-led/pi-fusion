@@ -163,9 +163,9 @@ test('rolling panel refills a failed slot before a slower panelist completes', a
         assert.ok(task);
         const key = task.key;
         started.push(key);
-        return new Promise((resolve) => finishes.set(key, resolve)).then(
-          (result) => [result],
-        );
+        return new Promise((resolve) => {
+          finishes.set(key, resolve);
+        }).then((result) => [result]);
       },
     },
   }) as Promise<unknown[]>;

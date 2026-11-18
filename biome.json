@@ -10,6 +10,7 @@
       "src/**",
       "test/**",
       "scripts/**/*.ts",
+      "*.ts",
       "*.json",
       "!package-lock.json"
     ]
@@ -29,10 +30,18 @@
     "rules": {
       "preset": "recommended",
       "nursery": {
+        "noAsyncPromiseFinally": "error",
+        "noAwaitInPromiseMethods": "error",
         "noFloatingPromises": "error",
+        "noMismatchedMapKey": "error",
+        "noMissingThrow": "error",
         "noMisusedPromises": "error",
+        "noPromiseExecutorReturn": "error",
+        "noReturnInFinally": "error",
+        "noUnsafeReturn": "error",
         "useAwaitThenable": "error",
-        "useExhaustiveSwitchCases": "error"
+        "useExhaustiveSwitchCases": "error",
+        "usePromiseRejectErrors": "error"
       },
       "suspicious": {
         "noAsyncPromiseExecutor": "error",
@@ -42,7 +51,11 @@
       "style": {
         "useImportsFirst": "error",
         "useImportType": "error",
-        "useNodejsImportProtocol": "error"
+        "useNodejsImportProtocol": "error",
+        "useThrowOnlyError": "error"
+      },
+      "correctness": {
+        "noUnresolvedImports": "error"
       }
     }
   },

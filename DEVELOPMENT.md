@@ -67,14 +67,18 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm run check` runs Biome and the TypeScript compiler. Biome does not
-replace the previous type-checked ESLint rule set (`no-unsafe-*`,
-`restrict-template-expressions`, `unbound-method`, and similar).
-Those rules remain dropped, and `tsc` does not replace them. Keep
-those patterns out by review until a type-aware linter returns. `npm test`
-runs the whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
-scripts remain available for focused runs. `npm run test:all` runs the full
-local gate that CI and release use.
+Biome is the only linter and formatter. `npm run lint` runs its lint rules.
+`npm run check` also checks formatting, import organization, and TypeScript
+types. The shared Biome config adds checks for dropped promises and rejections,
+unsafe returns from typed functions, mismatched map keys, and unresolved
+imports. It includes source, tests, scripts, and root TypeScript files.
+Only selected nursery rules are enabled because their diagnostics can change
+between Biome releases. These checks complement TypeScript and do not cover
+all of the former type-aware ESLint rules.
+
+`npm test` runs the whole Vitest suite. Use `test:unit`, `test:integration`,
+or `test:e2e` for focused runs. `npm run test:all` also checks the package
+contents.
 
 Git hygiene:
 

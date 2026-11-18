@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   beforeEach,
@@ -814,7 +815,7 @@ for (const lateCallback of [false, true]) {
     if (lateCallback) {
       release(oldReply);
       await oldCompletion;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await setImmediate();
       assert.deepEqual(
         new FusionRunStore({ directory: join(cwd, 'runs') }).getRunById(
           secondRun.id,
@@ -937,7 +938,7 @@ test('cancellation during deferred completion status wins the terminal transitio
   );
   await cancellationWaiting;
   releaseCompletion(await lookup());
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
   const phaseBeforeCancellationProof = fixture.store.getLastRunSummary()?.phase;
   releaseCancellation(await lookup());
   const [, cancelled] = await Promise.all([completing, cancelling]);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { TestContext } from 'vitest';
 import { getFusionConfigTemplate } from '../../src/config.js';
@@ -317,7 +318,7 @@ export async function createProjectDir(t: TestContext): Promise<string> {
 }
 
 export async function nextTick(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
