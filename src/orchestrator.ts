@@ -52,6 +52,7 @@ import {
   type ExtractPanelResultsResult,
   type ExtractPanelResultsSuccess,
   extractPanelResults,
+  namedPanelSlot,
 } from './result-extract.js';
 import { isReviewContext, verifyReviewContext } from './review-context.js';
 import {
@@ -184,7 +185,7 @@ export type FusionCommandResult =
 interface RunLifecycleSnapshot {
   statusPayload?: unknown;
   resultPayload?: unknown;
-  /** Compact event results need stable slots; status/artifacts are ordered snapshots. */
+  /** Compact events require slot identity; older status/artifacts may omit keys. */
   resultSource?: 'artifact' | 'event' | 'status';
   resultIsTerminal: boolean;
   resultArtifactPending?: boolean;
@@ -2413,7 +2414,31 @@ export class FusionOrchestrator {
     );
     if (lifecycleConflict) return this.failActiveRun(lifecycleConflict);
 
-    const output = extractJudgeOutput(lifecyclePayload);
+    const retained =
+      snapshot.resultSource === 'event' &&
+      isTerminalSubagentState(extractSubagentState(snapshot.statusPayload))
+        ? nativeJudgeValue(snapshot.statusPayload)
+        : undefined;
+    const eventResult = findResult(lifecyclePayload);
+    const retainedOutput = retained
+      ? extractJudgeOutput(snapshot.statusPayload)
+      : undefined;
+    // The compact event can truncate a successful answer. Never upgrade an
+    // explicit failure to success, and never let a preview hide a failed return.
+    const useRetained =
+      retainedOutput !== undefined &&
+      (retained?.ok === false ||
+        (retainedOutput.ok &&
+          !lifecycleError &&
+          !(eventResult && resultFailed(eventResult))));
+    const output = useRetained
+      ? retainedOutput
+      : extractJudgeOutput(lifecyclePayload);
+    if (useRetained)
+      traceFusion('synthesis-evidence', active, () => ({
+        nativeId: traceId(active.judgeRunId),
+        source: 'retained-workflow-return',
+      }));
     if (!output.ok) {
       const stepError = extractSubagentFailure(
         findStepsArray(snapshot.statusPayload)[0],
@@ -2463,9 +2488,8 @@ export class FusionOrchestrator {
         findStepsArray(snapshot.statusPayload)[0] ?? snapshot.statusPayload,
       ),
       extractRunObservation(
-        findResult(
-          snapshot.resultPayload ?? snapshot.statusPayload ?? payload,
-        ) ?? snapshot.resultPayload,
+        (useRetained ? (findResult(retained) ?? retained) : eventResult) ??
+          snapshot.resultPayload,
       ),
     );
     const observed = this.runStore.updateRun(active.id, {
@@ -3425,9 +3449,13 @@ function buildFusionStatusDetails(
   }
 
   const steps = findStepsArray(payload);
-  const panelSteps = steps.slice(0, profile.panel.length);
+  const panelSteps = new Map(
+    steps
+      .slice(0, profile.panel.length)
+      .map((step, index) => [namedPanelSlot(step) ?? index, step]),
+  );
   const panelists = profile.panel.map((member, index) => {
-    const step = panelSteps[index];
+    const step = panelSteps.get(index);
     const model = configuredPanelModel(member);
     const activity = describeStepActivity(step);
     const metrics = describeStepMetrics(step);

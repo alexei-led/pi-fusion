@@ -111,6 +111,70 @@ test('empty completion cannot shadow a complete retained native judge value', as
   assert.match(f.store.getLastRunSummary()?.report ?? '', /JUDGE_FINAL_END/);
 });
 
+test('complete retained judge answer wins over a matching compact preview', async (t) => {
+  const { store, orchestrator } = fixture({
+    runId: 'native-judge',
+    mode: 'workflow',
+    state: 'complete',
+    steps: [{ agent: 'judge', status: 'complete' }],
+    workflow: { value: { key: 'judge', ok: true, output } },
+  });
+  t.onTestFinished(() => orchestrator.dispose());
+
+  const result = await orchestrator.handleSubagentComplete({
+    ...completion,
+    results: [
+      { agent: 'judge', success: true, output: output.slice(0, 2_000) },
+    ],
+  });
+
+  assert.equal(result.status, 'done');
+  assert.match(store.getLastRunSummary()?.report ?? '', /JUDGE_FINAL_END/);
+});
+
+test('a compact success cannot hide a failed retained judge return', async (t) => {
+  const { store, orchestrator } = fixture({
+    runId: 'native-judge',
+    mode: 'workflow',
+    state: 'failed',
+    workflow: {
+      value: { key: 'judge', ok: false, error: 'Provider rejected request' },
+    },
+  });
+  t.onTestFinished(() => orchestrator.dispose());
+
+  const result = await orchestrator.handleSubagentComplete(completion);
+
+  assert.equal(result.status, 'failed');
+  assert.match(
+    store.getLastRunSummary()?.error ?? '',
+    /Provider rejected request/,
+  );
+});
+
+test('a retained answer does not override an explicit completion failure', async (t) => {
+  const { store, orchestrator } = fixture({
+    runId: 'native-judge',
+    mode: 'workflow',
+    state: 'complete',
+    workflow: { value: { key: 'judge', ok: true, output } },
+  });
+  t.onTestFinished(() => orchestrator.dispose());
+
+  const result = await orchestrator.handleSubagentComplete({
+    ...completion,
+    results: [
+      { agent: 'judge', success: false, error: 'Judge execution failed' },
+    ],
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.match(
+    store.getLastRunSummary()?.error ?? '',
+    /Judge execution failed/,
+  );
+});
+
 test('missing output waits for evidence once, then fails without retrying synthesis', async (t) => {
   vi.useFakeTimers({ toFake: ['Date'] });
   const { store, orchestrator } = fixture({

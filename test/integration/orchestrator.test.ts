@@ -1011,6 +1011,37 @@ test('partial status results do not finish a running panel', async () => {
   );
 });
 
+test('sparse workflow status attaches a finished answer to its keyed panelist', async (t) => {
+  const fixture = makeFixture();
+  t.onTestFinished(() => fixture.orchestrator.dispose());
+  await fixture.orchestrator.startRun('compare', fixture.ctx);
+  fixture.rpc.statusResults.set('chain-1', {
+    runId: 'chain-1',
+    state: 'running',
+    steps: [
+      {
+        workflowKey: 'panel-2',
+        stepIndex: 0,
+        agent: 'panel-agent',
+        status: 'complete',
+        output: 'Tester answer.',
+      },
+    ],
+  });
+
+  const report = await fixture.orchestrator.getStatusReport();
+  assert.match(report, /^- Architect: pending$/m);
+  assert.match(report, /^- Tester: completed$/m);
+
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.deepEqual(
+    fixture.orchestrator
+      .getActiveRun()
+      ?.panelOutputs?.map(({ id, index, output }) => ({ id, index, output })),
+    [{ id: 'tester', index: 1, output: 'Tester answer.' }],
+  );
+});
+
 test('matching events with partial results do not finish a running panel', async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);

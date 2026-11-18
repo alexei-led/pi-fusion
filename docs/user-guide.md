@@ -769,7 +769,11 @@ Notes:
 
 - `Panel run` is the normal panel phase for new Fusion runs.
 - `Judge run` is the normal synthesis phase for new runs. `Fallback judge run` appears only while restoring a legacy chain that completed without its judge result.
-- If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory. The full result artifact is preferred over compact completion events.
+- If `pi-subagents` completion notifications are delayed or missed, Fusion still reconciles from lifecycle artifacts written under the subagent async run directory. Fusion prefers the full result artifact. If it has already been consumed,
+  Fusion uses the terminal workflow's retained synthesis answer over a compact
+  preview. An explicit failure still prevents a successful report. Panel
+  status follows workflow slot keys, so a sparse status update does not shift
+  answers to different panelists.
 
 ### Capture a Fusion trace
 

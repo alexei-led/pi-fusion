@@ -2,6 +2,7 @@ import {
   type ExtractPanelResultsResult,
   type ExtractPanelResultsSuccess,
   extractPanelResults,
+  stablePanelSlot,
 } from './result-extract.js';
 import { mergeRunObservations } from './run-observations.js';
 import type {
@@ -387,31 +388,6 @@ function deadlineEventReplacementSlots(
     }
   }
   return matchingEventSlots;
-}
-
-function stablePanelSlot(result: unknown): number | undefined {
-  if (!isRecord(result)) return undefined;
-  // Result extraction already accepts these lifecycle fields as zero-based
-  // public slots. Keep deadline matching exactly aligned; a numeric 1 must
-  // mean panel slot 1, never a guessed one-based panel-1.
-  for (const candidate of [result.index, result.taskIndex, result.stepIndex]) {
-    if (
-      typeof candidate === 'number' &&
-      Number.isInteger(candidate) &&
-      candidate >= 0
-    ) {
-      return candidate;
-    }
-  }
-  const key = firstString(
-    result.key,
-    result.taskKey,
-    result.stepKey,
-    result.workflowKey,
-    result.agent,
-  );
-  const match = key?.match(/^panel-([1-9]\d*)$/);
-  return match ? Number(match[1]) - 1 : undefined;
 }
 
 function isNonterminalLifecycleResult(result: unknown): boolean {
