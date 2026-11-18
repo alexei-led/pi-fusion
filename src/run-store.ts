@@ -1774,6 +1774,7 @@ function isPanelFailureReason(value: unknown): boolean {
     value === 'provider' ||
     value === 'timeout' ||
     value === 'interrupted' ||
+    value === 'missing-output' ||
     value === 'stopped-after-agreement'
   );
 }

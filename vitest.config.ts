@@ -4,7 +4,8 @@ export default defineConfig({
   test: {
     pool: 'threads',
     maxWorkers: 2,
-    globalSetup: ['./test/support/build-workers.ts'],
+    include: ['test/{unit,integration,e2e}/**/*.test.ts'],
+    globalSetup: ['./test/support/test-environment.ts'],
     setupFiles: ['./test/support/vitest-setup.ts'],
   },
 });

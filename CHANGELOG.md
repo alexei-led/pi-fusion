@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.0 - 2026-11-18
+
+### Changes
+
+- Keep verified sibling answers when a panelist reports success without an answer. Count the empty slot as failed, not as a vote. Accept an answer from another terminal source only for the same slot without a contradictory execution failure.
+- Preserve full synthesis when native completion events contain only a preview. An explicit failure still blocks success. Keep answers attached to the correct panelist when a status update omits other panelists.
+- Add opt-in `NODE_DEBUG=pi-fusion` tracing for stage IDs, terminal evidence, recovery holds, and failed slot categories. Fusion's trace omits prompts, answers, and raw provider errors.
+- Validate [Pi 1.5.2](https://github.com/earendil-works/pi/releases/tag/v1.5.2) and [pi-subagents 0.89.0](https://github.com/nicobailon/pi-subagents/releases/tag/v0.89.0) with real subprocesses. Fusion still uses the public RPC and adds no runtime dependencies.
+
+### Upgrade
+
+- Finish active reviews before upgrading. Install Pi 1.5.2 or later and pi-subagents 0.89.0, keep native `autoResume: false`, then restart Pi. Native runs started before pi-subagents 0.85 cannot resume on the new runtime.
+- If a provider rejects OAuth refresh, sign in again for that provider or configured alias. Explicit provider/model choices do not fall back to other providers.
+
+[Full changes](https://github.com/alexei-led/pi-fusion/compare/v0.13.0...v0.14.0)
+
 ## 0.13.0 - 2026-11-04
 
 ### Changes

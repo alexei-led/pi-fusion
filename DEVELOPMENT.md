@@ -17,18 +17,16 @@ Restart Pi after updating upstream packages. For a Fusion-only code reload:
 
 ## Runtime behavior
 
-Development ranges are Pi `^1.5` and pi-subagents `^0.84`; the lockfile records
-the exact tested dependency tree. The Pi peer range is `^1.5`. Neither upstream
-package is imported through private runtime modules. Fusion communicates with
-pi-subagents only through event-bus RPC. Pi supplies TypeBox and the `^1.5`
-TUI peer used by the native report renderer. No private Pi or subagent imports.
+The lockfile tests Pi 1.5.2, pi-subagents 0.89.0, and TypeBox 1.4.7. Pi, TUI,
+and TypeBox are peers. pi-subagents and the optional Webfox extension are
+development dependencies for the test harness, not Fusion runtime dependencies.
+Fusion uses pi-subagents through public event-bus RPC only.
 
-For pre-1.0 pi-subagents, `^0.84` stops before the next minor, `0.85`.
-Test a new minor before widening that range. Pi 2.x is likewise not claimed.
-Keep `@types/node` on the Node 24 line rather than admitting Node 26-only APIs;
-the runtime minimum remains Node 22.19. See the
-[dependency review](./docs/reviews/dependency-compatibility.md) for evidence,
-recommendations, and lifecycle coverage gaps.
+The pre-1.0 pi-subagents range `^0.89.0` stops before 0.90. Test the public
+contract with a real Pi process before widening that range or admitting Pi 2.x.
+Keep Node types on the latest Node 24 release; the runtime minimum remains
+Node 22.19. The declared npm 12 version requires at least Node 22.22.2 or 24.15.0;
+use the Node-bundled npm for the minimum-runtime test.
 
 The SDK smoke test disables model network refresh. The upstream E2E test loads
 both real extensions in a separate Pi process, with an isolated home and agent
@@ -37,7 +35,7 @@ select/merge/single-member runs, rolling refill after authentication failure,
 native stop rejection codes, operation replay, full outputs beyond the native
 2,000-character preview, rejection of unsupported strict lifetime requests before
 native spawn, configured Webfox tool calls inside native children, explicit
-missing-tool failures, and clean host shutdown.
+missing-tool failures, metadata-only Fusion tracing, and clean host shutdown.
 It does not read personal credentials or call a paid model. Native completion
 wakes are observed as an upstream limitation, not mistaken for Fusion wakes.
 
@@ -69,14 +67,18 @@ npm run pack:dry
 npm run publish:dry
 ```
 
-`npm run check` runs Biome and the TypeScript compiler. Biome does not
-replace the previous type-checked ESLint rule set (`no-unsafe-*`,
-`restrict-template-expressions`, `unbound-method`, and similar).
-Those rules remain dropped, and `tsc` does not replace them. Keep
-those patterns out by review until a type-aware linter returns. `npm test`
-runs the whole Vitest suite; the tiered `test:unit`, `test:integration` and `test:e2e`
-scripts remain available for focused runs. `npm run test:all` runs the full
-local gate that CI and release use.
+Biome is the only linter and formatter. `npm run lint` runs its lint rules.
+`npm run check` also checks formatting, import organization, and TypeScript
+types. The shared Biome config adds checks for dropped promises and rejections,
+unsafe returns from typed functions, mismatched map keys, and unresolved
+imports. It includes source, tests, scripts, and root TypeScript files.
+Only selected nursery rules are enabled because their diagnostics can change
+between Biome releases. These checks complement TypeScript and do not cover
+all of the former type-aware ESLint rules.
+
+`npm test` runs the whole Vitest suite. Use `test:unit`, `test:integration`,
+or `test:e2e` for focused runs. `npm run test:all` also checks the package
+contents.
 
 Git hygiene:
 
@@ -99,9 +101,12 @@ while work is active. `ui-events.jsonl` records native hook types without prompt
 or credential content. A reload/crash should hold admission, not replay work.
 Keep the quarantine record; do not delete snapshots to make the check pass.
 
-The test global setup compiles process workers once against the installed tree,
-prepares disposable Git templates, and isolates native configuration. Worker
-teardown owns close/exit; loader aliases and personal state are not inherited.
+Test discovery is limited to `test/unit`, `test/integration`, and `test/e2e`.
+Global setup only isolates the native agent configuration. The execution-contract
+suite compiles its process workers and creates Git templates once in a private
+temporary directory, then removes it after the suite. Unit tests do not build
+those fixtures. Worker teardown owns close/exit, and workers do not inherit Pi
+loader aliases or personal state.
 Git repository setup runs in setup hooks, outside behavioral test time limits.
 Git-context integration cases have a 20-second harness budget because each real
 Git verification already has a 10-second operation cap; unit tests keep their
@@ -110,6 +115,11 @@ Two Vitest workers limit overlapping native-host imports and filesystem work;
 no behavior assertions or runtime deadlines are disabled. CI checks locked Node
 22.19/24 plus latest-allowed dependencies on Node 24. A future breaking version
 needs a separate contract review; it is not silently admitted.
+
+CI and release require a clean runtime audit at moderate severity or above.
+The full audit makes one exception for dev-only `picomatch` and findings caused
+solely by [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+Remove the exception once the locked dev tree has a patched version.
 
 ## Release
 

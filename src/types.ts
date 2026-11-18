@@ -246,6 +246,7 @@ export type PanelFailureReason =
   | 'provider'
   | 'timeout'
   | 'interrupted'
+  | 'missing-output'
   | 'stopped-after-agreement';
 
 export interface FailedPanelSummary {

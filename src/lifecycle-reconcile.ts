@@ -2,6 +2,7 @@ import {
   type ExtractPanelResultsResult,
   type ExtractPanelResultsSuccess,
   extractPanelResults,
+  stablePanelSlot,
 } from './result-extract.js';
 import { mergeRunObservations } from './run-observations.js';
 import type {
@@ -128,6 +129,16 @@ export function reconcilePanelResults(
 
   const statusCount =
     statusResults.outputs.length + statusResults.failures.length;
+  // An affirmative result without text is missing evidence, not a native
+  // execution failure. A matching slot can still have a complete answer in
+  // the other terminal source.
+  const sameSlots = new Set((rawEvent ?? []).map(stablePanelSlot));
+  const matching = new Set(
+    rawStatus
+      .map(stablePanelSlot)
+      .filter((slot) => slot !== undefined && sameSlots.has(slot)),
+  );
+  const recoveredOutputs: PanelOutput[] = [];
   if (
     !options.terminalizeRunning &&
     eventResults.outputs.length + eventResults.failures.length === expectedCount
@@ -150,6 +161,29 @@ export function reconcilePanelResults(
         statusKnown &&
         eventSucceeded.has(index) !== statusSucceeded.has(index)
       ) {
+        if (matching.has(index)) {
+          if (
+            statusSucceeded.has(index) &&
+            eventResults.failures.some(
+              (failure) =>
+                failure.index === index && failure.reason === 'missing-output',
+            )
+          )
+            continue;
+          const emptyStatus = statusResults.failures.find(
+            (failure) =>
+              failure.index === index && failure.reason === 'missing-output',
+          );
+          const eventOutput = eventResults.outputs.find(
+            (item) => item.index === index,
+          );
+          if (emptyStatus && eventOutput) {
+            recoveredOutputs.push(
+              withObservation(eventOutput, emptyStatus.observation),
+            );
+            continue;
+          }
+        }
         return error(
           `Subagents event and status disagree about panel result ${index + 1}.`,
           `$.steps[${index}]`,
@@ -169,6 +203,21 @@ export function reconcilePanelResults(
   ).filter((index) => !statusIndices.has(index));
 
   if (statusCount === expectedCount) {
+    if (recoveredOutputs.length > 0) {
+      const recovered = new Set(recoveredOutputs.map(({ index }) => index));
+      return preserveAgreementReasons(
+        {
+          ...statusResults,
+          outputs: [...statusResults.outputs, ...recoveredOutputs].sort(
+            (a, b) => a.index - b.index,
+          ),
+          failures: statusResults.failures.filter(
+            ({ index }) => !recovered.has(index),
+          ),
+        },
+        eventResults,
+      );
+    }
     return options.terminalizeRunning
       ? mergeTerminalDeadlineResults(
           eventResults,
@@ -339,30 +388,6 @@ function deadlineEventReplacementSlots(
     }
   }
   return matchingEventSlots;
-}
-
-function stablePanelSlot(result: unknown): number | undefined {
-  if (!isRecord(result)) return undefined;
-  // Result extraction already accepts these lifecycle fields as zero-based
-  // public slots. Keep deadline matching exactly aligned; a numeric 1 must
-  // mean panel slot 1, never a guessed one-based panel-1.
-  for (const candidate of [result.index, result.taskIndex, result.stepIndex]) {
-    if (
-      typeof candidate === 'number' &&
-      Number.isInteger(candidate) &&
-      candidate >= 0
-    ) {
-      return candidate;
-    }
-  }
-  const key = firstString(
-    result.key,
-    result.taskKey,
-    result.stepKey,
-    result.agent,
-  );
-  const match = key?.match(/^panel-([1-9]\d*)$/);
-  return match ? Number(match[1]) - 1 : undefined;
 }
 
 function isNonterminalLifecycleResult(result: unknown): boolean {

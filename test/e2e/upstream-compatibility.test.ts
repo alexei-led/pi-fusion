@@ -282,6 +282,7 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
         TMPDIR: root,
         PI_CODING_AGENT_DIR: agentDir,
         PI_OFFLINE: '1',
+        NODE_DEBUG: 'pi-fusion',
         WEBFOX_CONFIG: webConfig,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -371,5 +372,24 @@ test('real Pi and subagents execute Fusion select, merge and single profiles', {
   assert.equal(composerCalls, 1);
   // RPC completion wakes are native upstream behavior, not controlled by Fusion's option.
   assert.ok(parentCalls > 0);
+  const trace = stderr
+    .split('\n')
+    .filter((line) => /^PI-FUSION \d+: /.test(line));
+  assert.ok(trace.some((line) => line.includes('"event":"stage-bound"')));
+  assert.ok(
+    trace.some(
+      (line) =>
+        line.includes('"event":"review-settled"') &&
+        line.includes('"reason":"authentication"'),
+    ),
+    trace.join('\n'),
+  );
+  assert.ok(trace.some((line) => line.includes('"event":"terminal-evidence"')));
+  for (const line of trace) {
+    assert.doesNotMatch(
+      line,
+      /Fixture authentication failure|FAIL_FIRST|fusion-upstream-/,
+    );
+  }
   passed = true;
 });

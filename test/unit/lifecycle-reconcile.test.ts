@@ -269,3 +269,31 @@ test('allows status gaps only for explicitly stopped panel members', () => {
 
   assert.equal(result.ok, true);
 });
+
+test('a matching completion answer fills an empty status result, but does not override a real failure', () => {
+  const profile: FusionProfile = {
+    ...PROFILE,
+    panel: PROFILE.panel.slice(0, 1),
+  };
+  const event = {
+    results: [{ key: 'panel-1', success: true, output: 'Finished answer' }],
+  };
+  const reconcile = (step: object) =>
+    reconcilePanelResults(
+      eventSuccesses(['Finished answer']),
+      {
+        state: 'complete',
+        steps: [{ key: 'panel-1', ...step }],
+      },
+      profile,
+      event,
+    );
+  const recovered = reconcile({ status: 'completed' });
+  assert.ok(recovered.ok);
+  assert.equal(recovered.outputs[0]?.output, 'Finished answer');
+  assert.deepEqual(recovered.failures, []);
+  assert.equal(
+    reconcile({ status: 'failed', error: 'Provider rejected request' }).ok,
+    false,
+  );
+});

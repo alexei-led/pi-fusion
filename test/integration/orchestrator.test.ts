@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { onTestFinished, test, vi } from 'vitest';
 import {
   type FusionCommandContext,
@@ -1011,6 +1012,37 @@ test('partial status results do not finish a running panel', async () => {
   );
 });
 
+test('sparse workflow status attaches a finished answer to its keyed panelist', async (t) => {
+  const fixture = makeFixture();
+  t.onTestFinished(() => fixture.orchestrator.dispose());
+  await fixture.orchestrator.startRun('compare', fixture.ctx);
+  fixture.rpc.statusResults.set('chain-1', {
+    runId: 'chain-1',
+    state: 'running',
+    steps: [
+      {
+        workflowKey: 'panel-2',
+        stepIndex: 0,
+        agent: 'panel-agent',
+        status: 'complete',
+        output: 'Tester answer.',
+      },
+    ],
+  });
+
+  const report = await fixture.orchestrator.getStatusReport();
+  assert.match(report, /^- Architect: pending$/m);
+  assert.match(report, /^- Tester: completed$/m);
+
+  assert.equal(fixture.rpc.spawns.length, 1);
+  assert.deepEqual(
+    fixture.orchestrator
+      .getActiveRun()
+      ?.panelOutputs?.map(({ id, index, output }) => ({ id, index, output })),
+    [{ id: 'tester', index: 1, output: 'Tester answer.' }],
+  );
+});
+
 test('matching events with partial results do not finish a running panel', async () => {
   const fixture = makeFixture();
   await fixture.orchestrator.startRun('compare', fixture.ctx);
@@ -1544,7 +1576,7 @@ test('completion output is replayed after concurrent status polling', async () =
     resolveStatus = resolve;
   });
   const polling = fixture.orchestrator.getStatusReport();
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
 
   const completion = fixture.orchestrator.handleSubagentComplete(
     successfulPanelStatus('chain-1'),
@@ -1552,7 +1584,7 @@ test('completion output is replayed after concurrent status polling', async () =
   resolveStatus({ runId: 'chain-1', state: 'running', results: [] });
   await polling;
   await completion;
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
 
   assert.equal(fixture.orchestrator.getActiveRun()?.phase, 'judge');
   assert.equal(fixture.orchestrator.getActiveRun()?.judgeRunId, 'judge-1');
@@ -1570,7 +1602,7 @@ test('cancelling while the judge spawns stops the orphaned judge', async () => {
   const completing = fixture.orchestrator.handleSubagentComplete({
     runId: 'chain-1',
   });
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
 
   const cancelled = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
   assert.equal(cancelled.status, 'started');
@@ -1599,7 +1631,7 @@ for (const stage of ['panel', 'judge'] as const) {
       stage === 'panel'
         ? fixture.orchestrator.startRun('compare', fixture.ctx)
         : fixture.orchestrator.handleSubagentComplete({ runId: 'chain-1' });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await setImmediate();
     const old = fixture.runStore.getActiveRun();
     assert.ok(old);
     fixture.runStore.completeRun(old.id, { report: 'Old run complete' });
@@ -1624,7 +1656,7 @@ test('cancelActiveRun does not throw when a competing terminal commit wins durin
     resolveStop = resolve;
   });
   const cancelling = fixture.orchestrator.cancelActiveRun(fixture.ctx);
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
 
   const active = fixture.runStore.getActiveRun();
   assert.ok(active);
@@ -1645,7 +1677,7 @@ test('cancelActiveRun stops a panel that finishes spawning after local cancellat
   });
 
   const starting = fixture.orchestrator.startRun('compare', fixture.ctx);
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await setImmediate();
   const cancelled = await fixture.orchestrator.cancelActiveRun(fixture.ctx);
   assert.equal(cancelled.status, 'started');
   assert.equal(fixture.runStore.getActiveRun()?.cancellationRequested, true);

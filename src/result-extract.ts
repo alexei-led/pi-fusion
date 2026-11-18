@@ -241,32 +241,49 @@ function workflowSlotIndex(
   fallback: number,
   options: ExtractPanelResultsOptions,
 ): number | undefined {
-  if (!options.requireStableSlotIdentity) return fallback;
-  if (!isRecord(rawResult)) return undefined;
-  for (const candidate of [
-    rawResult.index,
-    rawResult.taskIndex,
-    rawResult.stepIndex,
+  return options.requireStableSlotIdentity
+    ? stablePanelSlot(rawResult)
+    : (namedPanelSlot(rawResult) ?? fallback);
+}
+
+/** A workflow key is stable even when a filtered status row changes position. */
+export function namedPanelSlot(result: unknown): number | undefined {
+  if (!isRecord(result)) return undefined;
+  for (const key of [
+    result.workflowKey,
+    result.key,
+    result.taskKey,
+    result.stepKey,
   ]) {
+    const slot = parsePanelKey(key);
+    if (slot !== undefined) return slot;
+  }
+  return undefined;
+}
+
+export function stablePanelSlot(result: unknown): number | undefined {
+  if (!isRecord(result)) return undefined;
+  const named = namedPanelSlot(result);
+  if (named !== undefined) return named;
+  for (const candidate of [result.index, result.taskIndex, result.stepIndex]) {
     if (
       typeof candidate === 'number' &&
-      Number.isInteger(candidate) &&
+      Number.isSafeInteger(candidate) &&
       candidate >= 0
     ) {
       return candidate;
     }
   }
-  const key = firstString(
-    rawResult.key,
-    rawResult.taskKey,
-    rawResult.stepKey,
-    rawResult.agent,
-  );
-  // Workflow scripts name their public child slots panel-1, panel-2, etc.
-  // Never infer an omitted compact-event slot from its array position: compact
-  // completion events can be reordered or omit failed children.
-  const match = key?.match(/^panel-([1-9]\d*)$/);
-  return match ? Number(match[1]) - 1 : undefined;
+  // Older compact results used panel-N in the agent field.
+  return parsePanelKey(result.agent);
+}
+
+function parsePanelKey(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = value.match(/^panel-([1-9]\d*)$/);
+  if (!match) return undefined;
+  const slot = Number(match[1]);
+  return Number.isSafeInteger(slot) ? slot - 1 : undefined;
 }
 
 function normalizeChildResult(
@@ -320,11 +337,21 @@ function normalizeChildResult(
       firstNonBlankString(decision?.answerMarkdown, rawOutput) ??
       artifactOutput(artifactPath);
     if (!output) {
-      return error(
-        'missing-result-field',
-        'Successful subagents child result did not include output or an artifact path.',
-        path,
-      );
+      // An empty reply cannot vote, but it does not invalidate sibling results.
+      return {
+        ok: true,
+        status: 'failed',
+        failure: buildFailedPanelSummary({
+          index,
+          member,
+          agent,
+          summary: 'Panelist reported success but returned no answer.',
+          reason: 'missing-output',
+          observation: extractRunObservation(rawResult),
+          artifactPath,
+          sessionPath,
+        }),
+      };
     }
     return {
       ok: true,

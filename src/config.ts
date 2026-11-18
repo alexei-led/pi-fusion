@@ -372,21 +372,24 @@ async function readOptionalConfig(
 }
 
 export function parseFusionConfig(raw: string, source: string): FusionConfig {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new FusionConfigError(
-      `Invalid JSON in fusion config at ${source}: ${message}`,
-    );
-  }
+  const value = parseConfigJson(raw, source);
   if (!isFusionConfig(value)) {
     throw new FusionConfigError(
       `Invalid fusion config at ${source}. Expected defaultProfile and profiles.`,
     );
   }
   return value;
+}
+
+function parseConfigJson(raw: string, source: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new FusionConfigError(
+      `Invalid JSON in fusion config at ${source}: ${message}`,
+    );
+  }
 }
 
 export function isFusionConfig(value: unknown): value is FusionConfig {

@@ -1,31 +1,32 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import fusionExtension from '../../src/index.js';
-import { createProjectDir, FakePi, nextTick } from '../support/fake-pi.js';
+import { SUBAGENTS_RPC_REQUEST_CHANNEL } from '../../src/subagents-rpc.js';
+import { isRecord } from '../../src/utils.js';
+import { FakePi, nextTick } from '../support/fake-pi.js';
+import { mountFusion } from '../support/fusion-extension-fixture.js';
+
+function statusRequests(pi: FakePi): number {
+  return pi.events.emitted.filter(
+    ({ event, payload }) =>
+      event === SUBAGENTS_RPC_REQUEST_CHANNEL &&
+      isRecord(payload) &&
+      payload.method === 'status',
+  ).length;
+}
 
 for (const event of ['subagent:child-status', 'subagent:process-terminal']) {
   test(`${event} is only a hint, coalesces duplicates, and cleans up on shutdown`, async (t) => {
-    const pi = new FakePi();
-    const ctx = pi.createContext(await createProjectDir(t));
-    fusionExtension(pi.asExtensionApi());
-    await pi.emitLifecycle('session_start', {}, ctx);
-    t.onTestFinished(() => pi.emitLifecycle('session_shutdown', {}, ctx));
-    await pi.runCommand('fusion', 'review', ctx);
+    const { pi, start, close } = await mountFusion(t);
+    await start();
     assert.equal(pi.events.listenerCount(event), 1);
-    const statusCount = () =>
-      pi.events.emitted.filter(
-        (e) =>
-          e.event === 'subagents:rpc:v1:request' &&
-          (e.payload as { method: string }).method === 'status',
-      ).length;
-    const before = statusCount();
+    const before = statusRequests(pi);
     pi.events.emit(event, {
       version: 1,
       runId: 'unrelated',
       state: 'complete',
     });
     await nextTick();
-    assert.equal(statusCount(), before);
+    assert.equal(statusRequests(pi), before);
     for (let i = 0; i < 5; i++)
       pi.events.emit(event, {
         version: 1,
@@ -34,7 +35,7 @@ for (const event of ['subagent:child-status', 'subagent:process-terminal']) {
         output: 'not evidence',
       });
     await nextTick();
-    assert.equal(statusCount(), before + 1);
+    assert.equal(statusRequests(pi), before + 1);
     assert.equal(pi.events.spawns.length, 1);
     pi.events.statusResults.set('panel-1', {
       runId: 'panel-1',
@@ -51,32 +52,30 @@ for (const event of ['subagent:child-status', 'subagent:process-terminal']) {
     pi.events.emit(event, { version: 1, runId: 'panel-1' });
     await nextTick();
     assert.equal(pi.events.spawns.length, 2);
-    const after = statusCount();
+    const after = statusRequests(pi);
     pi.events.emit(event, { version: 1, runId: 'judge-1' });
-    await pi.emitLifecycle('session_shutdown', {}, ctx);
+    await close();
     await nextTick();
     assert.equal(pi.events.listenerCount(event), 0);
-    assert.equal(statusCount(), after);
+    assert.equal(statusRequests(pi), after);
   });
 }
 
 test('a hint during an in-flight status request schedules one fresh pass', async (t) => {
-  const pi = new FakePi();
-  const ctx = pi.createContext(await createProjectDir(t));
-  fusionExtension(pi.asExtensionApi());
-  await pi.runCommand('fusion', 'review', ctx);
-  t.onTestFinished(() => pi.emitLifecycle('session_shutdown', {}, ctx));
+  const { pi, start } = await mountFusion(t, { restoreSession: false });
+  await start();
   const emit = pi.events.emit.bind(pi.events);
   let held: { requestId: string; method: string } | undefined;
   let requests = 0;
   pi.events.emit = (event, payload) => {
-    const request = payload as { requestId: string; method: string };
     if (
-      event === 'subagents:rpc:v1:request' &&
-      request.method === 'status' &&
+      event === SUBAGENTS_RPC_REQUEST_CHANNEL &&
+      isRecord(payload) &&
+      typeof payload.requestId === 'string' &&
+      payload.method === 'status' &&
       ++requests === 1
     ) {
-      held = request;
+      held = { requestId: payload.requestId, method: payload.method };
       return;
     }
     emit(event, payload);
@@ -102,9 +101,28 @@ test('a hint during an in-flight status request schedules one fresh pass', async
 test('unadvertised lifecycle channels are not subscribed', async (t) => {
   const pi = new FakePi();
   pi.events.pingResult = { ok: true };
-  const ctx = pi.createContext(await createProjectDir(t));
-  fusionExtension(pi.asExtensionApi());
-  await pi.runCommand('fusion', 'review', ctx);
-  t.onTestFinished(() => pi.emitLifecycle('session_shutdown', {}, ctx));
+  const { start } = await mountFusion(t, { pi, restoreSession: false });
+  await start();
   assert.equal(pi.events.listenerCount('subagent:child-status'), 0);
+});
+
+test('id-less jobs changes refresh once and never become completion evidence', async (t) => {
+  const pi = new FakePi();
+  pi.events.pingResult = { events: { jobsChanged: 'subagent:jobs-changed' } };
+  const { start, close } = await mountFusion(t, { pi, restoreSession: false });
+  await start();
+  const before = statusRequests(pi);
+  pi.events.emit('subagent:jobs-changed', { version: 2 });
+  await nextTick();
+  assert.equal(statusRequests(pi), before);
+  for (let index = 0; index < 5; index++)
+    pi.events.emit('subagent:jobs-changed', {
+      version: 1,
+      output: 'not evidence',
+    });
+  await nextTick();
+  assert.equal(statusRequests(pi), before + 1);
+  assert.equal(pi.events.spawns.length, 1);
+  await close();
+  assert.equal(pi.events.listenerCount('subagent:jobs-changed'), 0);
 });
