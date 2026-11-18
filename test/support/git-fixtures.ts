@@ -41,13 +41,9 @@ export async function prepareGitTemplates(root: string): Promise<void> {
 }
 
 export async function copyGitTemplate(
+  root: string,
   label: string,
   destination: string,
 ): Promise<void> {
-  const root = process.env.PI_FUSION_TEST_GIT_TEMPLATES;
-  if (!root)
-    throw new Error(
-      'Git fixture templates were not prepared by test global setup',
-    );
   await cp(join(root, label), destination, { recursive: true });
 }

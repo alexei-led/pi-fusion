@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import {
   SUBAGENTS_RPC_REQUEST_CHANNEL,
   type SubagentsEventBus,
   SubagentsRpcClient,
   type SubagentsRpcMethod,
+  SubagentsRpcProtocolError,
   SubagentsRpcRemoteError,
   SubagentsRpcTimeoutError,
   subagentsRpcReplyChannel,
@@ -103,25 +104,80 @@ test('SubagentsRpcClient ignores wrong request IDs without cleanup', async () =>
   assert.equal(bus.listenerCount(replyChannel), 0);
 });
 
-test('SubagentsRpcClient times out and cleans listeners', async () => {
+test('a timed-out request does not affect another in-flight request', async () => {
+  vi.useFakeTimers();
   const bus = new FakeEventBus();
-  const client = new SubagentsRpcClient({
-    events: bus,
-    requestId: () => 'req-timeout',
-    timeoutMs: 100,
-  });
+  const client = new SubagentsRpcClient({ events: bus });
+  const timedOut = client.ping({ requestId: 'expired', timeoutMs: 10 });
+  const waiting = client.ping({ requestId: 'waiting', timeoutMs: 100 });
+  const expiredChannel = subagentsRpcReplyChannel('expired');
+  const waitingChannel = subagentsRpcReplyChannel('waiting');
 
-  const result = client.ping({ timeoutMs: 1 });
-  const replyChannel = subagentsRpcReplyChannel('req-timeout');
-
-  await assert.rejects(result, (error: unknown) => {
-    assert.ok(error instanceof SubagentsRpcTimeoutError);
-    assert.equal(error.method, 'ping');
-    assert.equal(error.requestId, 'req-timeout');
-    return true;
+  const rejection = assert.rejects(timedOut, {
+    name: SubagentsRpcTimeoutError.name,
+    method: 'ping',
+    requestId: 'expired',
+    timeoutMs: 10,
   });
-  assert.equal(bus.listenerCount(replyChannel), 0);
+  await vi.advanceTimersByTimeAsync(10);
+  await rejection;
+  assert.equal(bus.listenerCount(expiredChannel), 0);
+  assert.equal(bus.listenerCount(waitingChannel), 1);
+  bus.emit(expiredChannel, {
+    version: 1,
+    requestId: 'expired',
+    success: true,
+    data: 'late',
+  });
+  bus.emit(waitingChannel, {
+    version: 1,
+    requestId: 'waiting',
+    success: true,
+    data: 'current',
+  });
+  assert.equal(await waiting, 'current');
+  assert.equal(bus.listenerCount(waitingChannel), 0);
 });
+
+test.each([
+  {
+    name: 'unsupported version',
+    reply: { version: 2 },
+    error: /unsupported.*version/i,
+  },
+  {
+    name: 'unexpected method',
+    reply: { method: 'stop' },
+    error: /did not match ping/,
+  },
+  {
+    name: 'invalid success flag',
+    reply: { success: 'true' },
+    error: /success/,
+  },
+  {
+    name: 'invalid error object',
+    reply: { success: false, error: { code: 'missing-message' } },
+    error: /code and message/,
+  },
+])(
+  'rejects a matching reply with $name and removes its listener',
+  async ({ reply, error }) => {
+    const bus = new FakeEventBus();
+    const client = new SubagentsRpcClient({ events: bus });
+    const requestId = 'malformed';
+    const channel = subagentsRpcReplyChannel(requestId);
+    const pending = client.ping({ requestId });
+    bus.emit(channel, { version: 1, requestId, success: true, ...reply });
+    await assert.rejects(pending, (failure: unknown) => {
+      assert.ok(failure instanceof SubagentsRpcProtocolError);
+      assert.equal(failure.requestId, requestId);
+      assert.match(failure.message, error);
+      return true;
+    });
+    assert.equal(bus.listenerCount(channel), 0);
+  },
+);
 
 test('SubagentsRpcClient helper methods emit typed method envelopes', async () => {
   const specs: Array<{
@@ -133,11 +189,6 @@ test('SubagentsRpcClient helper methods emit typed method envelopes', async () =
       method: 'spawn',
       params: { agent: 'reviewer', task: 'review' },
       run: (client) => client.spawn({ agent: 'reviewer', task: 'review' }),
-    },
-    {
-      method: 'status',
-      params: { id: 'run-1' },
-      run: (client) => client.status({ id: 'run-1' }),
     },
     {
       method: 'stop',

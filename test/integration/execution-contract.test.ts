@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
 import {
+  beforeAll,
   beforeEach,
   describe,
   onTestFinished,
@@ -36,6 +36,7 @@ import {
 } from '../../src/subagents-rpc.js';
 import type { FusionConfig } from '../../src/types.js';
 import { isRecord } from '../../src/utils.js';
+import { buildWorkerFixtures } from '../support/build-workers.js';
 import {
   isolatedProcessEnvironment,
   observeChild,
@@ -177,6 +178,13 @@ function proof(rpc: NativeRuntime) {
   };
 }
 
+let fixtures: Awaited<ReturnType<typeof buildWorkerFixtures>>;
+
+beforeAll(async () => {
+  fixtures = await buildWorkerFixtures();
+  return fixtures.cleanup;
+}, 75_000);
+
 function admissionProcess(
   t: TestContext,
   cwd: string,
@@ -187,12 +195,7 @@ function admissionProcess(
   const child = spawn(
     process.execPath,
     [
-      fileURLToPath(
-        new URL(
-          '../../node_modules/.cache/pi-fusion-test-workers/test/support/shared-admission-worker.js',
-          import.meta.url,
-        ),
-      ),
+      fixtures.worker('shared-admission'),
       cwd,
       operationId,
       mode,
@@ -210,16 +213,7 @@ function admissionProcess(
 function recoveryProcess(t: TestContext, cwd: string, mode: string) {
   const child = spawn(
     process.execPath,
-    [
-      fileURLToPath(
-        new URL(
-          '../../node_modules/.cache/pi-fusion-test-workers/test/support/stale-recovery-worker.js',
-          import.meta.url,
-        ),
-      ),
-      cwd,
-      mode,
-    ],
+    [fixtures.worker('stale-recovery'), cwd, mode],
     {
       env: isolatedProcessEnvironment(cwd),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -2236,7 +2230,7 @@ async function candidateRepositories(t: TestContext) {
     [candidateCwd, 'candidate'],
   ]) {
     assert.ok(cwd && label);
-    await copyGitTemplate(label, cwd);
+    await copyGitTemplate(fixtures.templates, label, cwd);
   }
   const head = (cwd: string) => fixtureGit(['-C', cwd, 'rev-parse', 'HEAD']);
   return {

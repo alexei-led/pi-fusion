@@ -101,9 +101,12 @@ while work is active. `ui-events.jsonl` records native hook types without prompt
 or credential content. A reload/crash should hold admission, not replay work.
 Keep the quarantine record; do not delete snapshots to make the check pass.
 
-The test global setup compiles process workers once against the installed tree,
-prepares disposable Git templates, and isolates native configuration. Worker
-teardown owns close/exit; loader aliases and personal state are not inherited.
+Test discovery is limited to `test/unit`, `test/integration`, and `test/e2e`.
+Global setup only isolates the native agent configuration. The execution-contract
+suite compiles its process workers and creates Git templates once in a private
+temporary directory, then removes it after the suite. Unit tests do not build
+those fixtures. Worker teardown owns close/exit, and workers do not inherit Pi
+loader aliases or personal state.
 Git repository setup runs in setup hooks, outside behavioral test time limits.
 Git-context integration cases have a 20-second harness budget because each real
 Git verification already has a 10-second operation cap; unit tests keep their
